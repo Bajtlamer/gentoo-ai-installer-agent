@@ -1,0 +1,12 @@
+{
+  "name": "gentoo-live",
+  "host": "192.0.2.10",
+  "port": 22,
+  "user": "root",
+  "identity_file": "~/.ssh/gentoo-live_ed25519",
+  "architecture": "amd64",
+  "handbook_url": "https://wiki.gentoo.org/wiki/Handbook:AMD64",
+  "known_hosts_file": "",
+  "expected_target_description": "Disposable Gentoo live VM",
+  "dangerous_operations_enabled": false
+}

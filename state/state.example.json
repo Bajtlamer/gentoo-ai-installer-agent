@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "target": "gentoo-live",
+  "status": "pending",
+  "current_phase": "discovery",
+  "completed_phases": [],
+  "last_inventory": null,
+  "last_handbook_fetch": null,
+  "last_error": null,
+  "updated_at": null
+}

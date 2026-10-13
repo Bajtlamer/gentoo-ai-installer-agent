@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+config/target.json
+state/state.json
+logs/*.log
+logs/*.txt
+inventory/*.json
+inventory/*.html
+approvals/*.json
+ssh-known-hosts
+*.key
+*.pem
