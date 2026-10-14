@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 config/target.json
+config/install.json
 state/state.json
 logs/*.log
 logs/*.txt

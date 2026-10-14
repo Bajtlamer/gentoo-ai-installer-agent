@@ -41,18 +41,43 @@ server.
 
 ## First setup
 
-Copy the example target configuration:
+For a new checkout, create the minimum local configuration with:
 
 ```text
-config/target.example.json -> config/target.json
+python tools/init_config.py --host <live-ip> --disk /dev/sda --allow-disk-erase
 ```
 
-Edit `config/target.json` with the live target address, SSH user, key path, and
-architecture. Keep this file private; it is ignored by Git.
+The command creates `config/target.json` and `config/install.json`, applies
+safe defaults, and does not connect to the target. It refuses to overwrite
+existing files unless `--overwrite` is explicitly supplied. See
+`docs/CONFIGURATION.md` for every required and optional field.
+
+The same defaults are directly visible in
+`config/target.default.json` and `config/install.default.json`. Those files
+are safe examples: disk erasure and execution are disabled.
+
+Edit the generated files with the live target address, SSH user, key path,
+architecture, and installation choices. Keep them private; they are ignored by
+Git.
 
 Do not put a private key or password in this repository.
 
+The installation choices are kept separately in `config/install.json`. This
+file is ignored by Git because it contains target-specific decisions. Review it
+before enabling execution. It currently describes a UEFI, ext4, OpenRC,
+2 GiB-swap installation on `/dev/sda`, with execution disabled.
+
 ## Safe first run
+
+For the beginner-friendly workflow, run one command:
+
+```powershell
+python tools/prepare_install.py
+```
+
+It reads or creates `target.json`, connects over SSH using read-only checks,
+collects inventory, asks for installation choices, writes `install.json`, and
+prints the entire configuration for review. It never installs anything.
 
 Fetch the current Handbook source:
 
@@ -70,6 +95,7 @@ Review the generated files under `inventory/` before doing anything else:
 
 ```sh
 python tools/gentoo_agent.py status
+python tools/gentoo_agent.py validate
 ```
 
 The commands use strict SSH host-key checking. If the host key is not already

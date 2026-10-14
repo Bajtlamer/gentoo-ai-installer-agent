@@ -8,5 +8,7 @@
   "handbook_url": "https://wiki.gentoo.org/wiki/Handbook:AMD64",
   "known_hosts_file": "",
   "expected_target_description": "Disposable Gentoo live VM",
-  "dangerous_operations_enabled": false
+  "install_config": "config/install.json",
+  "dangerous_operations_enabled": false,
+  "execution_enabled": false
 }

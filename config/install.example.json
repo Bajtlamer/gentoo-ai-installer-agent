@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "profile": "gentoo-amd64-openrc",
+  "boot_mode": "uefi",
+  "partition_table": "gpt",
+  "disk": "/dev/sda",
+  "disk_must_be_erased": true,
+  "expected_disk_model": "VMware Virtual S",
+  "expected_disk_size_gib": 32,
+  "partition_layout": [
+    {
+      "device": "/dev/sda1",
+      "size_mib": 512,
+      "type": "efi-system",
+      "filesystem": "vfat",
+      "mount": "/boot"
+    },
+    {
+      "device": "/dev/sda2",
+      "size_mib": 2048,
+      "type": "linux-swap",
+      "mount": null
+    },
+    {
+      "device": "/dev/sda3",
+      "size": "remaining",
+      "type": "linux-root",
+      "filesystem": "ext4",
+      "mount": "/"
+    }
+  ],
+  "root_filesystem": "ext4",
+  "swap_mb": 2048,
+  "bootloader": "grub",
+  "init_system": "openrc",
+  "hostname": "gentoo",
+  "timezone": "Europe/Prague",
+  "network_method": "dhcp",
+  "execution_enabled": false,
+  "review_status": "pending_operator_review"
+}
