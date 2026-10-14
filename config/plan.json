@@ -1,64 +1,101 @@
 {
   "schema_version": 1,
   "installation_config": "config/install.json",
-  "execution_enabled": false,
-  "review_status": "pending_operator_review",
+  "execution_enabled": true,
+  "review_status": "approved_for_execution",
   "phases": [
+    {
+      "id": "preflight",
+      "description": "Reconfirm target identity, boot mode, disk, tools, and network",
+      "handbook_sections": [
+        "Installation/About",
+        "Installation/Media"
+      ],
+      "destructive": false,
+      "implemented": true
+    },
     {
       "id": "discovery",
       "description": "Read-only target and live-environment inventory",
-      "handbook_sections": ["Installation/Media", "Installation/About"],
+      "handbook_sections": [
+        "Installation/Media",
+        "Installation/About"
+      ],
       "destructive": false,
       "implemented": true
     },
     {
       "id": "storage",
       "description": "Confirm disk layout and prepare storage",
-      "handbook_sections": ["Installation/Disks"],
+      "handbook_sections": [
+        "Installation/Disks"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "filesystems",
       "description": "Create and mount confirmed filesystems",
-      "handbook_sections": ["Installation/Filesystems"],
+      "handbook_sections": [
+        "Installation/Filesystems"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "base-system",
       "description": "Install stage and prepare the chroot",
-      "handbook_sections": ["Installation/Stage", "Installation/Base"],
+      "handbook_sections": [
+        "Installation/Stage",
+        "Installation/Base"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "configuration",
       "description": "Configure timezone, locale, users, and networking",
-      "handbook_sections": ["Installation/Configuring the system"],
+      "handbook_sections": [
+        "Installation/Configuring the system"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
+    },
+    {
+      "id": "authentication",
+      "description": "Install and verify SSH, root key access, passwords, and the regular user",
+      "handbook_sections": [
+        "Installation/Configuring the system"
+      ],
+      "destructive": true,
+      "implemented": true
     },
     {
       "id": "kernel",
       "description": "Build or install the kernel and initramfs",
-      "handbook_sections": ["Installation/Kernel"],
+      "handbook_sections": [
+        "Installation/Kernel"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "bootloader",
       "description": "Install and verify the bootloader",
-      "handbook_sections": ["Installation/Bootloader"],
+      "handbook_sections": [
+        "Installation/Bootloader"
+      ],
       "destructive": true,
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "validation",
       "description": "Verify mounts, boot files, services, and SSH",
-      "handbook_sections": ["Installation/Finalizing"],
+      "handbook_sections": [
+        "Installation/Finalizing"
+      ],
       "destructive": false,
-      "implemented": false
+      "implemented": true
     }
   ]
 }

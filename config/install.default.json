@@ -5,6 +5,8 @@
   "partition_table": "gpt",
   "disk": "/dev/sda",
   "disk_must_be_erased": false,
+  "target_is_disposable": false,
+  "disk_erase_authorized": false,
   "partition_layout": [
     {
       "device": "/dev/sda1",
@@ -34,6 +36,19 @@
   "hostname": "gentoo",
   "timezone": "Europe/Prague",
   "network_method": "dhcp",
+  "create_user": true,
+  "username": "bajt",
+  "install_user_ssh_key": true,
+  "user_groups": [
+    "wheel"
+  ],
+  "user_shell": "/bin/bash",
+  "set_root_password": true,
+  "allow_root_password_ssh": false,
+  "password_source": "environment",
+  "generate_missing_passwords": true,
+  "root_password_env": "printadmin",
+  "user_password_env": "bajtfaskoadmin",
   "execution_enabled": false,
   "review_status": "pending_operator_review"
 }

@@ -21,7 +21,10 @@ instead of inventing their structure.
   address.
 - Never run arbitrary root commands over SSH.
 - Never partition, format, delete, repair, replace a bootloader, or reboot
-  without an explicit approval record in `approvals/`.
+  unless the reviewed configuration explicitly authorizes the operation. For
+  this disposable VM, disk erasure is authorized by both
+  `target_is_disposable: true` and `disk_erase_authorized: true`; execution is
+  still separately controlled by `execution_enabled`.
 - Do not start execution while `execution_enabled` is `false` or
   `review_status` is not `approved`.
 - If evidence is incomplete or contradictory, stop and ask the operator.
@@ -36,7 +39,8 @@ Executor must remain a narrow, approval-aware tool.
 
 ## Current implementation status
 
-The repository currently provides a read-only SSH inspector, Handbook fetcher,
-state files, approval records, and phase contracts. Destructive phase scripts
-are intentionally not implemented yet. Build and test those phases one at a
-time on a disposable VM before using physical hardware.
+The repository provides the read-only inspector, Handbook fetcher, state files,
+approval records, and guarded executors in `tools/install_phases.py`. The
+executor is dry-run by default. It may execute only after `approve-install`
+enables all matching execution flags and the operator passes the exact
+confirmation phrase. Test on the disposable VM before using physical hardware.

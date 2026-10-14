@@ -6,6 +6,7 @@ config/install.json
 state/state.json
 logs/*.log
 logs/*.txt
+logs/*.json
 inventory/*.json
 inventory/*.html
 approvals/*.json

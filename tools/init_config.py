@@ -53,6 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hostname", default="gentoo")
     parser.add_argument("--timezone", default="Europe/Prague")
     parser.add_argument("--network-method", default="dhcp")
+    parser.add_argument("--username", default="gentoo", help="Installed regular username")
+    parser.add_argument("--no-create-user", action="store_true", help="Do not create an installed regular user")
+    parser.add_argument("--no-root-password", action="store_true", help="Do not prompt for a root password")
+    parser.add_argument("--allow-root-password-ssh", action="store_true", help="Allow root password authentication over SSH")
+    parser.add_argument("--password-source", choices=("prompt", "environment"), default="environment")
+    parser.add_argument("--root-password-env", default="GENTOO_ROOT_PASSWORD")
+    parser.add_argument("--user-password-env", default="GENTOO_USER_PASSWORD")
     parser.add_argument("--allow-disk-erase", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -120,6 +127,8 @@ def main() -> int:
         "architecture": args.architecture,
         "handbook_url": f"https://wiki.gentoo.org/wiki/Handbook:{args.architecture.upper()}",
         "expected_target_description": "Target created by init_config.py; review before use",
+        "target_is_disposable": bool(args.allow_disk_erase),
+        "disk_erase_authorized": bool(args.allow_disk_erase),
         "execution_enabled": False,
         "dangerous_operations_enabled": False,
     })
@@ -130,6 +139,8 @@ def main() -> int:
         "partition_table": partition_table,
         "disk": args.disk,
         "disk_must_be_erased": True,
+        "target_is_disposable": bool(args.allow_disk_erase),
+        "disk_erase_authorized": bool(args.allow_disk_erase),
         "partition_layout": layout,
         "root_filesystem": args.root_filesystem,
         "swap_mb": args.swap_mb,
@@ -137,6 +148,17 @@ def main() -> int:
         "hostname": args.hostname,
         "timezone": args.timezone,
         "network_method": args.network_method,
+        "create_user": not args.no_create_user,
+        "username": args.username,
+        "install_user_ssh_key": not args.no_create_user,
+        "user_groups": ["wheel"],
+        "user_shell": "/bin/bash",
+        "set_root_password": not args.no_root_password,
+        "allow_root_password_ssh": args.allow_root_password_ssh,
+        "password_source": args.password_source,
+        "generate_missing_passwords": True,
+        "root_password_env": args.root_password_env,
+        "user_password_env": args.user_password_env,
         "execution_enabled": False,
         "review_status": "pending_operator_review",
     })

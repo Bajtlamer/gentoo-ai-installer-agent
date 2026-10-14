@@ -3,16 +3,19 @@
 A supervised, resumable agent workflow for installing or repairing Gentoo over
 SSH from a live environment.
 
-The current repository is deliberately read-only against the target. It can:
+The repository provides a supervised installer whose default mode is still
+read-only. It can:
 
 - fetch the official Gentoo Handbook;
 - inspect a live target using an allowlisted SSH command set;
 - record inventory and source evidence;
 - keep a phase plan and resumable state;
-- create explicit approval records.
+- create explicit approval records;
+- execute the reviewed installation phases with a guarded command allowlist.
 
-Destructive installation and repair phases are not enabled yet. Implement and
-test them on a disposable VM before using real hardware.
+The installer is intended for disposable VM testing first. It never reboots a
+target automatically, and execution remains disabled until the operator
+explicitly approves the rendered configuration.
 
 ## Architecture
 
@@ -22,7 +25,7 @@ local agent / supervisor
         +-- Handbook reader (HTTPS)
         +-- SSH inspector (read-only)
         +-- approval and state store
-        +-- phase executor (future, allowlisted)
+        +-- phase executor (allowlisted, dry-run by default)
         |
         +---- OpenSSH ----> Gentoo live environment
 ```
@@ -64,8 +67,8 @@ Do not put a private key or password in this repository.
 
 The installation choices are kept separately in `config/install.json`. This
 file is ignored by Git because it contains target-specific decisions. Review it
-before enabling execution. It currently describes a UEFI, ext4, OpenRC,
-2 GiB-swap installation on `/dev/sda`, with execution disabled.
+before enabling execution. The active private configuration describes a BIOS,
+ext4, OpenRC, 2 GiB-swap installation on `/dev/sda`, with execution disabled.
 
 ## Safe first run
 
@@ -98,6 +101,42 @@ python tools/gentoo_agent.py status
 python tools/gentoo_agent.py validate
 ```
 
+Render every installation command without connecting to the target:
+
+```powershell
+python tools/gentoo_agent.py install --dry-run
+```
+
+After reviewing `config/target.json`, `config/install.json`, the latest
+inventory, and the dry-run output, record the explicit execution approval:
+
+```powershell
+python tools/gentoo_agent.py approve-install
+```
+
+Only then can the installer be started. The approval command prints the exact
+confirmation phrase required by the executor:
+
+```powershell
+python tools/gentoo_agent.py install --execute --confirm "INSTALL gentoo ON /dev/sda"
+```
+
+The phases are preflight, storage, filesystems, base system, configuration,
+authentication, kernel, bootloader, and validation. A failure stops the workflow and preserves
+the local log under `logs/`; the target is left running for console recovery.
+Every phase has a read-only state check and a post-apply verification. If
+`--from-phase` is omitted, a run starts at the beginning, checks every phase,
+and skips work that is already complete.
+
+During the authentication phase the agent installs OpenSSH, verifies the root
+authorized key and enabled services, creates the configured regular user, and
+reads preconfigured password environment variables without prompting, and
+generates random replacements when configured values are absent. Generated
+credentials are printed once after successful completion but never saved in
+configuration files or phase logs. The regular user is the normal post-reboot login. Root SSH is
+key-only by default; the reviewed configuration may explicitly allow root
+password SSH login while retaining the root public key as a fallback.
+
 The commands use strict SSH host-key checking. If the host key is not already
 trusted, stop and verify it through the live console before reconnecting.
 
@@ -108,11 +147,9 @@ trusted, stop and verify it through the live console before reconnecting.
 2. Start SSH and verify the connection manually.
 3. Configure `config/target.json`.
 4. Run `handbook` and `inspect`.
-5. Have the Planner agent create or update `plan.json` from the evidence.
-6. Review the proposed phase and create an approval only for the exact target,
-   phase, and disk.
-7. Add and test one phase executor at a time.
-8. Verify the phase, update state, and preserve the transcript.
+5. Run `install --dry-run` and review the generated commands.
+6. Run `approve-install`, then start `install --execute` with its exact phrase.
+7. Verify the phase, update state, and preserve the transcript.
 
 The Handbook provides procedure. The state machine, approval records, and
 phase scripts provide repeatability and safety.

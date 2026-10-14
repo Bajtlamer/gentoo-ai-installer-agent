@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Safe starter tools for a supervised Gentoo-over-SSH agent workflow.
-
-This module intentionally implements only Handbook retrieval, read-only SSH
-inspection, status reporting, and explicit approval records. It does not run
-destructive installation or repair commands.
-"""
+"""Supervised Gentoo-over-SSH agent workflow tools."""
 
 from __future__ import annotations
 
@@ -14,6 +9,7 @@ import html.parser
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -213,14 +209,57 @@ def cmd_validate(_: argparse.Namespace) -> None:
         warnings.append("this starter configuration has only been reviewed for ext4")
     if not isinstance(install.get("swap_mb"), int) or install.get("swap_mb", -1) < 0:
         errors.append("swap_mb must be a non-negative integer")
-    if install.get("execution_enabled") is not False:
-        errors.append("execution_enabled must remain false during review")
-    if plan.get("execution_enabled") is not False:
-        errors.append("plan execution_enabled must remain false during review")
-    if target.get("execution_enabled") is not False:
-        errors.append("target execution_enabled must remain false during review")
-    if install.get("review_status") != "pending_operator_review":
-        warnings.append("review_status is not pending_operator_review")
+    create_user = install.get("create_user", True)
+    set_root_password = install.get("set_root_password", True)
+    if not isinstance(create_user, bool):
+        errors.append("create_user must be boolean")
+    if not isinstance(set_root_password, bool):
+        errors.append("set_root_password must be boolean")
+    install_user_ssh_key = install.get("install_user_ssh_key", True)
+    if not isinstance(install_user_ssh_key, bool):
+        errors.append("install_user_ssh_key must be boolean")
+    if install_user_ssh_key and not create_user:
+        errors.append("install_user_ssh_key requires create_user=true")
+    if not isinstance(install.get("allow_root_password_ssh", False), bool):
+        errors.append("allow_root_password_ssh must be boolean")
+    password_source = install.get("password_source", "environment")
+    if password_source not in {"prompt", "environment", "generate"}:
+        errors.append("password_source must be 'prompt', 'environment', or 'generate'")
+    if password_source == "environment":
+        for field in ("root_password_env", "user_password_env"):
+            env_name = str(install.get(field, ""))
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", env_name):
+                errors.append(f"{field} must contain a valid uppercase environment-variable name")
+    if not isinstance(install.get("generate_missing_passwords", True), bool):
+        errors.append("generate_missing_passwords must be boolean")
+    if create_user:
+        username = str(install.get("username", ""))
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username) or username == "root":
+            errors.append("username must be a non-root Linux account name")
+        groups = install.get("user_groups", ["wheel"])
+        if not isinstance(groups, list) or any(
+            not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(group)) for group in groups
+        ):
+            errors.append("user_groups must contain simple Linux group names")
+    if not create_user and not set_root_password:
+        errors.append("at least one installed password must be configured")
+    execution_flags = [
+        target.get("execution_enabled"),
+        install.get("execution_enabled"),
+        plan.get("execution_enabled"),
+    ]
+    if len(set(execution_flags)) != 1:
+        errors.append("target, install, and plan execution_enabled flags must match")
+    if any(execution_flags) and install.get("review_status") != "approved_for_execution":
+        errors.append("execution_enabled=true requires approved_for_execution review status")
+    if install.get("disk_must_be_erased") and not (
+        install.get("target_is_disposable") and install.get("disk_erase_authorized")
+    ):
+        errors.append("disk erasure requires explicit disposable-target authorization")
+    if install.get("review_status") not in {
+        "pending_operator_review", "reviewed_execution_disabled", "approved_for_execution"
+    }:
+        warnings.append("unrecognized review_status")
 
     inventory_paths = sorted(INVENTORY_DIR.glob("inventory-*.json"), key=lambda p: p.stat().st_mtime)
     if inventory_paths:
@@ -243,7 +282,7 @@ def cmd_validate(_: argparse.Namespace) -> None:
 
     result = {
         "valid_for_execution": not errors,
-        "execution_enabled": False,
+        "execution_enabled": all(execution_flags),
         "errors": errors,
         "warnings": warnings,
         "target": target.get("name"),
@@ -281,9 +320,25 @@ def cmd_phase(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"Phase '{args.phase}' is not implemented. No target changes were made."
         )
-    if args.phase != "discovery":
-        raise SystemExit("Only the read-only discovery phase is currently executable.")
-    cmd_inspect(args)
+    if args.phase == "discovery":
+        cmd_inspect(args)
+        return
+    from install_phases import cmd_install
+    args.from_phase = args.phase
+    args.execute = False
+    args.dry_run = True
+    args.confirm = ""
+    cmd_install(args)
+
+
+def cmd_install_command(args: argparse.Namespace) -> None:
+    from install_phases import cmd_install
+    cmd_install(args)
+
+
+def cmd_approve_install(args: argparse.Namespace) -> None:
+    from install_phases import approve_execution
+    approve_execution(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -302,6 +357,17 @@ def build_parser() -> argparse.ArgumentParser:
     phase = sub.add_parser("phase", help="Run an implemented phase")
     phase.add_argument("phase")
     phase.set_defaults(func=cmd_phase)
+    install = sub.add_parser("install", help="Print or execute the guarded installation phases")
+    install.add_argument("--execute", action="store_true", help="Execute after explicit approval; dry-run is the default")
+    install.add_argument("--dry-run", action="store_true", help="Print generated phases without connecting (default)")
+    install.add_argument("--confirm", default="", help="Exact confirmation phrase printed by approve-install")
+    install.add_argument("--from-phase", choices=[
+        "preflight", "storage", "filesystems", "base-system", "configuration", "authentication",
+        "kernel", "bootloader", "validation",
+    ], default=None, help="Explicit restart point; omitted means resume from the first incomplete phase")
+    install.set_defaults(func=cmd_install_command)
+    approve_install = sub.add_parser("approve-install", help="Approve the reviewed installation for execution")
+    approve_install.set_defaults(func=cmd_approve_install)
     return parser
 
 

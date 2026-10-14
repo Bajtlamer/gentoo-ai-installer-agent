@@ -199,6 +199,26 @@ def build_install_config(target: dict, inventory: dict) -> dict:
             "dns": [item.strip() for item in ask("DNS servers, comma separated").split(",") if item.strip()],
         }
 
+    create_user = ask_choice("Create a regular login user", ["yes", "no"], "yes") == "yes"
+    username = defaults.get("username", "gentoo")
+    if create_user:
+        username = ask("Regular username", username)
+    install_user_ssh_key = False
+    if create_user:
+        install_user_ssh_key = ask_choice(
+            "Install the live SSH key for the regular user", ["yes", "no"], "yes"
+        ) == "yes"
+    set_root_password = ask_choice("Set a root console password", ["yes", "no"], "yes") == "yes"
+    allow_root_password_ssh = ask_choice(
+        "Allow root password login over SSH", ["yes", "no"], "no"
+    ) == "yes"
+    password_source = ask_choice("Password source", ["prompt", "environment"], defaults.get("password_source", "environment"))
+    root_password_env = defaults.get("root_password_env", "GENTOO_ROOT_PASSWORD")
+    user_password_env = defaults.get("user_password_env", "GENTOO_USER_PASSWORD")
+    if password_source == "environment":
+        root_password_env = ask("Root password environment variable", root_password_env)
+        user_password_env = ask("User password environment variable", user_password_env)
+
     if boot_mode == "uefi":
         partition_table = "gpt"
         layout = [
@@ -214,10 +234,15 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         ]
 
     print(f"\nThe selected disk is {disk_path}. This plan will erase it during a future storage phase.")
-    erase_confirmation = ask(f"Type ERASE {disk_path} to record that decision", "CANCEL")
-    disk_must_be_erased = erase_confirmation == f"ERASE {disk_path}"
-    if not disk_must_be_erased:
-        print("Disk erasure was not confirmed; execution will remain blocked.")
+    preauthorized = bool(target.get("target_is_disposable") and target.get("disk_erase_authorized"))
+    if preauthorized:
+        print("Disk erasure is pre-authorized by the disposable-target configuration.")
+        disk_must_be_erased = True
+    else:
+        erase_confirmation = ask(f"Type ERASE {disk_path} to record that decision", "CANCEL")
+        disk_must_be_erased = erase_confirmation == f"ERASE {disk_path}"
+        if not disk_must_be_erased:
+            print("Disk erasure was not confirmed; execution will remain blocked.")
 
     install = dict(defaults)
     install.update({
@@ -226,6 +251,8 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "partition_table": partition_table,
         "disk": disk_path,
         "disk_must_be_erased": disk_must_be_erased,
+        "target_is_disposable": bool(target.get("target_is_disposable")),
+        "disk_erase_authorized": bool(target.get("disk_erase_authorized")),
         "partition_layout": layout,
         "root_filesystem": root_filesystem,
         "swap_mb": swap_mb,
@@ -234,6 +261,17 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "timezone": timezone,
         "network_method": network_method,
         "network_static": static_network,
+        "create_user": create_user,
+        "username": username,
+        "install_user_ssh_key": install_user_ssh_key,
+        "user_groups": defaults.get("user_groups", ["wheel"]),
+        "user_shell": defaults.get("user_shell", "/bin/bash"),
+        "set_root_password": set_root_password,
+        "allow_root_password_ssh": allow_root_password_ssh,
+        "password_source": password_source,
+        "generate_missing_passwords": defaults.get("generate_missing_passwords", True),
+        "root_password_env": root_password_env,
+        "user_password_env": user_password_env,
         "execution_enabled": False,
         "review_status": "pending_operator_review",
         "detected_live_boot_mode": detected_boot,
