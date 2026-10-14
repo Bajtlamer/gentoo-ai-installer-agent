@@ -63,7 +63,7 @@
     },
     {
       "id": "authentication",
-      "description": "Install and verify SSH, root key access, passwords, and the regular user",
+      "description": "Install and verify SSH, root key access, sudo, passwords, and the regular user",
       "handbook_sections": [
         "Installation/Configuring the system"
       ],

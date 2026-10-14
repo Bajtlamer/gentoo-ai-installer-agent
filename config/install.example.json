@@ -44,6 +44,7 @@
   "user_groups": [
     "wheel"
   ],
+  "configure_sudo": true,
   "user_shell": "/bin/bash",
   "set_root_password": true,
   "allow_root_password_ssh": false,

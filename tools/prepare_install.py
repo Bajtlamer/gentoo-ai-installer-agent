@@ -208,6 +208,11 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         install_user_ssh_key = ask_choice(
             "Install the live SSH key for the regular user", ["yes", "no"], "yes"
         ) == "yes"
+    configure_sudo = False
+    if create_user:
+        configure_sudo = ask_choice(
+            "Configure wheel-group sudo access", ["yes", "no"], "yes"
+        ) == "yes"
     set_root_password = ask_choice("Set a root console password", ["yes", "no"], "yes") == "yes"
     allow_root_password_ssh = ask_choice(
         "Allow root password login over SSH", ["yes", "no"], "no"
@@ -265,6 +270,7 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "username": username,
         "install_user_ssh_key": install_user_ssh_key,
         "user_groups": defaults.get("user_groups", ["wheel"]),
+        "configure_sudo": configure_sudo,
         "user_shell": defaults.get("user_shell", "/bin/bash"),
         "set_root_password": set_root_password,
         "allow_root_password_ssh": allow_root_password_ssh,

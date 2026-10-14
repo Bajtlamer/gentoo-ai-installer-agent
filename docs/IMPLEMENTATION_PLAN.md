@@ -27,8 +27,8 @@
 
 The guarded executor now covers preflight, storage, filesystems, stage3/base
 system, configuration, authentication, kernel, GRUB, and validation. The
-authentication phase installs and verifies OpenSSH, provisions the configured
-regular user, and sets passwords through a non-persistent stdin channel. It
+authentication phase installs and verifies OpenSSH and sudo, provisions the configured
+regular user, enables wheel-group sudo access, and sets passwords through a non-persistent stdin channel. It
 remains disabled until
 the reviewed configuration is explicitly approved. Automatic reboot and
 post-install repair are intentionally outside this first installer milestone.

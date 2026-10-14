@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--network-method", default="dhcp")
     parser.add_argument("--username", default="gentoo", help="Installed regular username")
     parser.add_argument("--no-create-user", action="store_true", help="Do not create an installed regular user")
+    parser.add_argument("--no-sudo", action="store_true", help="Do not install sudo or configure wheel-group sudo access")
     parser.add_argument("--no-root-password", action="store_true", help="Do not prompt for a root password")
     parser.add_argument("--allow-root-password-ssh", action="store_true", help="Allow root password authentication over SSH")
     parser.add_argument("--password-source", choices=("prompt", "environment"), default="environment")
@@ -152,6 +153,7 @@ def main() -> int:
         "username": args.username,
         "install_user_ssh_key": not args.no_create_user,
         "user_groups": ["wheel"],
+        "configure_sudo": not args.no_sudo and not args.no_create_user,
         "user_shell": "/bin/bash",
         "set_root_password": not args.no_root_password,
         "allow_root_password_ssh": args.allow_root_password_ssh,

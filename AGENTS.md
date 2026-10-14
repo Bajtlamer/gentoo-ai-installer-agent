@@ -43,4 +43,6 @@ The repository provides the read-only inspector, Handbook fetcher, state files,
 approval records, and guarded executors in `tools/install_phases.py`. The
 executor is dry-run by default. It may execute only after `approve-install`
 enables all matching execution flags and the operator passes the exact
-confirmation phrase. Test on the disposable VM before using physical hardware.
+confirmation phrase. Authentication installs and configures sudo for the
+configured wheel-group user by default. Test on the disposable VM before using
+physical hardware.

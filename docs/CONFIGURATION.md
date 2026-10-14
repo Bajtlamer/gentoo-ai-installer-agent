@@ -120,6 +120,7 @@ Required fields:
 | `username` | string | Regular account name when `create_user` is true |
 | `install_user_ssh_key` | boolean | Also install the live-session public key for the regular user |
 | `user_groups` | array | Supplementary groups, normally `["wheel"]` |
+| `configure_sudo` | boolean | Optional; defaults to `true` and enables `%wheel ALL=(ALL:ALL) ALL` |
 | `user_shell` | string | Login shell, normally `/bin/bash` |
 | `set_root_password` | boolean | Set the root console password; the default environment mode does not prompt |
 | `allow_root_password_ssh` | boolean | Allow root password authentication over SSH |
@@ -148,13 +149,14 @@ installs `net-misc/openssh`, copies the corresponding public key to
 `/root/.ssh/authorized_keys`, enables `sshd` and `dhcpcd`, and configures root
 SSH access as key-only.
 
-The `authentication` phase then creates the configured regular user and sets
+The `authentication` phase then installs sudo when requested, creates the configured regular user and sets
 passwords without interaction by default. Passwords are never stored in JSON, command logs, or
 the Git repository. The agent sends them only through the SSH command's
 standard input to `chpasswd`. The example configuration creates user `gentoo`,
 while the tracked default configuration creates user `bajt`; either account is
-added to `wheel`. The configured regular-user password and a root console
-password are set without prompting during installation.
+added to `wheel`. When `configure_sudo` is true, the phase also enables the
+standard `%wheel ALL=(ALL:ALL) ALL` sudoers rule. The configured regular-user
+password and a root console password are set without prompting during installation.
 
 For unattended execution, which is the default, the agent reads the variable
 names configured by `root_password_env` and
@@ -184,6 +186,9 @@ The regular user is the normal post-reboot SSH login:
 ```powershell
 ssh -i "$env:USERPROFILE\.ssh\id_rsa" gentoo@<installed-ip>
 ```
+
+`sudo -i` asks for the regular user's password, not the root password. SSH key
+authentication does not replace the password used by sudo.
 
 When `install_user_ssh_key` is true, the same public key is copied to the
 regular user's `~/.ssh/authorized_keys` with the correct ownership and mode.

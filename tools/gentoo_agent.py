@@ -220,6 +220,11 @@ def cmd_validate(_: argparse.Namespace) -> None:
         errors.append("install_user_ssh_key must be boolean")
     if install_user_ssh_key and not create_user:
         errors.append("install_user_ssh_key requires create_user=true")
+    configure_sudo = install.get("configure_sudo", True)
+    if not isinstance(configure_sudo, bool):
+        errors.append("configure_sudo must be boolean")
+    if configure_sudo and not create_user:
+        errors.append("configure_sudo requires create_user=true")
     if not isinstance(install.get("allow_root_password_ssh", False), bool):
         errors.append("allow_root_password_ssh must be boolean")
     password_source = install.get("password_source", "environment")
@@ -241,6 +246,8 @@ def cmd_validate(_: argparse.Namespace) -> None:
             not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(group)) for group in groups
         ):
             errors.append("user_groups must contain simple Linux group names")
+        if configure_sudo and "wheel" not in [str(group) for group in groups]:
+            errors.append("configure_sudo requires wheel in user_groups")
     if not create_user and not set_root_password:
         errors.append("at least one installed password must be configured")
     execution_flags = [

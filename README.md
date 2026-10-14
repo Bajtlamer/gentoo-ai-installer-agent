@@ -128,14 +128,18 @@ Every phase has a read-only state check and a post-apply verification. If
 `--from-phase` is omitted, a run starts at the beginning, checks every phase,
 and skips work that is already complete.
 
-During the authentication phase the agent installs OpenSSH, verifies the root
-authorized key and enabled services, creates the configured regular user, and
+During the authentication phase the agent installs OpenSSH and sudo, verifies
+the root authorized key and enabled services, creates the configured regular user, and
 reads password environment variables without prompting. It generates random
 replacements when configured values are absent. Generated
 credentials are printed once after successful completion but never saved in
 configuration files or phase logs. The regular user is the normal post-reboot login. Root SSH is
 key-only by default; the reviewed configuration may explicitly allow root
 password SSH login while retaining the root public key as a fallback.
+
+When `configure_sudo` is enabled, the regular user must be in `wheel`; the
+authentication phase enables the standard `%wheel` sudoers rule. The regular
+user's password is the password requested by `sudo -i`.
 
 The commands use strict SSH host-key checking. If the host key is not already
 trusted, stop and verify it through the live console before reconnecting.

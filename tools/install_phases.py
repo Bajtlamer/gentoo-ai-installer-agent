@@ -191,6 +191,7 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
     create_user = install.get("create_user", True)
     set_root_password = install.get("set_root_password", True)
     install_user_ssh_key = install.get("install_user_ssh_key", True)
+    configure_sudo = install.get("configure_sudo", True)
     allow_root_password_ssh = install.get("allow_root_password_ssh", False)
     if not isinstance(create_user, bool):
         raise SystemExit("create_user must be boolean")
@@ -198,6 +199,8 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         raise SystemExit("set_root_password must be boolean")
     if not isinstance(install_user_ssh_key, bool):
         raise SystemExit("install_user_ssh_key must be boolean")
+    if not isinstance(configure_sudo, bool):
+        raise SystemExit("configure_sudo must be boolean")
     if not isinstance(allow_root_password_ssh, bool):
         raise SystemExit("allow_root_password_ssh must be boolean")
     generate_missing_passwords = install.get("generate_missing_passwords", True)
@@ -224,6 +227,8 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
             not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(group)) for group in groups
         ):
             raise SystemExit("user_groups must contain simple Linux group names")
+        if configure_sudo and "wheel" not in [str(group) for group in groups]:
+            raise SystemExit("configure_sudo requires wheel in user_groups")
         shell = str(install.get("user_shell", "/bin/bash"))
         if shell != "/bin/bash":
             raise SystemExit("user_shell must be /bin/bash; other shells are not installed by this workflow")
@@ -452,6 +457,7 @@ def authentication_check_command(target: dict, install: dict) -> str:
     create_user = install.get("create_user", True)
     set_root_password = install.get("set_root_password", True)
     install_user_ssh_key = install.get("install_user_ssh_key", True)
+    configure_sudo = install.get("configure_sudo", True)
     root_login_policy = "yes" if install.get("allow_root_password_ssh", False) else "prohibit-password"
     lines = [
         "set -eu",
@@ -480,6 +486,11 @@ def authentication_check_command(target: dict, install: dict) -> str:
                 f"test -s {q(user_home + '/.ssh/authorized_keys')}",
                 f"grep -Fqx {q(public_key)} {q(user_home + '/.ssh/authorized_keys')}",
             ]
+        if configure_sudo:
+            lines += [
+                f"test -x {q(MOUNT_ROOT + '/usr/bin/sudo')}",
+                f"grep -Fqx '%wheel ALL=(ALL:ALL) ALL' {q(MOUNT_ROOT + '/etc/sudoers')}",
+            ]
     lines.append("printf 'authentication-ok\\n'")
     return "\n".join(lines)
 
@@ -490,6 +501,7 @@ def authentication_command(target: dict, install: dict) -> str:
     user_shell = str(install.get("user_shell", "/bin/bash"))
     groups = [str(group) for group in install.get("user_groups", ["wheel"])]
     install_user_ssh_key = install.get("install_user_ssh_key", True)
+    configure_sudo = install.get("configure_sudo", True)
     inside = ["set -eu"]
     if create_user:
         group_args = f" -G {q(','.join(groups))}" if groups else ""
@@ -506,6 +518,13 @@ def authentication_command(target: dict, install: dict) -> str:
                 f"chown {q(username)}:{q(username)} /home/{q(username)}/.ssh/authorized_keys",
                 f"chmod 600 /home/{q(username)}/.ssh/authorized_keys",
             ]
+    if configure_sudo:
+        inside += [
+            "emerge --noreplace --verbose app-admin/sudo",
+            "sudo_rule='%wheel ALL=(ALL:ALL) ALL'",
+            "if ! grep -Fqx \"$sudo_rule\" /etc/sudoers; then printf '%s\\n' \"$sudo_rule\" >> /etc/sudoers; fi",
+            "/usr/sbin/visudo -cf /etc/sudoers",
+        ]
     if install.get("set_root_password", True) or create_user:
         inside.append("chpasswd")
     return "\n".join([

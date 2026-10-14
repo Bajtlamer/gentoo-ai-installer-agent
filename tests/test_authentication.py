@@ -31,6 +31,7 @@ class AuthenticationConfigurationTests(unittest.TestCase):
             "username": "gentoo",
             "install_user_ssh_key": True,
             "user_groups": ["wheel"],
+            "configure_sudo": True,
             "user_shell": "/bin/bash",
             "set_root_password": True,
             "allow_root_password_ssh": True,
@@ -72,7 +73,24 @@ class AuthenticationConfigurationTests(unittest.TestCase):
         self.assertIn("chpasswd", command)
         self.assertIn("authorized_keys", command)
         self.assertIn("chown gentoo:gentoo", command)
+        self.assertIn("app-admin/sudo", command)
+        self.assertIn("%wheel ALL=(ALL:ALL) ALL", command)
+        self.assertIn("visudo -cf /etc/sudoers", command)
         self.assertNotIn("password", command.lower())
+
+    def test_authentication_check_verifies_sudo_access(self):
+        command = install_phases.authentication_check_command(self.target, self.install)
+        self.assertIn("/usr/bin/sudo", command)
+        self.assertIn("%wheel ALL=(ALL:ALL) ALL", command)
+        self.assertIn("/etc/sudoers", command)
+
+    def test_sudo_can_be_disabled_explicitly(self):
+        configured = dict(self.install)
+        configured["configure_sudo"] = False
+        command = install_phases.authentication_command(self.target, configured)
+        check = install_phases.authentication_check_command(self.target, configured)
+        self.assertNotIn("app-admin/sudo", command)
+        self.assertNotIn("/usr/bin/sudo", check)
 
     def test_password_input_is_only_records_for_chpasswd(self):
         # The function is deliberately tested without calling getpass. The
