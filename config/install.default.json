@@ -47,8 +47,8 @@
   "allow_root_password_ssh": false,
   "password_source": "environment",
   "generate_missing_passwords": true,
-  "root_password_env": "printadmin",
-  "user_password_env": "bajtfaskoadmin",
+  "root_password_env": "GENTOO_ROOT_PASSWORD",
+  "user_password_env": "GENTOO_USER_PASSWORD",
   "execution_enabled": false,
   "review_status": "pending_operator_review"
 }

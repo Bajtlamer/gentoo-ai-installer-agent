@@ -130,8 +130,8 @@ and skips work that is already complete.
 
 During the authentication phase the agent installs OpenSSH, verifies the root
 authorized key and enabled services, creates the configured regular user, and
-reads preconfigured password environment variables without prompting, and
-generates random replacements when configured values are absent. Generated
+reads password environment variables without prompting. It generates random
+replacements when configured values are absent. Generated
 credentials are printed once after successful completion but never saved in
 configuration files or phase logs. The regular user is the normal post-reboot login. Root SSH is
 key-only by default; the reviewed configuration may explicitly allow root

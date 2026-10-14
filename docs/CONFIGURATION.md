@@ -121,7 +121,7 @@ Required fields:
 | `install_user_ssh_key` | boolean | Also install the live-session public key for the regular user |
 | `user_groups` | array | Supplementary groups, normally `["wheel"]` |
 | `user_shell` | string | Login shell, normally `/bin/bash` |
-| `set_root_password` | boolean | Prompt for and set the root console password |
+| `set_root_password` | boolean | Set the root console password; the default environment mode does not prompt |
 | `allow_root_password_ssh` | boolean | Allow root password authentication over SSH |
 | `password_source` | string | `environment` by default; `prompt` is an explicit interactive override |
 | `generate_missing_passwords` | boolean | Generate random passwords when environment values are absent |
@@ -151,9 +151,10 @@ SSH access as key-only.
 The `authentication` phase then creates the configured regular user and sets
 passwords without interaction by default. Passwords are never stored in JSON, command logs, or
 the Git repository. The agent sends them only through the SSH command's
-standard input to `chpasswd`. By default it creates user `gentoo`, adds it to
-`wheel`, and sets both a regular-user password and a root console password
-without prompting during installation.
+standard input to `chpasswd`. The example configuration creates user `gentoo`,
+while the tracked default configuration creates user `bajt`; either account is
+added to `wheel`. The configured regular-user password and a root console
+password are set without prompting during installation.
 
 For unattended execution, which is the default, the agent reads the variable
 names configured by `root_password_env` and
