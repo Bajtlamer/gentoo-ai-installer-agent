@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gentoo_agent.core import approval, install_plan, phases
+from gentoo_agent.core.errors import INVENTORY_MISSING
 from gentoo_agent.core.config import save_json
 from gentoo_agent.core.errors import (
     APPROVAL_EXPIRED,
@@ -32,13 +33,13 @@ def save_signed(plan_id: str, record: dict) -> None:
               {**unsigned, "signature": signing.sign(unsigned, signing.load_or_create_key())})
 
 
-def make_plan(serial: str = "QM00001", changes: dict | None = None) -> dict:
+def make_plan(serial: str = "QM00001", changes: dict | None = None, model: str = "QEMU HARDDISK") -> dict:
     install = json.loads((REPO / "tests" / "golden" / "configs" / "bios_mbr_user_sudo.json").read_text(encoding="utf-8"))
     install.update({"disk_must_be_erased": True, "target_is_disposable": True, "disk_erase_authorized": True})
     install.update(changes or {})
     project = json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8"))
     stdout = json.dumps({"blockdevices": [
-        {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": "QEMU HARDDISK", "serial": serial, "wwn": None},
+        {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": model, "serial": serial, "wwn": None},
     ]})
     inventory = {"results": [{"label": "disk_identity", "returncode": 0, "stdout": stdout}]}
     with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"):
@@ -214,6 +215,42 @@ class ApprovalTests(unittest.TestCase):
         with temp_home():
             summary = approval.approval_summary(make_plan(changes=static))
         self.assertIn("Network: static address=10.0.0.2/24 gateway=10.0.0.1 dns=1.1.1.1,9.9.9.9", summary)
+
+
+    def test_unprintable_disk_identity_never_becomes_a_plan(self):
+        for model in ("NVMe\nDisk erase: no", "NVMe\x1b[2K", "NVMe\rx"):
+            with self.subTest(model=model), temp_home():
+                with self.assertRaises(AgentError) as caught:
+                    make_plan(model=model)
+                self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+                self.assertIn("unprintable", caught.exception.message)
+
+    def test_unprintable_plan_values_are_escaped_in_the_summary(self):
+        with temp_home():
+            plan = make_plan()
+            plain = approval.approval_summary(plan)
+            forged = {key: value for key, value in plan.items()}
+            forged["target"] = {**plan["target"], "name": "gentoo\nDisk erase: no\x07"}
+            forged["install"] = {**plan["install"], "hostname": "h" * 300}
+            forged["plan_hash"] = install_plan.compute_plan_hash(forged)
+            forged["plan_id"] = forged["plan_hash"][:install_plan.PLAN_ID_LENGTH]
+            save_json(install_plan.plan_path(forged["plan_id"]), forged)
+            summary = approval.approval_summary(forged)
+        self.assertEqual(len(summary.splitlines()), len(plain.splitlines()))
+        self.assertIn('"gentoo\\nDisk erase: no\\u0007"', summary)
+        self.assertNotIn("\x07", summary)
+        self.assertNotIn("h" * 201, summary)
+        self.assertIn('"' + "h" * 199 + "...", summary)
+        self.assertEqual(sum(line.startswith("Disk erase:") for line in summary.splitlines()), 1)
+
+    def test_erase_and_destructive_lines_come_first(self):
+        with temp_home():
+            lines = approval.approval_summary(make_plan()).splitlines()
+        self.assertTrue(lines[1].startswith("Plan hash: "))
+        self.assertTrue(lines[2].startswith("Disk erase: YES"))
+        self.assertTrue(lines[3].startswith("Destructive phases: "))
+        first_disk = next(index for index, line in enumerate(lines) if line.startswith("Disk: "))
+        self.assertLess(2, first_disk)
 
 
 if __name__ == "__main__":

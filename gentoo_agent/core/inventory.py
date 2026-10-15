@@ -9,6 +9,7 @@ from typing import Callable
 
 from gentoo_agent.core.config import load_json, now, save_json
 from gentoo_agent.core import paths
+from gentoo_agent.core.errors import SSH_UNREACHABLE, AgentError
 from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
 from gentoo_agent.core.state import load_state, save_state
 
@@ -22,6 +23,9 @@ def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = 
             results.append(run_ssh_readonly(target, label, command))
         except subprocess.TimeoutExpired as exc:
             results.append({"label": label, "command": command, "error": str(exc)})
+        except OSError as exc:
+            raise AgentError(SSH_UNREACHABLE, f"Could not run ssh to inspect {target.get('host')}: {exc}",
+                             {"host": target.get("host"), "label": label}) from exc
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     data = {
         "target": target["name"],
