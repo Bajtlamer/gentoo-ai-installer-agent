@@ -129,6 +129,17 @@ class SettingValidationTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, CONFIG_INVALID)
                 self.assertEqual(caught.exception.details.get("field"), field)
 
+    def test_unsafe_password_env_names_are_rejected(self):
+        for field in ("root_password_env", "user_password_env"):
+            for name in ("PATH", "HOME", "GENTOO_AGENT_HOME", "SSH_AUTH_SOCK", "LD_PRELOAD", "PYTHONPATH",
+                         "GITHUB_TOKEN", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "ANTHROPIC_KEY"):
+                with self.subTest(field=field, name=name):
+                    with self.assertRaises(AgentError) as caught:
+                        validated_settings(TARGET, changed("uefi_gpt_user_sudo", **{field: name}))
+                    self.assertEqual(caught.exception.code, CONFIG_INVALID)
+                    self.assertEqual(caught.exception.details.get("field"), field)
+        validated_settings(TARGET, changed("uefi_gpt_user_sudo", user_password_env="GENTOO_USER_PASSWORD"))
+
     def test_valid_settings_are_accepted(self):
         for name, install in VALID:
             with self.subTest(name):

@@ -24,22 +24,117 @@ def _text(value: object) -> str:
     return str(value or "").strip()
 
 
-def parse_disk_identities(stdout: str) -> list[dict]:
+def _block_devices(stdout: object, label: str) -> list[dict]:
+    """The blockdevices list of lsblk -J output; INVENTORY_MISSING if malformed."""
+    def malformed() -> AgentError:
+        return AgentError(INVENTORY_MISSING, f"{label} output is not valid lsblk JSON", {"label": label})
+
+    if not isinstance(stdout, str):
+        raise malformed()
     try:
-        devices = json.loads(stdout or "{}").get("blockdevices", [])
-    except json.JSONDecodeError as exc:
-        raise AgentError(INVENTORY_MISSING, "disk_identity output is not valid lsblk JSON", {"label": IDENTITY_LABEL}) from exc
-    return [
-        {
-            "path": _text(device.get("path")),
-            "size_bytes": int(device.get("size") or 0),
-            "model": _text(device.get("model")),
-            "serial": _text(device.get("serial")),
-            "wwn": _text(device.get("wwn")),
-        }
-        for device in devices
-        if device.get("type") == "disk"
-    ]
+        data = json.loads(stdout or "{}")
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise malformed() from exc
+    devices = data.get("blockdevices", []) if isinstance(data, dict) else None
+    if not isinstance(devices, list) or not all(isinstance(device, dict) for device in devices):
+        raise malformed()
+    return devices
+
+
+def _size_bytes(device: dict) -> int:
+    value = device.get("size") or 0
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise AgentError(INVENTORY_MISSING, "disk_identity lists a disk with an invalid size", {"label": IDENTITY_LABEL})
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise AgentError(INVENTORY_MISSING, "disk_identity lists a disk with an invalid size", {"label": IDENTITY_LABEL}) from exc
+
+
+def _identity(device: dict) -> dict:
+    return {
+        "path": _text(device.get("path")),
+        "size_bytes": _size_bytes(device),
+        "model": _text(device.get("model")),
+        "serial": _text(device.get("serial")),
+        "wwn": _text(device.get("wwn")),
+    }
+
+
+def parse_disk_identities(stdout: str) -> list[dict]:
+    return [_identity(device) for device in _block_devices(stdout, IDENTITY_LABEL) if device.get("type") == "disk"]
+
+
+def inventory_results(inventory: object) -> dict:
+    """Inventory results keyed by label; INVENTORY_MISSING if the shape is wrong."""
+    results = inventory.get("results") if isinstance(inventory, dict) else None
+    if not isinstance(results, list):
+        raise AgentError(INVENTORY_MISSING, "The inventory is malformed; refresh it.", {})
+    return {item.get("label"): item for item in results if isinstance(item, dict) and isinstance(item.get("label"), str)}
+
+
+def _flag(value: object) -> bool:
+    return value is True or value == 1 or value == "1"
+
+
+def _mountpoints(device: dict) -> list[str]:
+    """Non-empty mountpoints of a storage_json device and all its children."""
+    found: list[str] = []
+    values = device.get("mountpoints")
+    if not isinstance(values, list):
+        values = [device.get("mountpoint")]
+    found += [value for value in values if isinstance(value, str) and value]
+    children = device.get("children")
+    for child in children if isinstance(children, list) else []:
+        if isinstance(child, dict):
+            found += _mountpoints(child)
+    return found
+
+
+def _mounted_disks(results: dict) -> dict[str, list[str]]:
+    item = results.get("storage_json")
+    if item is None:
+        return {}
+    if item.get("returncode") != 0:
+        raise AgentError(INVENTORY_MISSING, "The storage_json inventory failed; mount state is unknown. Refresh it.",
+                         {"label": "storage_json"})
+    devices = _block_devices(item.get("stdout"), "storage_json")
+    return {_text(device.get("path")): _mountpoints(device) for device in devices}
+
+
+def disk_candidates(inventory: dict) -> tuple[list[dict], list[dict]]:
+    """Split inventory disks into (eligible identities, excluded identities with a reason).
+
+    A disk is excluded when it is removable, attached over USB, read-only,
+    or has a mounted partition. Missing fields count as not set; a missing
+    storage_json result counts as nothing mounted.
+    """
+    results = inventory_results(inventory)
+    item = results.get(IDENTITY_LABEL)
+    if item is None or item.get("returncode") != 0:
+        raise AgentError(INVENTORY_MISSING, "The latest inventory has no disk identity; refresh it.", {"label": IDENTITY_LABEL})
+    mounted = _mounted_disks(results)
+    eligible: list[dict] = []
+    excluded: list[dict] = []
+    for device in _block_devices(item.get("stdout"), IDENTITY_LABEL):
+        if device.get("type") != "disk":
+            continue
+        identity = _identity(device)
+        reasons = []
+        if _flag(device.get("rm")):
+            reasons.append("removable")
+        if _text(device.get("tran")).lower() == "usb":
+            reasons.append("usb transport")
+        if _flag(device.get("ro")):
+            reasons.append("read-only")
+        mountpoints = mounted.get(identity["path"], [])
+        if mountpoints:
+            reasons.append("mounted at " + ", ".join(mountpoints))
+        if reasons:
+            excluded.append({**identity, "reason": "; ".join(reasons)})
+        else:
+            eligible.append(identity)
+    return eligible, excluded
 
 
 def identity_strength(disk: dict) -> str:
