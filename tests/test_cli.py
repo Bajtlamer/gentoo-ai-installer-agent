@@ -1,8 +1,18 @@
 import io
+import json
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
 
 from gentoo_agent import cli
+from gentoo_agent.core import approval, paths, phases, runs
+from gentoo_agent.core.config import save_json
+from tests.helpers import temp_home
+from tests.test_launcher import approved_plan
+
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 class InstallCommandTests(unittest.TestCase):
@@ -13,6 +23,123 @@ class InstallCommandTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("error [APPROVAL_REQUIRED]: install --execute was replaced", stderr.getvalue())
         self.assertIn("gentoo-agent plan create", stderr.getvalue())
+
+
+class FakeTty:
+    def __init__(self, answer):
+        self.answer = answer
+        self.written = []
+
+    def write(self, text):
+        self.written.append(text)
+
+    def flush(self):
+        pass
+
+    def readline(self):
+        return self.answer + "\n"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class ApproveCommandTests(unittest.TestCase):
+    def test_approve_refuses_without_a_terminal(self):
+        stderr = io.StringIO()
+        with temp_home():
+            plan = approved_plan()
+            approval.approval_path(plan["plan_id"]).unlink()
+            with patch.object(cli, "TTY_PATH", "/nonexistent/tty"), redirect_stderr(stderr):
+                code = cli.main(["approve", plan["plan_id"]])
+            approved = approval.approval_path(plan["plan_id"]).exists()
+        self.assertEqual(code, 1)
+        self.assertIn("error [APPROVAL_REQUIRED]: approve needs an interactive terminal", stderr.getvalue())
+        self.assertFalse(approved)
+
+    def test_approve_with_the_exact_phrase_records_approval(self):
+        with temp_home():
+            plan = approved_plan()
+            approval.approval_path(plan["plan_id"]).unlink()
+            tty = FakeTty(f"APPROVE {plan['plan_id']}")
+            with patch.object(cli, "open_tty", return_value=tty), redirect_stdout(io.StringIO()):
+                code = cli.main(["approve", plan["plan_id"]])
+            status = approval.approval_status(plan["plan_id"])
+        self.assertEqual(code, 0)
+        self.assertTrue(status["approved"])
+        self.assertEqual(status["channel"], "cli")
+        self.assertIn(plan["plan_hash"], "".join(tty.written))
+
+    def test_wrong_phrase_records_nothing(self):
+        stderr = io.StringIO()
+        with temp_home():
+            plan = approved_plan()
+            approval.approval_path(plan["plan_id"]).unlink()
+            with patch.object(cli, "open_tty", return_value=FakeTty("yes")), redirect_stderr(stderr):
+                code = cli.main(["approve", plan["plan_id"]])
+            approved = approval.approval_path(plan["plan_id"]).exists()
+        self.assertEqual(code, 1)
+        self.assertIn("APPROVAL_DECLINED", stderr.getvalue())
+        self.assertFalse(approved)
+
+
+class PlanAndRunCommandTests(unittest.TestCase):
+    def test_plan_create_saves_a_plan_from_the_config(self):
+        with temp_home() as home:
+            config = home / "config"
+            install = json.loads((REPO / "tests" / "golden" / "configs" / "bios_mbr_user_sudo.json").read_text(encoding="utf-8"))
+            install.update({"disk_must_be_erased": True, "target_is_disposable": True, "disk_erase_authorized": True})
+            save_json(config / "install.json", install)
+            save_json(config / "target.json", {"name": "gentoo", "host": "192.0.2.10", "port": 22, "user": "root",
+                                               "identity_file": "~/.ssh/id_test", "target_is_disposable": True,
+                                               "disk_erase_authorized": True})
+            save_json(config / "plan.json", json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8")))
+            stdout = json.dumps({"blockdevices": [{"path": "/dev/sda", "type": "disk", "size": 1, "model": "m",
+                                                   "serial": "s1", "wwn": None}]})
+            save_json(home / "inventory" / "inventory-20261015T120000Z.json",
+                      {"results": [{"label": "disk_identity", "returncode": 0, "stdout": stdout}]})
+            output = io.StringIO()
+            with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"), redirect_stdout(output):
+                code = cli.main(["plan", "create"])
+            saved = list(paths.plans_dir().glob("*.json"))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(saved), 1)
+        self.assertIn(f"gentoo-agent approve {saved[0].stem}", output.getvalue())
+        self.assertIn("serial=s1", output.getvalue())
+
+    def test_run_status_shows_generated_credentials_once(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": "a" * 16, "status": "failed", "pid": None,
+                                    "started_at": runs.now()})
+            runs.write_credentials(run_id, {"credentials": {"root": "s3cret-value"}, "applied": True})
+            first, second = io.StringIO(), io.StringIO()
+            with redirect_stdout(first):
+                cli.main(["run", "status", run_id])
+            with redirect_stdout(second):
+                cli.main(["run", "status", run_id])
+        self.assertIn("s3cret-value", first.getvalue())
+        self.assertNotIn("s3cret-value", second.getvalue())
+
+
+class DenyRuleTests(unittest.TestCase):
+    def test_agent_may_not_run_approve_or_write_approval_files(self):
+        settings = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        deny = settings["permissions"]["deny"]
+        for rule in (
+            "Bash(gentoo-agent approve:*)",
+            "Bash(python -m gentoo_agent approve:*)",
+            "Bash(python3 -m gentoo_agent approve:*)",
+            "Bash(python tools/gentoo_agent.py approve:*)",
+            "Bash(python3 tools/gentoo_agent.py approve:*)",
+            "Edit(approvals/**)",
+            "Write(approvals/**)",
+            "Edit(plans/**)",
+            "Write(plans/**)",
+        ):
+            self.assertIn(rule, deny)
 
 
 if __name__ == "__main__":
