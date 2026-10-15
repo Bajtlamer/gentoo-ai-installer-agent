@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from gentoo_agent.core import disks
-from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, SSH_UNREACHABLE, TARGET_DRIFT, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, DISK_AMBIGUOUS, INVENTORY_MISSING, SSH_UNREACHABLE, TARGET_DRIFT, AgentError
 from gentoo_agent.core.ssh import READ_ONLY_COMMANDS
 
 
@@ -61,6 +61,36 @@ class DiskIdentityTests(unittest.TestCase):
             with self.assertRaises(AgentError) as caught:
                 disks.read_live_identity(TARGET, "/dev/sda")
         self.assertEqual(caught.exception.code, SSH_UNREACHABLE)
+
+    def test_ssh_launch_failure_is_reported_as_unreachable(self):
+        with patch.object(disks, "run_ssh_readonly", side_effect=FileNotFoundError("ssh")):
+            with self.assertRaises(AgentError) as caught:
+                disks.read_live_identity(TARGET, "/dev/sda")
+        self.assertEqual(caught.exception.code, SSH_UNREACHABLE)
+
+    def test_weak_twins_are_ambiguous(self):
+        twins = json.dumps({"blockdevices": [
+            {"path": "/dev/vda", "type": "disk", "size": 100, "model": "VIRT", "serial": None, "wwn": None},
+            {"path": "/dev/vdb", "type": "disk", "size": 100, "model": "VIRT", "serial": None, "wwn": None},
+        ]})
+        with self.assertRaises(AgentError) as caught:
+            disks.disk_from_inventory(inventory_with(twins), "/dev/vda")
+        self.assertEqual(caught.exception.code, DISK_AMBIGUOUS)
+        self.assertEqual(caught.exception.details["twins"], ["/dev/vdb"])
+
+    def test_weak_disk_with_different_sized_neighbour_is_accepted(self):
+        mixed = json.dumps({"blockdevices": [
+            {"path": "/dev/vda", "type": "disk", "size": 100, "model": "VIRT", "serial": None, "wwn": None},
+            {"path": "/dev/vdb", "type": "disk", "size": 200, "model": "VIRT", "serial": None, "wwn": None},
+        ]})
+        self.assertEqual(disks.disk_from_inventory(inventory_with(mixed), "/dev/vda")["path"], "/dev/vda")
+
+    def test_strong_disk_with_same_size_neighbour_is_accepted(self):
+        strong = json.dumps({"blockdevices": [
+            {"path": "/dev/sda", "type": "disk", "size": 100, "model": "M", "serial": "S1", "wwn": None},
+            {"path": "/dev/sdb", "type": "disk", "size": 100, "model": "M", "serial": "S2", "wwn": None},
+        ]})
+        self.assertEqual(disks.disk_from_inventory(inventory_with(strong), "/dev/sda")["serial"], "S1")
 
 
 if __name__ == "__main__":
