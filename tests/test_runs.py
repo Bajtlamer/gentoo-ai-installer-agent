@@ -1,7 +1,12 @@
 import datetime as dt
+import os
 import subprocess
 import sys
+import threading
+import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from gentoo_agent.core import runs
 from gentoo_agent.core.config import load_json, save_json
@@ -41,25 +46,23 @@ class RunRecordTests(unittest.TestCase):
 
 class LockTests(unittest.TestCase):
     def test_lock_is_exclusive_while_the_holder_is_alive(self):
-        import os
-
         with temp_home():
             first = runs.new_run_id()
-            runs.write_run(first, record(first, pid=os.getpid()))
-            runs.acquire_lock(first)
+            runs.acquire_lock(first, record(first, pid=os.getpid()))
+            second = runs.new_run_id()
             with self.assertRaises(AgentError) as caught:
-                runs.acquire_lock(runs.new_run_id())
+                runs.acquire_lock(second, record(second))
             self.assertEqual(caught.exception.code, RUN_ALREADY_ACTIVE)
             runs.release_lock(first)
-            runs.acquire_lock(runs.new_run_id())
+            third = runs.new_run_id()
+            runs.acquire_lock(third, record(third))
 
     def test_stale_lock_is_reclaimed(self):
         with temp_home():
             stale = runs.new_run_id()
-            runs.write_run(stale, record(stale, pid=dead_pid()))
-            runs.acquire_lock(stale)
+            runs.acquire_lock(stale, record(stale, pid=dead_pid()))
             fresh = runs.new_run_id()
-            runs.acquire_lock(fresh)
+            runs.acquire_lock(fresh, record(fresh))
             self.assertEqual(runs.lock_path().read_text(encoding="utf-8"), fresh)
 
 
@@ -75,8 +78,7 @@ class StatusTests(unittest.TestCase):
     def test_dead_worker_is_reported_as_interrupted(self):
         with temp_home():
             run_id = runs.new_run_id()
-            runs.write_run(run_id, record(run_id, pid=dead_pid()))
-            runs.acquire_lock(run_id)
+            runs.acquire_lock(run_id, record(run_id, pid=dead_pid()))
             status = runs.run_status(run_id)
             self.assertFalse(runs.lock_path().exists())
         self.assertEqual(status["status"], "interrupted")
@@ -117,6 +119,200 @@ class CredentialsAndLogTests(unittest.TestCase):
         self.assertEqual([entry["index"] for entry in page["entries"]], [1, 2])
         self.assertEqual(page["next_offset"], 3)
         self.assertEqual(page["total"], 5)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+LOCK_SCRIPT = """
+import pathlib, sys, time
+from gentoo_agent.core import runs
+from gentoo_agent.core.errors import RUN_ALREADY_ACTIVE, AgentError
+start = pathlib.Path(sys.argv[1])
+deadline = time.monotonic() + 30
+while not start.exists() and time.monotonic() < deadline:
+    time.sleep(0.001)
+run_id = runs.new_run_id()
+record = {"run_id": run_id, "status": "starting", "pid": None, "started_at": runs.now()}
+try:
+    runs.acquire_lock(run_id, record)
+except AgentError as error:
+    print("ACTIVE" if error.code == RUN_ALREADY_ACTIVE else error.code)
+else:
+    print("OK")
+"""
+
+
+class ConcurrentLockTests(unittest.TestCase):
+    def test_only_one_of_many_processes_acquires_the_lock(self):
+        with temp_home() as home:
+            env = {**os.environ, "GENTOO_AGENT_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}
+            for round_number in range(5):
+                start = home / f"start-{round_number}"
+                processes = [
+                    subprocess.Popen([sys.executable, "-c", LOCK_SCRIPT, str(start)], env=env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    for _ in range(12)
+                ]
+                time.sleep(0.5)
+                start.touch()
+                outputs = [process.communicate(timeout=60) for process in processes]
+                results = [stdout.strip() for stdout, _ in outputs]
+                errors = [stderr for _, stderr in outputs if stderr]
+                self.assertEqual(results.count("OK"), 1, (round_number, results, errors[:1]))
+                self.assertEqual(results.count("ACTIVE"), 11, results)
+                runs.lock_path().unlink()
+
+    def test_malformed_holder_record_fails_closed(self):
+        for broken in ({"started_at": "not a date"}, {"started_at": None}, {"started_at": "2026-01-01T00:00:00"}):
+            with self.subTest(broken=broken), temp_home():
+                holder = runs.new_run_id()
+                holder_record = record(holder, status="starting")
+                holder_record.update(broken)
+                runs.acquire_lock(holder, holder_record)
+                other = runs.new_run_id()
+                with self.assertRaises(AgentError) as caught:
+                    runs.acquire_lock(other, record(other))
+                self.assertEqual(caught.exception.code, RUN_ALREADY_ACTIVE)
+
+    def test_missing_started_at_fails_closed(self):
+        with temp_home():
+            holder = runs.new_run_id()
+            holder_record = record(holder, status="starting")
+            del holder_record["started_at"]
+            runs.acquire_lock(holder, holder_record)
+            other = runs.new_run_id()
+            with self.assertRaises(AgentError) as caught:
+                runs.acquire_lock(other, record(other))
+            self.assertEqual(caught.exception.code, RUN_ALREADY_ACTIVE)
+
+    def test_acquire_needs_fcntl(self):
+        with temp_home(), patch.object(runs, "fcntl", None):
+            run_id = runs.new_run_id()
+            with self.assertRaises(AgentError) as caught:
+                runs.acquire_lock(run_id, record(run_id))
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+
+class StatusConcurrencyTests(unittest.TestCase):
+    def test_run_status_never_overwrites_a_terminal_status(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id, status="failed", pid=dead_pid()))
+            self.assertEqual(runs.run_status(run_id)["status"], "failed")
+            self.assertEqual(runs.read_run(run_id)["status"], "failed")
+
+    def test_run_status_rereads_the_record_under_the_mutex(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.acquire_lock(run_id, record(run_id, pid=dead_pid()))
+            result = {}
+            with runs._mutex():
+                reader = threading.Thread(target=lambda: result.update(runs.run_status(run_id)))
+                reader.start()
+                time.sleep(0.3)
+                final = runs.read_run(run_id)
+                final["status"] = "failed"
+                save_json(runs.run_dir(run_id) / "run.json", final)
+            reader.join(10)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(runs.read_run(run_id)["status"], "failed")
+
+    def test_unreaped_zombie_child_is_not_alive(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        try:
+            time.sleep(0.2)
+            deadline = time.monotonic() + 5
+            while runs.pid_alive(child.pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(runs.pid_alive(child.pid))
+        finally:
+            child.wait()
+
+    def test_claim_run_moves_starting_to_running(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.acquire_lock(run_id, record(run_id, status="starting"))
+            claimed = runs.claim_run(run_id, 4242)
+            self.assertEqual((claimed["status"], claimed["pid"]), ("running", 4242))
+            self.assertEqual(runs.read_run(run_id)["status"], "running")
+            with self.assertRaises(AgentError) as caught:
+                runs.claim_run(run_id, 4242)
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_claim_run_refuses_an_interrupted_run(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.acquire_lock(run_id, record(run_id, status="starting"))
+            runs.update_run(run_id, status="interrupted")
+            with self.assertRaises(AgentError) as caught:
+                runs.claim_run(run_id, 4242)
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertIn("no longer startable", caught.exception.message)
+
+
+class CredentialsConcurrencyTests(unittest.TestCase):
+    def test_take_credentials_is_one_time_under_concurrency(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id, status="failed"))
+            for _ in range(20):
+                runs.write_credentials(run_id, {"credentials": {"root": "secret"}})
+                barrier = threading.Barrier(4)
+                results, errors = [], []
+
+                def take():
+                    barrier.wait()
+                    try:
+                        results.append(runs.take_credentials(run_id))
+                    except Exception as error:  # noqa: BLE001
+                        errors.append(error)
+
+                threads = [threading.Thread(target=take) for _ in range(4)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(10)
+                self.assertEqual(errors, [])
+                self.assertEqual(len([item for item in results if item is not None]), 1, results)
+            leftovers = [path.name for path in runs.run_dir(run_id).iterdir() if "credentials" in path.name]
+            self.assertEqual(leftovers, [])
+
+    def test_malformed_credentials_do_not_break_purge(self):
+        with temp_home():
+            old, fresh, naive, other = (runs.new_run_id() for _ in range(4))
+            for run_id in (old, fresh, naive, other):
+                runs.write_run(run_id, record(run_id, status="failed"))
+            old_path = runs.credentials_path(old)
+            old_path.write_text("{not json", encoding="utf-8")
+            stamp = time.time() - 25 * 3600
+            os.utime(old_path, (stamp, stamp))
+            fresh_path = runs.credentials_path(fresh)
+            fresh_path.write_text("{not json", encoding="utf-8")
+            naive_path = runs.credentials_path(naive)
+            save_json(naive_path, {"written_at": "2020-01-01T00:00:00"})
+            runs.purge_stale_credentials()
+            self.assertFalse(old_path.exists())
+            self.assertTrue(fresh_path.exists())
+            self.assertTrue(naive_path.exists())
+            self.assertEqual(runs.run_status(other)["status"], "failed")
+
+
+class LogRobustnessTests(unittest.TestCase):
+    def test_partial_and_corrupt_lines(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id))
+            runs.append_log(run_id, {"index": 0})
+            with (runs.run_dir(run_id) / "log.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write("{broken\n")
+                handle.write('{"index": 2}\n')
+                handle.write('{"index": 3, "par')
+            page = runs.read_log(run_id, offset=0, limit=10)
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(page["entries"][0], {"index": 0})
+        self.assertEqual(page["entries"][1], {"corrupt": True, "line": 1})
+        self.assertEqual(page["entries"][2], {"index": 2})
+        self.assertEqual(page["next_offset"], 3)
 
 
 if __name__ == "__main__":
