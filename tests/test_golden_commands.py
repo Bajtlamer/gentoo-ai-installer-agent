@@ -6,7 +6,6 @@ Regenerate only on an intentional command change:
 
 import json
 import os
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -25,18 +24,17 @@ PUBLIC_KEY = "ssh-ed25519 AAAAGOLDEN gentoo-agent-golden"
 
 
 def render(install: dict) -> str:
-    sys.path.insert(0, str(ROOT / "tools"))
-    import install_phases
+    from gentoo_agent.core import phases
 
-    with patch("install_phases.target_config", return_value=TARGET), patch(
-        "install_phases.public_key_for_target", return_value=PUBLIC_KEY
+    with patch("gentoo_agent.core.phases.target_config", return_value=TARGET), patch(
+        "gentoo_agent.core.phases.public_key_for_target", return_value=PUBLIC_KEY
     ):
         parts = []
-        for phase in install_phases.PHASES:
+        for phase in phases.PHASES:
             parts.append(f"===== {phase} apply =====")
-            parts.append(install_phases.command_for(phase, TARGET, install))
+            parts.append(phases.command_for(phase, TARGET, install))
             parts.append(f"===== {phase} check =====")
-            parts.append(install_phases.check_command_for(phase, TARGET, install))
+            parts.append(phases.check_command_for(phase, TARGET, install))
         return "\n".join(parts) + "\n"
 
 

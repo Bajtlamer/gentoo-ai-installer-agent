@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Guarded Gentoo installation phases.
 
 The command in this module is deliberately conservative:
@@ -28,19 +27,9 @@ import queue
 import time
 from pathlib import Path
 
-from gentoo_agent import (
-    CONFIG,
-    LOG_DIR,
-    ROOT,
-    STATE_DIR,
-    install_config,
-    load_json,
-    now,
-    run_ssh_readonly,
-    save_json,
-    ssh_base,
-    target_config,
-)
+from gentoo_agent.core.config import install_config, load_json, now, save_json, target_config
+from gentoo_agent.core.paths import CONFIG, LOG_DIR, ROOT, STATE_DIR
+from gentoo_agent.core.ssh import ssh_base
 
 
 MOUNT_ROOT = "/mnt/gentoo"

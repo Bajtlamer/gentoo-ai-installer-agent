@@ -1,13 +1,8 @@
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools"))
-
-import install_phases  # noqa: E402
+from gentoo_agent.core import phases as install_phases
 
 
 class AuthenticationConfigurationTests(unittest.TestCase):
@@ -37,7 +32,7 @@ class AuthenticationConfigurationTests(unittest.TestCase):
             "allow_root_password_ssh": True,
         }
         self.public_key_patch = patch(
-            "install_phases.public_key_for_target",
+            "gentoo_agent.core.phases.public_key_for_target",
             return_value="ssh-ed25519 AAAATEST gentoo-agent-test",
         )
         self.public_key_patch.start()
@@ -127,7 +122,7 @@ class AuthenticationConfigurationTests(unittest.TestCase):
             "user_password_env": "TEST_MISSING_USER_PASSWORD",
         })
         with patch.dict(install_phases.os.environ, {}, clear=True), patch(
-            "install_phases.secrets.token_urlsafe",
+            "gentoo_agent.core.phases.secrets.token_urlsafe",
             side_effect=["generated-root", "generated-user"],
         ):
             input_data, generated = install_phases.prompt_authentication_input(configured)

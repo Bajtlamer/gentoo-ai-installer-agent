@@ -1,0 +1,179 @@
+"""Create a safe, reviewable minimum Gentoo Agent configuration.
+
+This command only writes local JSON files. It never connects to SSH and never
+changes a target machine.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+
+from gentoo_agent.core.paths import CONFIG
+
+
+def partition_device(disk: str, number: int) -> str:
+    """Return a partition path for both /dev/sda and /dev/nvme0n1 styles."""
+    separator = "p" if disk[-1:].isdigit() else ""
+    return f"{disk}{separator}{number}"
+
+
+def write_json(path: Path, value: dict, overwrite: bool) -> None:
+    if path.exists() and not overwrite:
+        raise SystemExit(f"Refusing to overwrite {path}; use --overwrite explicitly.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        json.dump(value, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+def load_json(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", required=True, help="Live target IP address or hostname")
+    parser.add_argument("--disk", required=True, help="Confirmed disk to erase, e.g. /dev/sda")
+    parser.add_argument("--identity-file", default="~/.ssh/id_rsa")
+    parser.add_argument("--name", default="gentoo")
+    parser.add_argument("--user", default="root")
+    parser.add_argument("--port", type=int, default=22)
+    parser.add_argument("--architecture", default="amd64")
+    parser.add_argument("--boot-mode", choices=("uefi", "bios"), default="uefi")
+    parser.add_argument("--root-filesystem", choices=("ext4",), default="ext4")
+    parser.add_argument("--swap-mb", type=int, default=2048)
+    parser.add_argument("--init-system", choices=("openrc", "systemd"), default="openrc")
+    parser.add_argument("--hostname", default="gentoo")
+    parser.add_argument("--timezone", default="Europe/Prague")
+    parser.add_argument("--network-method", default="dhcp")
+    parser.add_argument("--username", default="gentoo", help="Installed regular username")
+    parser.add_argument("--no-create-user", action="store_true", help="Do not create an installed regular user")
+    parser.add_argument("--no-sudo", action="store_true", help="Do not install sudo or configure wheel-group sudo access")
+    parser.add_argument("--no-root-password", action="store_true", help="Do not prompt for a root password")
+    parser.add_argument("--allow-root-password-ssh", action="store_true", help="Allow root password authentication over SSH")
+    parser.add_argument("--password-source", choices=("prompt", "environment"), default="environment")
+    parser.add_argument("--root-password-env", default="GENTOO_ROOT_PASSWORD")
+    parser.add_argument("--user-password-env", default="GENTOO_USER_PASSWORD")
+    parser.add_argument("--allow-disk-erase", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    if args.swap_mb < 0:
+        raise SystemExit("--swap-mb must be non-negative")
+    if not args.allow_disk_erase:
+        raise SystemExit(
+            "Refusing to create an erase-enabled plan. Add --allow-disk-erase "
+            "after confirming the exact target disk."
+        )
+
+    if args.boot_mode == "uefi":
+        layout = [
+            {
+                "device": partition_device(args.disk, 1),
+                "size_mib": 512,
+                "type": "efi-system",
+                "filesystem": "vfat",
+                "mount": "/boot",
+            },
+            {
+                "device": partition_device(args.disk, 2),
+                "size_mib": args.swap_mb,
+                "type": "linux-swap",
+                "mount": None,
+            },
+            {
+                "device": partition_device(args.disk, 3),
+                "size": "remaining",
+                "type": "linux-root",
+                "filesystem": args.root_filesystem,
+                "mount": "/",
+            },
+        ]
+        partition_table = "gpt"
+    else:
+        layout = [
+            {
+                "device": partition_device(args.disk, 1),
+                "size_mib": args.swap_mb,
+                "type": "linux-swap",
+                "mount": None,
+            },
+            {
+                "device": partition_device(args.disk, 2),
+                "size": "remaining",
+                "type": "linux-root",
+                "filesystem": args.root_filesystem,
+                "mount": "/",
+            },
+        ]
+        partition_table = "mbr"
+
+    target = load_json(CONFIG / "target.default.json")
+    target.update({
+        "name": args.name,
+        "host": args.host,
+        "port": args.port,
+        "user": args.user,
+        "identity_file": args.identity_file,
+        "architecture": args.architecture,
+        "handbook_url": f"https://wiki.gentoo.org/wiki/Handbook:{args.architecture.upper()}",
+        "expected_target_description": "Target created by init_config.py; review before use",
+        "target_is_disposable": bool(args.allow_disk_erase),
+        "disk_erase_authorized": bool(args.allow_disk_erase),
+        "execution_enabled": False,
+        "dangerous_operations_enabled": False,
+    })
+    install = load_json(CONFIG / "install.default.json")
+    install.update({
+        "profile": f"gentoo-{args.architecture}-{args.init_system}",
+        "boot_mode": args.boot_mode,
+        "partition_table": partition_table,
+        "disk": args.disk,
+        "disk_must_be_erased": True,
+        "target_is_disposable": bool(args.allow_disk_erase),
+        "disk_erase_authorized": bool(args.allow_disk_erase),
+        "partition_layout": layout,
+        "root_filesystem": args.root_filesystem,
+        "swap_mb": args.swap_mb,
+        "init_system": args.init_system,
+        "hostname": args.hostname,
+        "timezone": args.timezone,
+        "network_method": args.network_method,
+        "create_user": not args.no_create_user,
+        "username": args.username,
+        "install_user_ssh_key": not args.no_create_user,
+        "user_groups": ["wheel"],
+        "configure_sudo": not args.no_sudo and not args.no_create_user,
+        "user_shell": "/bin/bash",
+        "set_root_password": not args.no_root_password,
+        "allow_root_password_ssh": args.allow_root_password_ssh,
+        "password_source": args.password_source,
+        "generate_missing_passwords": True,
+        "root_password_env": args.root_password_env,
+        "user_password_env": args.user_password_env,
+        "execution_enabled": False,
+        "review_status": "pending_operator_review",
+    })
+
+    write_json(CONFIG / "target.json", target, args.overwrite)
+    write_json(CONFIG / "install.json", install, args.overwrite)
+    print("Created local configuration only:")
+    print(f"  {CONFIG / 'target.json'}")
+    print(f"  {CONFIG / 'install.json'}")
+    print("Execution remains disabled; review both files before continuing.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit("Interrupted")
