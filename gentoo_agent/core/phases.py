@@ -335,11 +335,19 @@ def authentication_command(target: dict, install: dict) -> str:
             "if ! grep -Fqx \"$sudo_rule\" /etc/sudoers; then printf '%s\\n' \"$sudo_rule\" >> /etc/sudoers; fi",
             "/usr/sbin/visudo -cf /etc/sudoers",
         ]
-    if install.get("set_root_password", True) or create_user:
-        inside.append("chpasswd")
+    marker = f"touch {q(MOUNT_ROOT + '/.gentoo-agent-authentication-complete')}"
+    if not (install.get("set_root_password", True) or create_user):
+        return "\n".join([chroot("\n".join(inside)), marker])
+    # The runner sends chpasswd records on stdin. Capture them before anything
+    # else runs, give every other command /dev/null as stdin, and pipe the
+    # records only to chpasswd. Never echo the variable or enable tracing.
     return "\n".join([
+        "set -eu",
+        "records=$(cat)",
+        "exec </dev/null",
         chroot("\n".join(inside)),
-        f"touch {q(MOUNT_ROOT + '/.gentoo-agent-authentication-complete')}",
+        f"printf '%s\\n' \"$records\" | chroot {q(MOUNT_ROOT)} chpasswd",
+        marker,
     ])
 
 

@@ -160,11 +160,14 @@ test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
 printf 'configuration-ok\n'
 ===== authentication apply =====
+set -eu
+records=$(cat)
+exec </dev/null
 chroot /mnt/gentoo /bin/bash -c 'set -e
 set -eu
 if ! getent passwd alex >/dev/null; then useradd -m -s /bin/bash -G wheel,audio alex; else usermod -s /bin/bash alex; fi
-usermod -aG wheel,audio alex
-chpasswd'
+usermod -aG wheel,audio alex'
+printf '%s\n' "$records" | chroot /mnt/gentoo chpasswd
 touch /mnt/gentoo/.gentoo-agent-authentication-complete
 ===== authentication check =====
 set -eu

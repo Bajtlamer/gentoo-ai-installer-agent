@@ -163,9 +163,12 @@ test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
 printf 'configuration-ok\n'
 ===== authentication apply =====
-chroot /mnt/gentoo /bin/bash -c 'set -e
 set -eu
-chpasswd'
+records=$(cat)
+exec </dev/null
+chroot /mnt/gentoo /bin/bash -c 'set -e
+set -eu'
+printf '%s\n' "$records" | chroot /mnt/gentoo chpasswd
 touch /mnt/gentoo/.gentoo-agent-authentication-complete
 ===== authentication check =====
 set -eu
