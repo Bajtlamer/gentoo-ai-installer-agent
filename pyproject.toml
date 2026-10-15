@@ -9,8 +9,12 @@ description = "Supervised Gentoo installation over SSH"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+mcp = ["mcp==2.2.0"]
+
 [project.scripts]
 gentoo-agent = "gentoo_agent.cli:main"
+gentoo-agent-mcp = "gentoo_agent.mcp.server:main"
 
 [tool.setuptools.packages.find]
 include = ["gentoo_agent*"]

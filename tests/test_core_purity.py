@@ -12,7 +12,10 @@ FORBIDDEN_MODULES = {"getpass", "argparse", "sys", "builtins", "pdb"}
 FORBIDDEN_ATTRS = {"_exit", "abort"}
 
 
-def violations_in(path: Path, base: Path | None = None) -> list[str]:
+MCP = Path(__file__).resolve().parents[1] / "gentoo_agent" / "mcp"
+
+
+def violations_in(path: Path, base: Path | None = None, *, check_imports: bool = True) -> list[str]:
     found = []
     name = path.relative_to(base).as_posix() if base else path.name
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -24,12 +27,12 @@ def violations_in(path: Path, base: Path | None = None) -> list[str]:
             found.append(f"{name}:{line} uses {node.id}")
         if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRS:
             found.append(f"{name}:{line} uses {node.attr}")
-        if isinstance(node, ast.Import):
+        if check_imports and isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] in FORBIDDEN_MODULES:
                     found.append(f"{name}:{line} imports {alias.name}")
         if isinstance(node, ast.ImportFrom):
-            if (node.module or "").split(".")[0] in FORBIDDEN_MODULES:
+            if check_imports and (node.module or "").split(".")[0] in FORBIDDEN_MODULES:
                 found.append(f"{name}:{line} imports from {node.module}")
             for alias in node.names:
                 if alias.name in FORBIDDEN_ATTRS:
@@ -60,6 +63,18 @@ class CorePurityTests(unittest.TestCase):
         violations = []
         for path in sorted(CORE.rglob("*.py")):
             violations += violations_in(path, CORE)
+        self.assertEqual(violations, [])
+
+    def test_mcp_package_never_prints_or_exits(self):
+        # stdout carries the MCP protocol; module-import rules do not apply here.
+        violations = []
+        for path in sorted(MCP.glob("*.py")):
+            violations += violations_in(path, MCP, check_imports=False)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Attribute) and node.attr == "exit"
+                        and isinstance(node.value, ast.Name) and node.value.id == "sys"):
+                    violations.append(f"{path.name}:{node.lineno} calls sys.exit")
         self.assertEqual(violations, [])
 
     def test_guard_detects_a_violation(self):
