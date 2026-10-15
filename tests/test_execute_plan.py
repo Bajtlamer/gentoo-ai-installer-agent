@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from gentoo_agent.core import runner, runs
-from gentoo_agent.core.errors import TARGET_DRIFT, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, TARGET_DRIFT, AgentError
 from tests.helpers import temp_home
 
 
@@ -39,7 +39,7 @@ class FakeShell:
 class ExecutePlanTests(unittest.TestCase):
     def run_plan(self, shell, drift=None):
         run_id = runs.new_run_id()
-        runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "starting",
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
                                 "pid": None, "started_at": runs.now()})
         with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift", side_effect=drift):
             result = runner.execute_plan(PLAN, run_id, RECORDS)
@@ -85,7 +85,7 @@ class ExecutePlanTests(unittest.TestCase):
         with temp_home():
             shell = FakeShell({"preflight-check": 1})
             run_id = runs.new_run_id()
-            runs.write_run(run_id, {"run_id": run_id, "status": "starting", "pid": None, "started_at": runs.now()})
+            runs.write_run(run_id, {"run_id": run_id, "status": "running", "pid": None, "started_at": runs.now()})
             original = shell.__call__
 
             def cancel_after_preflight_verify(*args, **kwargs):
@@ -109,7 +109,7 @@ class ExecutePlanTests(unittest.TestCase):
     def test_interrupt_is_recorded_and_reraised(self):
         with temp_home():
             run_id = runs.new_run_id()
-            runs.write_run(run_id, {"run_id": run_id, "status": "starting", "pid": None, "started_at": runs.now()})
+            runs.write_run(run_id, {"run_id": run_id, "status": "running", "pid": None, "started_at": runs.now()})
             shell = FakeShell(raise_on={"kernel-check": KeyboardInterrupt()})
             with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
                 with self.assertRaises(KeyboardInterrupt):
@@ -127,6 +127,51 @@ class ExecutePlanTests(unittest.TestCase):
         self.assertTrue(result["authentication_applied"])
         self.assertNotIn("pw-root", log_text)
         self.assertNotIn("pw-user", log_text)
+
+    def test_unclaimed_run_is_refused_without_side_effects(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "status": "starting", "pid": None, "started_at": runs.now()})
+            before = runs.read_run(run_id)
+            shell = FakeShell()
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
+                with self.assertRaises(AgentError) as caught:
+                    runner.execute_plan(PLAN, run_id, RECORDS)
+            after = runs.read_run(run_id)
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertEqual(shell.calls, [])
+        self.assertEqual(before, after)
+
+    def test_plan_without_disks_fails_before_any_command(self):
+        plan = dict(PLAN, disks=[])
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "status": "running", "pid": None, "started_at": runs.now()})
+            shell = FakeShell()
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
+                result = runner.execute_plan(plan, run_id, RECORDS)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertEqual(shell.calls, [])
+
+    def test_final_write_failure_is_not_recorded_as_failed(self):
+        real_update = runs.update_run
+        seen = []
+
+        def flaky(run_id, **changes):
+            if changes.get("status") == "installed_pending_reboot" and not seen:
+                seen.append(True)
+                raise OSError("disk full")
+            return real_update(run_id, **changes)
+
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "status": "running", "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", FakeShell()), patch.object(runner, "check_drift"), \
+                    patch.object(runner, "update_run", flaky):
+                with self.assertRaises(OSError):
+                    runner.execute_plan(PLAN, run_id, RECORDS)
+            self.assertEqual(runs.read_run(run_id)["status"], "running")
 
 
 if __name__ == "__main__":
