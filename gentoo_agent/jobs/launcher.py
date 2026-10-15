@@ -1,0 +1,105 @@
+"""Start, resume, and cancel background installation runs.
+
+start_run() is the only code path that starts work. It enforces the approval
+gate, resolves passwords before any phase runs, and hands them to a detached
+worker over a pipe. Nothing here prints or prompts; a password prompt, when
+configured, comes from the front end as a callback.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import gentoo_agent
+from gentoo_agent.core import paths
+from gentoo_agent.core.approval import require_approved_plan
+from gentoo_agent.core.config import now
+from gentoo_agent.core.credentials import PasswordPrompt, password_input
+from gentoo_agent.core.errors import RUN_ALREADY_ACTIVE, AgentError
+from gentoo_agent.core.runs import (
+    ACTIVE_STATUSES,
+    acquire_lock,
+    new_run_id,
+    release_lock,
+    request_cancel,
+    run_dir,
+    run_status,
+    update_run,
+)
+
+
+PACKAGE_PARENT = Path(gentoo_agent.__file__).resolve().parents[1]
+
+
+def worker_command(run_id: str) -> list[str]:
+    return [sys.executable, "-m", "gentoo_agent.jobs.worker", run_id]
+
+
+def worker_environment() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment["GENTOO_AGENT_HOME"] = str(paths.root())
+    existing = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = str(PACKAGE_PARENT) + (os.pathsep + existing if existing else "")
+    return environment
+
+
+def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_from: str | None = None) -> str:
+    plan = require_approved_plan(plan_id)
+    password_records, generated = password_input(plan["install"], prompt)
+    run_id = new_run_id()
+    acquire_lock(run_id, {
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "plan_hash": plan["plan_hash"],
+        "status": "starting",
+        "pid": None,
+        "started_at": now(),
+        "phase_count": len(plan["phases"]),
+        "phase_index": 0,
+        "current_phase": None,
+        "completed_phases": [],
+        "last_error": None,
+        "resumed_from": resumed_from,
+    })
+    try:
+        with (run_dir(run_id) / "worker.err").open("ab") as worker_errors:
+            process = subprocess.Popen(
+                worker_command(run_id),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=worker_errors,
+                cwd=paths.root(),
+                env=worker_environment(),
+                start_new_session=True,
+            )
+        update_run(run_id, pid=process.pid)
+        payload = {"password_records": password_records, "generated_credentials": generated}
+        process.stdin.write(json.dumps(payload).encode("utf-8"))
+        process.stdin.close()
+    except BaseException as exc:
+        try:
+            update_run(run_id, status="failed", last_error=f"Could not start the worker: {exc}", finished_at=now())
+        except AgentError:
+            pass
+        release_lock(run_id)
+        raise
+    return run_id
+
+
+def resume_run(run_id: str, *, prompt: PasswordPrompt | None = None) -> str:
+    record = run_status(run_id)
+    if record["status"] in ACTIVE_STATUSES:
+        raise AgentError(RUN_ALREADY_ACTIVE, f"Run {run_id} is still active.", {"run_id": run_id})
+    return start_run(record["plan_id"], prompt=prompt, resumed_from=run_id)
+
+
+def cancel_run(run_id: str) -> dict:
+    record = run_status(run_id)
+    if record["status"] not in ACTIVE_STATUSES:
+        return {"run_id": run_id, "cancel_requested": False, "status": record["status"]}
+    request_cancel(run_id)
+    return {"run_id": run_id, "cancel_requested": True, "status": record["status"]}

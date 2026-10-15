@@ -67,6 +67,17 @@ class PasswordInputTests(unittest.TestCase):
         self.assertIsNone(records)
         self.assertEqual(generated, {})
 
+    def test_empty_environment_password_is_generated(self):
+        install = {**BASE, "password_source": "environment", "generate_missing_passwords": True}
+        with patch.dict(
+            credentials.os.environ,
+            {"TEST_GENTOO_ROOT_PASSWORD": "", "TEST_GENTOO_USER_PASSWORD": "user-secret"},
+            clear=True,
+        ), patch("gentoo_agent.core.credentials.secrets.token_urlsafe", return_value="generated-root"):
+            records, generated = credentials.password_input(install)
+        self.assertEqual(records, "root:generated-root\ngentoo:user-secret\n")
+        self.assertEqual(generated, {"root": "generated-root"})
+
 
 if __name__ == "__main__":
     unittest.main()
