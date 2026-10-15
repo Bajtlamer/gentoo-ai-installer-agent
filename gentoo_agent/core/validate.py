@@ -2,9 +2,57 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
+
+
+INIT_SYSTEMS = {"openrc", "systemd"}
+NETWORK_METHODS = {"dhcp", "static"}
+MAX_SWAP_MB = 131072
+IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
+
+
+def _invalid(field: str, message: str) -> AgentError:
+    return AgentError(CONFIG_INVALID, message, {"field": field})
+
+
+def _ip_text(value: object, parse) -> bool:
+    """True when value is a plain IP string that parse() accepts.
+
+    The character check rejects IPv6 scope ids (fe80::1%eth0), which
+    ipaddress accepts with arbitrary text after the percent sign.
+    """
+    if not isinstance(value, str) or not IP_TEXT.fullmatch(value):
+        return False
+    try:
+        parse(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _check_network(install: dict) -> None:
+    network = install.get("network_method", "dhcp")
+    if not isinstance(network, str) or network not in NETWORK_METHODS:
+        raise _invalid("network_method", "network_method must be 'dhcp' or 'static'")
+    if network != "static":
+        return
+    static = install.get("network_static")
+    message = ("network_static must be an object with address (CIDR), gateway (IP address), "
+               "and dns (a list of 1 to 3 IP addresses)")
+    if not isinstance(static, dict) or set(static) != {"address", "gateway", "dns"}:
+        raise _invalid("network_static", message)
+    dns = static["dns"]
+    if (
+        not _ip_text(static["address"], ipaddress.ip_interface)
+        or not _ip_text(static["gateway"], ipaddress.ip_address)
+        or not isinstance(dns, list)
+        or not 1 <= len(dns) <= 3
+        or not all(_ip_text(item, ipaddress.ip_address) for item in dns)
+    ):
+        raise _invalid("network_static", message)
 
 
 def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
@@ -24,10 +72,25 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         raise AgentError(CONFIG_CONFLICT, "UEFI requires GPT.", {"fields": ["boot_mode", "partition_table"]})
     if install.get("root_filesystem") != "ext4":
         raise AgentError(CONFIG_INVALID, "The executor currently supports ext4 root filesystems only.", {"field": "root_filesystem"})
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", str(install.get("hostname", ""))):
-        raise AgentError(CONFIG_INVALID, "hostname must be a simple DNS-compatible hostname", {"field": "hostname"})
-    if not re.fullmatch(r"[A-Za-z0-9._+/-]+", str(install.get("timezone", ""))):
-        raise AgentError(CONFIG_INVALID, "timezone contains unsafe characters", {"field": "timezone"})
+    hostname = install.get("hostname")
+    if not isinstance(hostname, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", hostname):
+        raise _invalid("hostname", "hostname must be a simple DNS-compatible hostname")
+    timezone = install.get("timezone")
+    if (
+        not isinstance(timezone, str)
+        or not re.fullmatch(r"[A-Za-z0-9._+/-]+", timezone)
+        or timezone.startswith("/")
+        or ".." in timezone.split("/")
+    ):
+        raise _invalid("timezone", "timezone must be a relative zoneinfo name such as Europe/Prague")
+    init_system = install.get("init_system")
+    if not isinstance(init_system, str) or init_system not in INIT_SYSTEMS:
+        raise _invalid("init_system", "init_system must be 'openrc' or 'systemd'")
+    _check_network(install)
+    if "swap_mb" in install:
+        swap_mb = install["swap_mb"]
+        if not isinstance(swap_mb, int) or isinstance(swap_mb, bool) or not 0 <= swap_mb <= MAX_SWAP_MB:
+            raise _invalid("swap_mb", f"swap_mb must be an integer from 0 to {MAX_SWAP_MB}")
     create_user = install.get("create_user", True)
     set_root_password = install.get("set_root_password", True)
     install_user_ssh_key = install.get("install_user_ssh_key", True)
@@ -46,6 +109,8 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
             raise AgentError(CONFIG_INVALID, f"{field} must be boolean", {"field": field})
     if install_user_ssh_key and not create_user:
         raise AgentError(CONFIG_INVALID, "install_user_ssh_key requires create_user=true", {"field": "install_user_ssh_key"})
+    if configure_sudo and not create_user:
+        raise _invalid("configure_sudo", "configure_sudo requires create_user=true")
     password_source = install.get("password_source", "environment")
     if password_source not in {"prompt", "environment", "generate"}:
         raise AgentError(CONFIG_INVALID, "password_source must be 'prompt', 'environment', or 'generate'", {"field": "password_source"})

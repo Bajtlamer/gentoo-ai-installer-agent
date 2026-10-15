@@ -21,7 +21,8 @@ def build_layout(disk: str, boot_mode: str, swap_mb: int, root_filesystem: str =
     entries: list[dict] = []
     if boot_mode == "uefi":
         entries.append({"size_mib": EFI_SIZE_MIB, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"})
-    entries.append({"size_mib": swap_mb, "type": "linux-swap", "mount": None})
+    if swap_mb > 0:
+        entries.append({"size_mib": swap_mb, "type": "linux-swap", "mount": None})
     entries.append({"size": "remaining", "type": "linux-root", "filesystem": root_filesystem, "mount": "/"})
     layout = [{"device": partition_device(disk, number), **entry} for number, entry in enumerate(entries, start=1)]
     return ("gpt" if boot_mode == "uefi" else "mbr"), layout
