@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
@@ -19,13 +21,19 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
-def save_json(path: Path, value: dict) -> None:
+def save_json(path: Path, value: dict, *, mode: int = 0o644) -> None:
+    """Write JSON atomically through a unique temporary file in the same directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-        json.dump(value, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-    temporary.replace(path)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(value, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def target_config() -> dict:
