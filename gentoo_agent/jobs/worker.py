@@ -1,8 +1,9 @@
 """Detached worker process: runs one approved plan and records the outcome.
 
-Started only by jobs.launcher.start_run(). It reads the password records from
-stdin, claims the run, re-checks the approval, runs the plan, writes generated
-credentials for one-time pickup, and always releases the run lock.
+Started only by jobs.launcher.start_run(). It reads and validates the start
+payload from stdin, claims the run, re-checks the approval, runs the plan,
+writes generated credentials for one-time pickup, and always releases the run
+lock. A missing or malformed payload fails the run without executing anything.
 """
 
 from __future__ import annotations
@@ -13,13 +14,54 @@ import sys
 
 from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
-from gentoo_agent.core.errors import PLAN_HASH_MISMATCH, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, PLAN_HASH_MISMATCH, AgentError
 from gentoo_agent.core.runner import execute_plan
 from gentoo_agent.core.runs import claim_run, release_lock, update_run, write_credentials
 
 
+PAYLOAD_KEYS = {"password_records", "generated_credentials"}
+
+
+def parse_payload(text: str) -> dict:
+    """Validate the launcher's start payload; anything else raises CONFIG_INVALID."""
+    invalid = AgentError(CONFIG_INVALID, "The worker did not receive a valid start payload.", {})
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        raise invalid from None
+    if not isinstance(payload, dict) or set(payload) != PAYLOAD_KEYS:
+        raise invalid
+    records = payload["password_records"]
+    generated = payload["generated_credentials"]
+    if records is not None and not isinstance(records, str):
+        raise invalid
+    if not isinstance(generated, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in generated.items()
+    ):
+        raise invalid
+    return payload
+
+
+def fail_unstarted(run_id: str, error: AgentError) -> None:
+    """Claim the run and mark it failed without executing anything."""
+    try:
+        claim_run(run_id, os.getpid())
+    except AgentError:
+        return
+    try:
+        update_run(run_id, status="failed", last_error=error.message, error=error.to_dict(), finished_at=now())
+    finally:
+        release_lock(run_id)
+
+
+def plan_needs_passwords(plan: dict) -> bool:
+    install = plan.get("install") or {}
+    return bool(install.get("set_root_password", True) or install.get("create_user", True))
+
+
 def run(run_id: str, payload: dict) -> dict:
     result: dict = {"authentication_applied": False}
+    claimed = False
     try:
         try:
             record = claim_run(run_id, os.getpid())
@@ -27,10 +69,14 @@ def run(run_id: str, payload: dict) -> dict:
             # Not our run, or no longer startable: record nothing on it.
             result = {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
             return result
+        claimed = True
         plan = require_approved_plan(record["plan_id"])
         if plan["plan_hash"] != record.get("plan_hash"):
             raise AgentError(PLAN_HASH_MISMATCH, "The plan changed after the run was started.", {"run_id": run_id})
-        result = execute_plan(plan, run_id, payload.get("password_records"))
+        password_records = payload.get("password_records")
+        if password_records is None and plan_needs_passwords(plan):
+            raise AgentError(CONFIG_INVALID, "No password records were handed to the worker.", {"run_id": run_id})
+        result = execute_plan(plan, run_id, password_records)
         return result
     except AgentError as error:
         update_run(run_id, status="failed", last_error=error.message, error=error.to_dict(), finished_at=now())
@@ -38,7 +84,7 @@ def run(run_id: str, payload: dict) -> dict:
         return result
     finally:
         generated = payload.get("generated_credentials") or {}
-        if generated:
+        if claimed and generated:
             write_credentials(run_id, {"credentials": generated, "applied": bool(result.get("authentication_applied"))})
         release_lock(run_id)
 
@@ -47,8 +93,17 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 1:
         return 2
-    payload = json.loads(sys.stdin.read() or "{}")
-    result = run(arguments[0], payload)
+    run_id = arguments[0]
+    try:
+        try:
+            text = sys.stdin.read()
+        except (OSError, ValueError):  # unreadable or undecodable stdin counts as no payload
+            text = ""
+        payload = parse_payload(text)
+    except AgentError as error:
+        fail_unstarted(run_id, error)
+        return 1
+    result = run(run_id, payload)
     return 0 if result.get("status") == "installed_pending_reboot" else 1
 
 

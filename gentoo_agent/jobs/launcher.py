@@ -36,11 +36,12 @@ PACKAGE_PARENT = Path(gentoo_agent.__file__).resolve().parents[1]
 
 
 def worker_command(run_id: str) -> list[str]:
-    return [sys.executable, "-m", "gentoo_agent.jobs.worker", run_id]
+    # -P: never prepend the working directory to sys.path, so it cannot shadow modules.
+    return [sys.executable, "-P", "-m", "gentoo_agent.jobs.worker", run_id]
 
 
-def worker_environment() -> dict[str, str]:
-    environment = dict(os.environ)
+def worker_environment(exclude: set[str] | frozenset[str] = frozenset()) -> dict[str, str]:
+    environment = {name: value for name, value in os.environ.items() if name not in exclude}
     environment["GENTOO_AGENT_HOME"] = str(paths.root())
     existing = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = str(PACKAGE_PARENT) + (os.pathsep + existing if existing else "")
@@ -49,7 +50,11 @@ def worker_environment() -> dict[str, str]:
 
 def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_from: str | None = None) -> str:
     plan = require_approved_plan(plan_id)
-    password_records, generated = password_input(plan["install"], prompt)
+    install = plan["install"]
+    password_variables = {
+        str(name) for name in (install.get("root_password_env"), install.get("user_password_env")) if name
+    }
+    password_records, generated = password_input(install, prompt)
     run_id = new_run_id()
     acquire_lock(run_id, {
         "run_id": run_id,
@@ -65,6 +70,7 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
         "last_error": None,
         "resumed_from": resumed_from,
     })
+    process = None
     try:
         with (run_dir(run_id) / "worker.err").open("ab") as worker_errors:
             process = subprocess.Popen(
@@ -73,7 +79,7 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
                 stdout=subprocess.DEVNULL,
                 stderr=worker_errors,
                 cwd=paths.root(),
-                env=worker_environment(),
+                env=worker_environment(exclude=password_variables),
                 start_new_session=True,
             )
         update_run(run_id, pid=process.pid)
@@ -81,6 +87,12 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
         process.stdin.write(json.dumps(payload).encode("utf-8"))
         process.stdin.close()
     except BaseException as exc:
+        if process is not None:
+            # A worker that never got its payload must not linger.
+            try:
+                process.kill()
+            except OSError:
+                pass
         try:
             update_run(run_id, status="failed", last_error=f"Could not start the worker: {exc}", finished_at=now())
         except AgentError:
