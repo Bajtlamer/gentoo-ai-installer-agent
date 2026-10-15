@@ -90,8 +90,10 @@ Inferred technical values:
 
 ## MCP tools
 
-Every tool declares `inputSchema` and `outputSchema` and returns
-`structuredContent`. Annotations: RO = `readOnlyHint`, D = `destructiveHint`,
+Every tool declares `inputSchema` and returns a `CallToolResult` with
+`structuredContent` always present. Because tools return `CallToolResult`
+directly (so errors can carry structured data), the SDK publishes no
+`outputSchema`. Annotations: RO = `readOnlyHint`, D = `destructiveHint`,
 I = `idempotentHint`.
 
 ### Discovery
@@ -99,7 +101,7 @@ I = `idempotentHint`.
 | Tool | Input | Output |
 |---|---|---|
 | `detect_hardware` [RO, I] | `refresh: bool` | CPU (model, flags, cores), firmware, disks with serial/WWN, NICs, GPU, loaded modules, `inventory_hash` |
-| `list_phases` [RO, I] | none | phases, order, destructive flag, Handbook sections |
+| `list_phases` [RO, I] | none | runnable phases only, in order, with destructive flag and Handbook sections |
 | `resolve_config` [RO, I] | `overrides`, `fallbacks`, `profile_path?` | merged config, value sources, conflicts, warnings |
 
 ### Planning (writes only to local `plans/`)
@@ -120,7 +122,7 @@ I = `idempotentHint`.
 | Tool | Input | Output |
 |---|---|---|
 | `start_install` [D] | `plan_id` | `run_id`, returned immediately |
-| `run_phase` [D] | `plan_id`, `phase` | `run_id` |
+| `run_phase` [D] | `plan_id`, `phases` (a list of phase ids) | `run_id` |
 | `resume_run` [D] | `run_id` | `run_id` |
 | `cancel_run` | `run_id` | `cancel_requested` |
 
@@ -128,9 +130,9 @@ I = `idempotentHint`.
 
 | Tool | Input | Output |
 |---|---|---|
-| `get_run_status` [RO] | `run_id` | status, phase index (`5/9`), current step, elapsed time, `last_error`, generated credentials (once, after completion) |
+| `get_run_status` [RO] | `run_id` | status, phase index (`5/9`), current step, elapsed time, `last_error`, `credentials_waiting` (generated passwords are never returned to the model; the human reads them with `gentoo-agent run status <run_id>` in a terminal) |
 | `get_run_log` [RO] | `run_id`, `offset`, `limit` | log slice, `next_offset` |
-| `verify_install` [RO] | `run_id` | read-only checks: fstab, custom and fallback kernels, GRUB entries, sshd, user, sudo |
+| `verify_install` [RO] | `plan_id` | each phase's read-only check, regenerated from the plan's settings; an edited plan is refused with `PLAN_HASH_MISMATCH` |
 
 Progress is reported as phase index, current step, and elapsed time. There is
 no percentage, because phase durations differ by orders of magnitude.
@@ -145,11 +147,15 @@ no percentage, because phase durations differ by orders of magnitude.
 
 ### Error codes
 
-`HOST_KEY_UNKNOWN`, `SSH_UNREACHABLE`, `CONFIG_INVALID`, `CONFIG_CONFLICT`,
-`DISK_AMBIGUOUS`, `INVENTORY_MISSING`, `HANDBOOK_UNAVAILABLE`,
-`PLAN_NOT_FOUND`, `PLAN_HASH_MISMATCH`, `APPROVAL_REQUIRED`,
-`APPROVAL_EXPIRED`, `APPROVAL_DECLINED`, `TARGET_DRIFT`, `RUN_NOT_FOUND`,
-`RUN_ALREADY_ACTIVE`, `PHASE_PRECONDITION_FAILED`, `PHASE_FAILED`.
+Implemented in `core/errors.py`: `CONFIG_INVALID`, `CONFIG_CONFLICT`,
+`APPROVAL_REQUIRED`, `PHASE_FAILED`, `HANDBOOK_UNAVAILABLE`,
+`INVENTORY_MISSING`, `TARGET_DRIFT`, `SSH_UNREACHABLE`, `DISK_AMBIGUOUS`,
+`PLAN_NOT_FOUND`, `PLAN_HASH_MISMATCH`, `APPROVAL_EXPIRED`,
+`APPROVAL_DECLINED`, `RUN_NOT_FOUND`, `RUN_ALREADY_ACTIVE`, and
+`INTERNAL_ERROR` (an unexpected failure, reported without a traceback).
+
+Reserved for later, not yet raised by the code: `HOST_KEY_UNKNOWN` and
+`PHASE_PRECONDITION_FAILED`.
 
 Errors are returned as `isError: true` results with `code`, `message`, and
 structured `details`, never as raw exceptions.
@@ -204,10 +210,13 @@ Single rule: an approval record is created only by a human, never by the model.
 
 1. Loads the stored plan. The dialog content is built by the server from that
    plan: target disks with serials, destructive steps, kernel plan summary,
-   `plan_hash`. The model cannot supply or alter any of this text.
+   `plan_hash`. The model cannot supply or alter any of this text. Values that
+   come from the target, inventory, or plan are escaped onto one line, and the
+   `Disk erase` and `Destructive phases` lines always come first.
 2. If the client supports elicitation, the server sends the dialog. Only an
    explicit accept writes `approvals/<plan_id>.json` with `plan_hash`,
-   `approved_at`, `expires_at`, and `channel: "elicitation"`.
+   `approved_at`, `expires_at`, `channel: "elicitation"`, and an HMAC-SHA256
+   `signature` (see Signed records below). The answer is a strict boolean.
 3. If the client does not support elicitation, the tool writes nothing and
    returns `APPROVAL_REQUIRED` with the command `gentoo-agent approve <plan_id>`.
 
@@ -219,6 +228,27 @@ CLI approval (`gentoo-agent approve <plan_id>`):
   convention, not a security boundary, since a process can allocate its own
   pseudo-terminal);
 - writes the record with `channel: "cli"`.
+
+Signed records: every approval record carries an HMAC-SHA256 signature over
+its fields, made with the key in `secrets/approval.key` (directory 0700, file
+0600, generated on first approval, never committed). `require_approved_plan()`
+rejects a record whose signature does not verify, so writing a record
+directly is not enough. Only the human's CLI and the MCP server write records,
+and both run outside the agent's sandbox.
+
+Sandbox profile: `docs/operator/claude-settings.json` is an opt-in Claude Code
+profile (sandbox `denyWrite` and `denyRead` plus permission deny rules) that
+keeps the agent's shell and file tools away from `approvals/`, `plans/`,
+`runs/`, and `secrets/`. Deny rules for top-level directories are
+root-anchored, for example `Edit(/plans/**)`, because an unanchored
+`Edit(plans/**)` also matches `docs/superpowers/plans/`. It is opt-in because
+a project-wide sandbox would also restrict normal development sessions.
+
+Protected operation mode (`docs/OPERATING.md`): the barrier is real only when
+the MCP server runs from an installed copy the agent cannot modify, with the
+sandbox profile applied. In development mode, with the server run from the
+repository, the agent can edit the server's code and the barrier does not
+hold. Without the profile and protected mode the check is a convention.
 
 A committed `.claude/settings.json` adds a deny rule for
 `Bash(gentoo-agent approve:*)` as a second barrier against the model running

@@ -258,6 +258,44 @@ Dry run, `inspect`, and `plan create` work on any platform. `approve` and
 background runs (`run start`, `run resume`) need macOS or Linux; on Windows use
 WSL.
 
+## Approval signing key and MCP configuration
+
+`secrets/approval.key` is the HMAC key that signs approval records. It is
+generated automatically the first time a human approves a plan (CLI `approve`
+or the MCP dialog), with directory mode 0700 and file mode 0600. It is private:
+never commit it, copy it, or let the agent read it. Verification never creates
+a key, so an approval signed with a deleted key is simply not valid; remove a
+suspect key and approve again. The directory is gitignored.
+
+The MCP tool `resolve_config` (and `create_plan`, which takes the same input)
+builds `config/install.json` values from layers, highest first: `overrides`,
+profile, values inferred from the hardware inventory, `fallbacks`, built-in
+defaults. The settable keys are `username`, `hostname`, `timezone`,
+`boot_mode`, `init_system`, `swap_mb`, `disk`, `network_method`,
+`network_static`, `create_user`, `configure_sudo`, `set_root_password`,
+`allow_root_password_ssh`, `install_user_ssh_key`, `bootloader` (only
+`grub`), and `user_groups`. `overrides` and the profile may also set
+`user_password` and `root_password`, only as `{"env": "NAME"}`. Fallbacks may
+not set `disk` or `boot_mode`, and may not set passwords.
+
+- Password variable names must end in `_PASSWORD` or `_PW` (for example
+  `ALEX_PW`); well-known variables such as `PATH` or `HOME` are refused.
+- `swap_mb: 0` means no swap partition. Swap must be less than half the disk.
+- Inferred disk: exactly one disk that is not removable, not USB, not
+  read-only, and not mounted. Otherwise the result is `DISK_AMBIGUOUS`.
+- The boot mode must be known from the inventory; a requested mode that
+  differs from the live system's returns `CONFIG_CONFLICT`.
+- Static network: `network_static` has an IPv4 `address` in CIDR form with a
+  prefix from /8 to /30, a `gateway` inside that subnet, and 1 to 3 `dns`
+  servers. Known limitation: the interface name `ens33` is hardcoded and the
+  dhcpcd snippet location may not be read by Gentoo's dhcpcd (follow-up).
+
+`phase_ids` selects the phases of a run. The CLI starts every phase; the MCP
+tool `run_phase` takes `plan_id` and a list of phases and starts a run that
+executes only those phases of an approved plan (still subject to the approval
+and the disk identity check). `list_phases` lists only the phases that can be
+run.
+
 ## What is optional and what is not
 
 The Handbook can supply command details, package names, and architecture

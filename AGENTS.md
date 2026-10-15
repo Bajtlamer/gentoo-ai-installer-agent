@@ -34,6 +34,11 @@ instead of inventing their structure.
   tool. An approval is bound to the plan hash, expires after 60 minutes, and is
   void when the plan changes; a run also stops with `TARGET_DRIFT` if the disk
   identity no longer matches.
+- When the `gentoo-agent` MCP server is available, use its tools instead of
+  the CLI. Never pass a password as text; use `{"env": "NAME"}` references
+  only. Never try to approve except through `approve_plan`. If `approve_plan`
+  returns `APPROVAL_REQUIRED`, ask the human to run the given command in their
+  own terminal. Never read `secrets/` or run credentials.
 - If evidence is incomplete or contradictory, stop and ask the operator.
 - Preserve logs and existing user files. Do not reset or overwrite unrelated
   changes in this repository.
