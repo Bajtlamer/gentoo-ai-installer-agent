@@ -136,5 +136,78 @@ class DiscoveryAndPlanningTests(unittest.TestCase):
         self.assertNotIn("hunter2", result.content[0].text)
 
 
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ApprovalTests(unittest.TestCase):
+    def make_plan(self, home):
+        with patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home)
+            return call("create_plan", {}).structured_content["plan_id"]
+
+    def test_accepted_dialog_records_an_approval(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        seen = []
+
+        async def accept(context, params):
+            seen.append(params.message)
+            return ElicitResult(action="accept", content={"approve": True})
+
+        with temp_home() as home:
+            plan_id = self.make_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=accept)
+            status = approval_status(plan_id)
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertTrue(status["approved"])
+        self.assertEqual(status["channel"], "elicitation")
+        self.assertIn(plan_id, seen[0])
+        self.assertIn("Disk erase: YES", seen[0])
+
+    def test_declined_cancelled_or_unchecked_dialog_records_nothing(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        answers = [ElicitResult(action="decline"), ElicitResult(action="cancel"),
+                   ElicitResult(action="accept", content={"approve": False})]
+        for answer in answers:
+            async def reply(context, params, answer=answer):
+                return answer
+            with self.subTest(answer=answer.action), temp_home() as home:
+                plan_id = self.make_plan(home)
+                result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=reply)
+                status = approval_status(plan_id)
+            self.assertEqual(result.structured_content["code"], "APPROVAL_DECLINED")
+            self.assertFalse(status["approved"])
+
+    def test_client_without_elicitation_gets_the_cli_command(self):
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            plan_id = self.make_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id})
+            status = approval_status(plan_id)
+        self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
+        self.assertEqual(result.structured_content["details"]["command"], f"gentoo-agent approve {plan_id}")
+        self.assertFalse(status["approved"])
+
+    def test_failing_elicitation_fails_closed(self):
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        async def broken(context, params):
+            raise RuntimeError("dialog crashed")
+
+        with temp_home() as home:
+            plan_id = self.make_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=broken)
+            status = approval_status(plan_id)
+        self.assertTrue(result.is_error)
+        self.assertIn(result.structured_content["code"], {"APPROVAL_REQUIRED", "APPROVAL_DECLINED"})
+        self.assertFalse(status["approved"])
+
+
 if __name__ == "__main__":
     unittest.main()
