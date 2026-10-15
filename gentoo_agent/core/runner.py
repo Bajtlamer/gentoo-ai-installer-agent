@@ -12,9 +12,9 @@ from typing import Callable
 
 from gentoo_agent.core.config import now
 from gentoo_agent.core.disks import check_drift
-from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, TARGET_DRIFT, AgentError
 from gentoo_agent.core.phases import PHASES, command_for
-from gentoo_agent.core.runs import append_log, cancel_requested, update_run
+from gentoo_agent.core.runs import append_log, cancel_requested, read_run, update_run
 from gentoo_agent.core.ssh import remote_shell
 
 
@@ -94,8 +94,17 @@ def execute_plan(
     def phase_error(message: str, returncode: int) -> dict:
         return AgentError(PHASE_FAILED, message, {"phase": current, "returncode": returncode}).to_dict()
 
+    record = read_run(run_id)
+    if record.get("status") != "running":
+        raise AgentError(
+            CONFIG_INVALID,
+            f"Run {run_id} must be claimed before execution (status {record.get('status')}).",
+            {"run_id": run_id},
+        )
     update_run(run_id, phase_count=len(phases), phase_index=0)
     try:
+        if not isinstance(plan.get("disks"), list) or not plan["disks"]:
+            raise AgentError(TARGET_DRIFT, "The plan has no disk identity to verify.", {})
         emit("checking that the target disk still matches the plan")
         check_drift(target, plan["disks"])
         for index, phase in enumerate(phases, start=1):
@@ -115,7 +124,7 @@ def execute_plan(
             input_data = None
             if current == "authentication":
                 input_data = password_records
-                authentication_applied = True
+                authentication_applied = True  # apply was attempted; passwords may be set even if it failed
             result = step(phase, "apply", current, phase["apply"], input_data)
             if result["returncode"] != 0:
                 return finish(
@@ -132,8 +141,6 @@ def execute_plan(
                     tail=output_tail(verify["stdout"]),
                 )
             completed.append(current)
-        current = None
-        return finish("installed_pending_reboot")
     except AgentError as error:
         return finish("failed", error=error.to_dict())
     except Exception as exc:
@@ -144,3 +151,6 @@ def execute_plan(
     except BaseException:
         finish("interrupted", error=AgentError(PHASE_FAILED, "Installation was interrupted.", {"phase": current}).to_dict())
         raise
+    # Outside the try: a transient bookkeeping error must not turn a success into "failed".
+    current = None
+    return finish("installed_pending_reboot")
