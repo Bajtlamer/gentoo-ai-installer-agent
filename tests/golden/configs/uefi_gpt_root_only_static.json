@@ -1,0 +1,21 @@
+{
+  "disk": "/dev/vda",
+  "boot_mode": "uefi",
+  "partition_table": "gpt",
+  "root_filesystem": "ext4",
+  "partition_layout": [
+    {"device": "/dev/vda1", "size_mib": 512, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"},
+    {"device": "/dev/vda2", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"}
+  ],
+  "init_system": "openrc",
+  "hostname": "edge01",
+  "timezone": "UTC",
+  "network_method": "static",
+  "network_static": {"address": "192.168.10.20/24", "gateway": "192.168.10.1", "dns": ["1.1.1.1", "9.9.9.9"]},
+  "create_user": false,
+  "install_user_ssh_key": false,
+  "configure_sudo": false,
+  "set_root_password": true,
+  "allow_root_password_ssh": false,
+  "password_source": "generate"
+}
