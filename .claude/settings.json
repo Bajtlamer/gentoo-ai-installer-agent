@@ -9,7 +9,12 @@
       "Bash(tools/gentoo_agent.py approve:*)",
       "Bash(./tools/gentoo_agent.py approve:*)",
       "Edit(/approvals/**)",
-      "Edit(/plans/**)"
+      "Edit(/plans/**)",
+      "Read(/secrets/**)",
+      "Read(/runs/*/credentials.json)",
+      "Read(/runs/*/.credentials.*)",
+      "Edit(/runs/**)",
+      "Edit(/secrets/**)"
     ]
   }
 }
