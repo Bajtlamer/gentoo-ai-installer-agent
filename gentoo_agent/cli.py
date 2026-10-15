@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import json
+import os
 import sys
 
 from gentoo_agent.core.config import install_config, load_plan, target_config
@@ -36,16 +38,21 @@ EXECUTE_REPLACED = (
 
 TTY_PATH = "/dev/tty"
 NO_TERMINAL = (
-    "approve needs an interactive terminal. Run it yourself in a terminal; "
-    "it cannot be completed by an AI agent or a script."
+    "approve needs an interactive terminal; run it yourself in your own terminal."
 )
+PASSWORD_NEEDS_TERMINAL = "password_source 'prompt' needs an interactive terminal."
 
 
 def open_tty():
     try:
-        handle = open(TTY_PATH, "r+", encoding="utf-8")
+        fd = os.open(TTY_PATH, os.O_RDWR | os.O_NOCTTY)
     except OSError as exc:
         raise AgentError(APPROVAL_REQUIRED, NO_TERMINAL) from exc
+    try:
+        handle = io.TextIOWrapper(io.FileIO(fd, "r+"), encoding="utf-8", write_through=True)
+    except Exception:
+        os.close(fd)
+        raise
     if not handle.isatty():
         handle.close()
         raise AgentError(APPROVAL_REQUIRED, NO_TERMINAL)
@@ -53,8 +60,13 @@ def open_tty():
 
 
 def ask_password(label: str) -> str:
-    first = getpass.getpass(f"New Gentoo {label} password: ")
-    second = getpass.getpass(f"Repeat Gentoo {label} password: ")
+    if not sys.stdin.isatty():
+        raise AgentError(CONFIG_INVALID, PASSWORD_NEEDS_TERMINAL)
+    try:
+        first = getpass.getpass(f"New Gentoo {label} password: ")
+        second = getpass.getpass(f"Repeat Gentoo {label} password: ")
+    except EOFError as exc:
+        raise AgentError(CONFIG_INVALID, PASSWORD_NEEDS_TERMINAL) from exc
     if not first or first != second:
         raise AgentError(CONFIG_INVALID, f"Passwords for {label} were empty or did not match.")
     return first
@@ -103,7 +115,12 @@ def cmd_run_status(args: argparse.Namespace) -> int:
     if record["status"] not in ACTIVE_STATUSES:
         credentials = take_credentials(args.run_id)
         if credentials:
-            state = "were applied" if credentials.get("applied") else "were generated but the authentication phase did not run"
+            if not credentials.get("applied"):
+                state = "were generated but the authentication phase did not run"
+            elif record["status"] == "installed_pending_reboot":
+                state = "were applied"
+            else:
+                state = "may have been applied (the authentication phase was attempted)"
             print(f"Generated credentials ({state}; shown once, save them now):")
             for username, password in credentials["credentials"].items():
                 print(f"  {username}: {password}")

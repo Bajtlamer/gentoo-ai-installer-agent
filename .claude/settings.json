@@ -10,12 +10,10 @@
       "Bash(./tools/gentoo_agent.py approve:*)",
       "Edit(approvals/**)",
       "Edit(./approvals/**)",
-      "Write(approvals/**)",
-      "Write(./approvals/**)",
+      "Edit(/approvals/**)",
       "Edit(plans/**)",
       "Edit(./plans/**)",
-      "Write(plans/**)",
-      "Write(./plans/**)"
+      "Edit(/plans/**)"
     ]
   }
 }

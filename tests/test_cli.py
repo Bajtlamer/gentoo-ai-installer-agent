@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -124,7 +125,103 @@ class PlanAndRunCommandTests(unittest.TestCase):
         self.assertNotIn("s3cret-value", second.getvalue())
 
 
+class RealTerminalTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "needs a POSIX pty")
+    def test_open_tty_reads_a_line_on_a_real_terminal(self):
+        import pty
+
+        pid, master = pty.fork()
+        if pid == 0:
+            code = 4
+            try:
+                with cli.open_tty() as tty:
+                    tty.write("prompt: ")
+                    tty.flush()
+                    code = 0 if tty.readline().strip() == "hello" else 3
+            except BaseException:
+                code = 5
+            os._exit(code)
+        os.write(master, b"hello\n")
+        output = b""
+        try:
+            while True:
+                chunk = os.read(master, 1024)
+                if not chunk:
+                    break
+                output += chunk
+        except OSError:
+            pass
+        _, status = os.waitpid(pid, 0)
+        os.close(master)
+        self.assertTrue(os.WIFEXITED(status))
+        self.assertEqual(os.WEXITSTATUS(status), 0, output)
+        self.assertIn(b"prompt:", output)
+
+
+class EdgeCaseTests(unittest.TestCase):
+    def test_approve_eof_is_declined(self):
+        stderr = io.StringIO()
+        with temp_home():
+            plan = approved_plan()
+            approval.approval_path(plan["plan_id"]).unlink()
+            tty = FakeTty("")
+            tty.readline = lambda: ""
+            with patch.object(cli, "open_tty", return_value=tty), redirect_stderr(stderr):
+                code = cli.main(["approve", plan["plan_id"]])
+            approved = approval.approval_path(plan["plan_id"]).exists()
+        self.assertEqual(code, 1)
+        self.assertIn("APPROVAL_DECLINED", stderr.getvalue())
+        self.assertFalse(approved)
+
+    def test_ask_password_needs_a_terminal(self):
+        with patch.object(cli.sys, "stdin", io.StringIO("")):
+            with self.assertRaises(cli.AgentError) as caught:
+                cli.ask_password("root")
+        self.assertEqual(caught.exception.code, "CONFIG_INVALID")
+        self.assertIn("password_source 'prompt' needs an interactive terminal.", caught.exception.message)
+
+    def test_ask_password_converts_eof(self):
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        with patch.object(cli.sys, "stdin", Tty("")), patch.object(cli.getpass, "getpass", side_effect=EOFError):
+            with self.assertRaises(cli.AgentError) as caught:
+                cli.ask_password("root")
+        self.assertEqual(caught.exception.code, "CONFIG_INVALID")
+
+    def _status_output(self, status, applied):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": "a" * 16, "status": status, "pid": None,
+                                    "started_at": runs.now()})
+            runs.write_credentials(run_id, {"credentials": {"root": "pw"}, "applied": applied})
+            out = io.StringIO()
+            with redirect_stdout(out):
+                cli.main(["run", "status", run_id])
+        return out.getvalue()
+
+    def test_status_wording_for_failed_run_with_applied_credentials(self):
+        text = self._status_output("failed", True)
+        self.assertIn("may have been applied (the authentication phase was attempted)", text)
+        self.assertNotIn("were applied", text)
+
+    def test_status_wording_for_installed_run(self):
+        self.assertIn("were applied", self._status_output("installed_pending_reboot", True))
+
+    def test_status_wording_when_not_applied(self):
+        self.assertIn("were generated but the authentication phase did not run", self._status_output("failed", False))
+
+
 class DenyRuleTests(unittest.TestCase):
+    def test_deny_rules_use_edit_forms_only_for_paths(self):
+        settings = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        deny = settings["permissions"]["deny"]
+        for directory in ("approvals", "plans"):
+            for rule in (f"Edit({directory}/**)", f"Edit(./{directory}/**)", f"Edit(/{directory}/**)"):
+                self.assertIn(rule, deny)
+        self.assertFalse([rule for rule in deny if rule.startswith("Write(")])
+
     def test_agent_may_not_run_approve_or_write_approval_files(self):
         settings = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
         deny = settings["permissions"]["deny"]
@@ -135,9 +232,7 @@ class DenyRuleTests(unittest.TestCase):
             "Bash(python tools/gentoo_agent.py approve:*)",
             "Bash(python3 tools/gentoo_agent.py approve:*)",
             "Edit(approvals/**)",
-            "Write(approvals/**)",
             "Edit(plans/**)",
-            "Write(plans/**)",
         ):
             self.assertIn(rule, deny)
 
