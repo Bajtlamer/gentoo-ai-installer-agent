@@ -259,14 +259,23 @@ class ResolveTests(unittest.TestCase):
         for name in ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "LANG", "TMPDIR",
                      "EDITOR", "GENTOO_AGENT_HOME", "SSH_AUTH_SOCK", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES",
                      "PYTHONPATH", "GIT_ASKPASS", "GITHUB_TOKEN", "MY_SECRET", "OPENAI_API_KEY", "X_API_KEY",
-                     "SSH_PRIVATE", "PRIVATE_KEY", "AWS_SECRET_ACCESS_KEY", "MY_AWS_PW", "ANTHROPIC_KEY", "OPENAI_X"):
-            with self.subTest(name=name):
-                with self.assertRaises(AgentError) as caught:
-                    resolve({"user_password": {"env": name}})
-                self.assertEqual(caught.exception.code, CONFIG_INVALID)
-        for name in ("ALEX_PW", "GENTOO_USER_PASSWORD", "GENTOO_ROOT_PASSWORD"):
+                     "SSH_PRIVATE", "PRIVATE_KEY", "AWS_SECRET_ACCESS_KEY", "MY_AWS_PW", "ANTHROPIC_KEY", "OPENAI_X",
+                     "SHLVL", "HOSTNAME", "USERNAME", "LC_ALL", "TZ", "DISPLAY", "DATABASE_URL",
+                     "GOOGLE_APPLICATION_CREDENTIALS", "PASSWORD", "SSH_PASSWORD", "GIT_PASSWORD", "OPENAI_PW",
+                     "MY_SECRET_PASSWORD", "GITHUB_TOKEN_PASSWORD"):
+            for field in ("user_password", "root_password"):
+                with self.subTest(name=name, field=field):
+                    with self.assertRaises(AgentError) as caught:
+                        resolve({field: {"env": name}})
+                    self.assertEqual(caught.exception.code, CONFIG_INVALID)
+                    self.assertIn(
+                        'Password variable names must end in _PASSWORD or _PW, for example {"env": "ALEX_PW"}.',
+                        caught.exception.message,
+                    )
+        for name in ("ALEX_PW", "GENTOO_USER_PASSWORD", "GENTOO_ROOT_PASSWORD", "ROOT_PW"):
             with self.subTest(name=name):
                 self.assertEqual(resolve({"user_password": {"env": name}})["install"]["user_password_env"], name)
+                self.assertEqual(resolve(profile={"root_password": {"env": name}})["install"]["root_password_env"], name)
 
     def test_swap_must_be_below_half_the_disk(self):
         inv = inventory(extra={"/dev/nvme0n1": {"size": 8 * 1024 ** 3}})

@@ -14,7 +14,14 @@ MAX_SWAP_MB = 131072
 IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
 
 
-ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
+IPV4_CIDR = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}")
+STATIC_PREFIXES = range(8, 31)
+STATIC_ADDRESS_MESSAGE = "Static addresses must be IPv4 in CIDR form, for example 192.168.10.20/24"
+
+# Positive rule: the name must say it holds a password. The denylist below
+# stays as a second layer against names such as OPENAI_PW or SSH_PASSWORD.
+ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,62}(_PASSWORD|_PW)")
+ENV_NAME_MESSAGE = 'Password variable names must end in _PASSWORD or _PW, for example {"env": "ALEX_PW"}.'
 RESERVED_ENV_NAMES = {
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "LANG", "TMPDIR", "EDITOR",
     "GENTOO_AGENT_HOME",
@@ -24,7 +31,7 @@ RESERVED_ENV_PARTS = ("TOKEN", "SECRET", "API_KEY", "PRIVATE", "AWS_", "ANTHROPI
 
 
 def password_env_name_ok(name: object) -> bool:
-    """True for an uppercase variable name that is not a system or credential variable.
+    """True for a name ending in _PASSWORD or _PW that is not a system or credential variable.
 
     Password variables are read from the agent's environment, so a name such
     as PATH or OPENAI_API_KEY would install that value as a password.
@@ -68,11 +75,21 @@ def _check_network(install: dict) -> None:
                "and dns (a list of 1 to 3 IP addresses)")
     if not isinstance(static, dict) or set(static) != {"address", "gateway", "dns"}:
         raise _invalid("network_static", message)
+    address = static["address"]
+    if not isinstance(address, str) or not IPV4_CIDR.fullmatch(address):
+        raise _invalid("network_static", STATIC_ADDRESS_MESSAGE)
+    try:
+        interface = ipaddress.IPv4Interface(address)
+    except ValueError:
+        raise _invalid("network_static", STATIC_ADDRESS_MESSAGE) from None
+    if interface.network.prefixlen not in STATIC_PREFIXES:
+        raise _invalid("network_static", STATIC_ADDRESS_MESSAGE + " with a prefix from /8 to /30")
+    gateway = static["gateway"]
+    if not _ip_text(gateway, ipaddress.IPv4Address) or ipaddress.IPv4Address(gateway) not in interface.network:
+        raise _invalid("network_static", f"The static gateway must be an IPv4 address inside {interface.network}")
     dns = static["dns"]
     if (
-        not _ip_text(static["address"], ipaddress.ip_interface)
-        or not _ip_text(static["gateway"], ipaddress.ip_address)
-        or not isinstance(dns, list)
+        not isinstance(dns, list)
         or not 1 <= len(dns) <= 3
         or not all(_ip_text(item, ipaddress.ip_address) for item in dns)
     ):
@@ -142,7 +159,7 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         if (password_source == "environment" or field in install) and not password_env_name_ok(install.get(field)):
             raise AgentError(
                 CONFIG_INVALID,
-                f"{field} must name an uppercase environment variable that is not a system or credential variable",
+                f"{field}: {ENV_NAME_MESSAGE}",
                 {"field": field},
             )
     if not create_user and not set_root_password:
@@ -210,7 +227,7 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
         errors.append("password_source must be 'prompt', 'environment', or 'generate'")
     for field in ("root_password_env", "user_password_env"):
         if (password_source == "environment" or field in install) and not password_env_name_ok(install.get(field)):
-            errors.append(f"{field} must name an uppercase environment variable that is not a system or credential variable")
+            errors.append(f"{field}: {ENV_NAME_MESSAGE}")
     if not isinstance(install.get("generate_missing_passwords", True), bool):
         errors.append("generate_missing_passwords must be boolean")
     if create_user:

@@ -22,7 +22,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.layout import build_layout
-from gentoo_agent.core.validate import password_env_name_ok, validated_settings
+from gentoo_agent.core.validate import ENV_NAME_MESSAGE, password_env_name_ok, validated_settings
 
 
 SETTABLE = {
@@ -81,7 +81,7 @@ def _check_layer(name: str, layer: object, allow_passwords: bool) -> dict:
                 raise AgentError(
                     CONFIG_INVALID,
                     'Passwords are passed by environment-variable name, never as text: {"env": "NAME"}. '
-                    "System and credential variables such as PATH or *_TOKEN are not allowed.",
+                    + ENV_NAME_MESSAGE,
                     {"field": field},
                 )
     return layer
