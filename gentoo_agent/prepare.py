@@ -12,14 +12,13 @@ import argparse
 import json
 import re
 import shutil
-import subprocess
-import sys
 
-from gentoo_agent.core.config import load_json, save_json
+from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.handbook import fetch_handbook
-from gentoo_agent.core.inventory import collect_inventory
+from gentoo_agent.core.inventory import collect_inventory, latest_inventory
 from gentoo_agent.core.paths import CONFIG, ROOT
 from gentoo_agent.core.state import load_state, save_state
+from gentoo_agent.core.validate import validate_installation
 
 
 def partition_device(disk: str, number: int) -> str:
@@ -285,7 +284,8 @@ def main() -> int:
     print("================================================")
     print(f"Saved: {CONFIG / 'install.json'}")
     print("\nLocal validation:")
-    subprocess.run([sys.executable, "-m", "gentoo_agent", "validate"], cwd=ROOT, check=False)
+    result = validate_installation(target, install, load_plan(), latest_inventory())
+    print(json.dumps(result, indent=2))
     print("\nReview the printed configuration and config/install.json.")
     if input("Type REVIEWED to record that you reviewed it, or press Enter to leave it pending: ").strip() == "REVIEWED":
         install["review_status"] = "reviewed_execution_disabled"
