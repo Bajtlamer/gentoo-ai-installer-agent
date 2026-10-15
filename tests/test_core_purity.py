@@ -15,11 +15,30 @@ FORBIDDEN_ATTRS = {"_exit", "abort"}
 MCP = Path(__file__).resolve().parents[1] / "gentoo_agent" / "mcp"
 
 
-def violations_in(path: Path, base: Path | None = None, *, check_imports: bool = True) -> list[str]:
+def _main_guard_nodes(tree: ast.Module) -> set[int]:
+    """ids of every node inside a top-level `if __name__ == "__main__":` block."""
+    inside: set[int] = set()
+    for statement in tree.body:
+        test = getattr(statement, "test", None)
+        if (isinstance(statement, ast.If) and isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+                and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+                and len(test.comparators) == 1 and isinstance(test.comparators[0], ast.Constant)
+                and test.comparators[0].value == "__main__" and not statement.orelse):
+            inside |= {id(node) for node in ast.walk(statement)}
+    return inside
+
+
+def violations_in(path: Path, base: Path | None = None, *, check_imports: bool = True,
+                  allow_main_guard: bool = False) -> list[str]:
     found = []
     name = path.relative_to(base).as_posix() if base else path.name
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    # The process entry point may exit; it never runs while a tool call is being served.
+    skipped = _main_guard_nodes(tree) if allow_main_guard else set()
     for node in ast.walk(tree):
+        if id(node) in skipped:
+            continue
         line = getattr(node, "lineno", 0)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
             found.append(f"{name}:{line} calls {node.func.id}()")
@@ -69,7 +88,7 @@ class CorePurityTests(unittest.TestCase):
         # stdout carries the MCP protocol; module-import rules do not apply here.
         violations = []
         for path in sorted(MCP.glob("*.py")):
-            violations += violations_in(path, MCP, check_imports=False)
+            violations += violations_in(path, MCP, check_imports=False, allow_main_guard=True)
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if (isinstance(node, ast.Attribute) and node.attr == "exit"
@@ -83,6 +102,21 @@ class CorePurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sample = Path(tmp) / "sample.py"
             sample.write_text("import getpass\nprint('x')\nraise SystemExit(1)\n", encoding="utf-8")
+            self.assertEqual(len(violations_in(sample)), 3)
+
+    def test_main_guard_exemption_covers_only_the_guard(self):
+        import tempfile
+
+        source = (
+            "def main():\n    raise SystemExit(2)\n\n"
+            "if __name__ == '__main__':\n    raise SystemExit(main())\n"
+            "if __name__ != '__main__':\n    raise SystemExit(3)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "entry.py"
+            sample.write_text(source, encoding="utf-8")
+            self.assertEqual(violations_in(sample, allow_main_guard=True),
+                             ["entry.py:2 uses SystemExit", "entry.py:7 uses SystemExit"])
             self.assertEqual(len(violations_in(sample)), 3)
 
     def test_guard_detects_known_bypasses(self):

@@ -14,6 +14,11 @@ from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
 from gentoo_agent.core.state import load_state, save_state
 
 
+def _unreachable(result: dict) -> bool:
+    """ssh exits with 255 when it cannot connect or authenticate; a timeout is recorded as an error."""
+    return "error" in result or result.get("returncode") == 255
+
+
 def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = None) -> tuple[dict, Path]:
     results = []
     for label, command in READ_ONLY_COMMANDS.items():
@@ -26,6 +31,10 @@ def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = 
         except OSError as exc:
             raise AgentError(SSH_UNREACHABLE, f"Could not run ssh to inspect {target.get('host')}: {exc}",
                              {"host": target.get("host"), "label": label}) from exc
+    if all(_unreachable(item) for item in results):
+        # An inventory without a single answer from the target is not evidence: never save it.
+        raise AgentError(SSH_UNREACHABLE, "Could not reach the target over SSH; check the address, key, and host key.",
+                         {"host": target["host"]})
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     data = {
         "target": target["name"],

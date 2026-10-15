@@ -111,7 +111,7 @@ Required fields:
 | `root_filesystem` | string | `ext4` |
 | `swap_mb` | integer | `2048` |
 | `bootloader` | string | `grub` |
-| `init_system` | string | `openrc` or `systemd` |
+| `init_system` | string | `openrc` (the MCP `resolve_config` accepts only `openrc`) |
 | `hostname` | string | `gentoo` |
 | `timezone` | string | `Europe/Prague` |
 | `network_method` | string | `dhcp` |
@@ -282,7 +282,11 @@ not set `disk` or `boot_mode`, and may not set passwords.
   `ALEX_PW`); well-known variables such as `PATH` or `HOME` are refused.
 - `swap_mb: 0` means no swap partition. Swap must be less than half the disk.
 - Inferred disk: exactly one disk that is not removable, not USB, not
-  read-only, and not mounted. Otherwise the result is `DISK_AMBIGUOUS`.
+  read-only, and not mounted. An inventory with no disks at all returns
+  `INVENTORY_MISSING`; when disks exist but none or several of them are
+  eligible, the result is `DISK_AMBIGUOUS`.
+- `init_system` must be `openrc`: the generated commands are OpenRC-only and
+  systemd is out of scope for this version (`CONFIG_INVALID`).
 - The boot mode must be known from the inventory; a requested mode that
   differs from the live system's returns `CONFIG_CONFLICT`.
 - Static network: `network_static` has an IPv4 `address` in CIDR form with a

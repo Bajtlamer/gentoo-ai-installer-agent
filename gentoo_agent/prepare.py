@@ -14,6 +14,7 @@ import re
 import shutil
 
 from gentoo_agent.core.config import load_json, load_plan, save_json
+from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
 from gentoo_agent.core.layout import build_layout
@@ -77,6 +78,8 @@ def collect_inventory_interactive(target: dict) -> tuple[dict, object]:
         inventory, path = collect_inventory(target, on_progress=lambda label: print(f"  Read-only check: {label}"))
     except FileNotFoundError:
         raise SystemExit("OpenSSH client was not found. Install ssh and retry.")
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
     for result in inventory.get("results", []):
         if result.get("returncode") not in (0, None):
             print(f"    warning: {result['label']} returned {result.get('returncode')}")

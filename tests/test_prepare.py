@@ -37,6 +37,19 @@ class PrepareInventoryTests(unittest.TestCase):
                 prepare.collect_inventory_interactive({"name": "gentoo"})
         self.assertEqual(str(caught.exception), "OpenSSH client was not found. Install ssh and retry.")
 
+    def test_unreachable_target_is_reported_without_a_traceback(self):
+        from gentoo_agent.core.errors import SSH_UNREACHABLE, AgentError
+
+        def fake_collect(target, on_progress=None):
+            raise AgentError(SSH_UNREACHABLE, "Could not reach the target over SSH; check the address, key, and host key.",
+                             {"host": "gentoo.invalid"})
+
+        with patch.object(prepare, "collect_inventory", fake_collect):
+            with self.assertRaises(SystemExit) as caught:
+                prepare.collect_inventory_interactive({"name": "gentoo"})
+        self.assertEqual(str(caught.exception), "SSH_UNREACHABLE: Could not reach the target over SSH; "
+                                                "check the address, key, and host key.")
+
 
 if __name__ == "__main__":
     unittest.main()

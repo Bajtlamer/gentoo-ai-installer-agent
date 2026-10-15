@@ -48,6 +48,9 @@ DERIVED = {
 # mode must come from the user, the profile, or the hardware.
 NOT_FALLBACK = ("boot_mode", "disk")
 SUPPORTED_BOOTLOADERS = {"grub"}
+# Version 1 generates OpenRC commands only. validate.py still accepts systemd so
+# hand-written configurations and the golden fixtures keep rendering.
+SUPPORTED_INIT_SYSTEM = "openrc"
 LIVE_BOOT_MODES = {"uefi": "uefi", "bios-or-unknown": "bios"}
 
 
@@ -138,6 +141,9 @@ def resolve_config(
 
     if install.get("bootloader", "grub") not in SUPPORTED_BOOTLOADERS:
         raise AgentError(CONFIG_INVALID, "Only the grub bootloader is supported.", {"field": "bootloader"})
+    if install.get("init_system", SUPPORTED_INIT_SYSTEM) != SUPPORTED_INIT_SYSTEM:
+        raise AgentError(CONFIG_INVALID, "Only OpenRC is supported in this version (init_system must be openrc).",
+                         {"field": "init_system"})
     if sources.get("boot_mode") != "inferred" and install["boot_mode"] != live_boot:
         raise AgentError(
             CONFIG_CONFLICT,

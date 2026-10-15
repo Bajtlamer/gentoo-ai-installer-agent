@@ -1,7 +1,7 @@
 # MCP server for AI-managed Gentoo installation: design
 
 Date: 2026-10-15
-Status: approved in brainstorming, pending written review
+Status: implemented through plan 3 (MCP server); plan 4 (hardware and kernel) pending
 
 ## Goal
 
@@ -62,7 +62,8 @@ Rules:
 Every configuration value is resolved in this order, highest first:
 
 1. `overrides` (values the AI extracted from the user's prompt)
-2. profile file (`profile_path`)
+2. profile (a `profile` layer exists in `core/resolve.py` but is not exposed
+   through the MCP tools yet)
 3. values inferred from the hardware inventory
 4. `fallbacks` (user-supplied defaults for anything not set above)
 5. built-in defaults
@@ -72,8 +73,10 @@ The resolved config records the source of every value, for example
 
 Normalization and conflicts:
 
-- Usernames are lowercased (`Alex` becomes `alex`); the original spelling goes
-  into the GECOS field. The change is reported as a warning.
+- Usernames are lowercased (`Alex` becomes `alex`). The change is reported as
+  a warning.
+- `init_system` must be `openrc`; the generated commands are OpenRC-only and
+  systemd is out of scope for version 1 (`CONFIG_INVALID`).
 - A requested boot mode that differs from the firmware the live system booted
   with returns `CONFIG_CONFLICT`. The server never guesses.
 - More than one candidate disk without an explicit choice returns
@@ -94,15 +97,15 @@ Every tool declares `inputSchema` and returns a `CallToolResult` with
 `structuredContent` always present. Because tools return `CallToolResult`
 directly (so errors can carry structured data), the SDK publishes no
 `outputSchema`. Annotations: RO = `readOnlyHint`, D = `destructiveHint`,
-I = `idempotentHint`.
+I = `idempotentHint`. A tool without RO is not read-only.
 
 ### Discovery
 
 | Tool | Input | Output |
 |---|---|---|
-| `detect_hardware` [RO, I] | `refresh: bool` | CPU (model, flags, cores), firmware, disks with serial/WWN, NICs, GPU, loaded modules, `inventory_hash` |
+| `detect_hardware` [I] | `refresh: bool` | firmware boot mode (`uefi`, `bios`, or `unknown`), disks with serial/WWN, `inventory_hash`; CPU, NICs, GPU, and loaded modules follow in plan 4. Uses the latest saved inventory unless `refresh=true`, which writes a new inventory (hence not read-only) or returns `SSH_UNREACHABLE` and saves nothing |
 | `list_phases` [RO, I] | none | runnable phases only, in order, with destructive flag and Handbook sections |
-| `resolve_config` [RO, I] | `overrides`, `fallbacks`, `profile_path?` | merged config, value sources, conflicts, warnings |
+| `resolve_config` [RO, I] | `overrides`, `fallbacks` | merged config, value sources, conflicts, warnings |
 
 ### Planning (writes only to local `plans/`)
 
@@ -130,7 +133,7 @@ I = `idempotentHint`.
 
 | Tool | Input | Output |
 |---|---|---|
-| `get_run_status` [RO] | `run_id` | status, phase index (`5/9`), current step, elapsed time, `last_error`, `credentials_waiting` (generated passwords are never returned to the model; the human reads them with `gentoo-agent run status <run_id>` in a terminal) |
+| `get_run_status` | `run_id` | status, phase index (`5/9`), current step, elapsed time, `last_error`, `credentials_waiting`, `credentials_applied` (`true`, `false`, or `null` while pending). Not read-only: it may mark a dead run `interrupted` and purge stale credentials. Generated passwords are never returned to the model; the human reads them with `gentoo-agent run status <run_id>` in a terminal |
 | `get_run_log` [RO] | `run_id`, `offset`, `limit` | log slice, `next_offset` |
 | `verify_install` [RO] | `plan_id` | each phase's read-only check, regenerated from the plan's settings; an edited plan is refused with `PLAN_HASH_MISMATCH` |
 
@@ -238,8 +241,11 @@ and both run outside the agent's sandbox.
 
 Sandbox profile: `docs/operator/claude-settings.json` is an opt-in Claude Code
 profile (sandbox `denyWrite` and `denyRead` plus permission deny rules) that
-keeps the agent's shell and file tools away from `approvals/`, `plans/`,
-`runs/`, and `secrets/`. Deny rules for top-level directories are
+stops the agent's shell and file tools from writing `approvals/`, `plans/`,
+`runs/`, `secrets/`, `config/`, `inventory/`, `.mcp.json`, and `.claude/`. The
+shell cannot read `secrets/` or `runs/` (the agent reads run status and logs
+through the MCP tools), and the file tools cannot read `secrets/` or run
+credentials. Deny rules for top-level directories are
 root-anchored, for example `Edit(/plans/**)`, because an unanchored
 `Edit(plans/**)` also matches `docs/superpowers/plans/`. It is opt-in because
 a project-wide sandbox would also restrict normal development sessions.
@@ -280,15 +286,17 @@ The worker:
    `TARGET_DRIFT` before any change.
 2. For each phase: read-only check (exit 0 means complete, skip), apply,
    verify with the same check.
-3. Writes `runs/<run_id>/state.json` and `runs/<run_id>/log.jsonl` after
+3. Writes `runs/<run_id>/run.json` and `runs/<run_id>/log.jsonl` after
    every step.
 4. Checks `runs/<run_id>/cancel` between phases.
 5. Never reboots the target.
 
-Generated passwords are written to `runs/<run_id>/credentials` (mode 0600)
-because the worker outlives the server. `get_run_status` returns them once
-after successful completion and deletes the file; an unread file is deleted
-after 24 hours. They never appear in plans, logs, or state.
+Generated passwords are written to `runs/<run_id>/credentials.json` (mode
+0600) because the worker outlives the server. The MCP `get_run_status` never
+returns them: it reports `credentials_waiting` and `credentials_applied`. The
+human reads them once with `gentoo-agent run status <run_id>` in a terminal,
+which deletes the file; an unread file is deleted after 24 hours. They never
+appear in plans, logs, or run records.
 
 ## Hardware profile and kernel
 
@@ -324,8 +332,10 @@ The fallback kernel covers hardware that was absent or idle during inspection.
 - SSH drop during a phase: treated as failure; the phase check decides on
   resume whether it completed. Phases must stay idempotent
   (`phases/README.md`).
-- Server or client restart: the worker continues. On startup the server scans
-  `runs/`; a lock with a dead PID marks the run `interrupted`, resumable.
+- Server or client restart: the worker continues. Interrupted runs are
+  detected lazily when their status is read (there is no startup scan): an
+  active run whose worker PID is dead is marked `interrupted`, resumable, and
+  its lock is released.
 - Cancellation: only at phase boundaries, status `cancelled`.
 - Never automatic: reboot, repair of an existing system, concurrent runs.
 

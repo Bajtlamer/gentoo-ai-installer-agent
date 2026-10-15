@@ -17,6 +17,22 @@ class HardwareSummaryTests(unittest.TestCase):
         self.assertEqual(summary["disks"][0]["strength"], "weak")
         self.assertEqual(len(summary["inventory_hash"]), 64)
 
+    def test_boot_mode_needs_clean_evidence(self):
+        cases = [
+            ([], "unknown"),
+            ([{"label": "boot_mode", "returncode": 255, "stdout": ""}], "unknown"),
+            ([{"label": "boot_mode", "returncode": 255, "stdout": "uefi"}], "unknown"),
+            ([{"label": "boot_mode", "error": "timed out"}], "unknown"),
+            ([{"label": "boot_mode", "returncode": 0, "stdout": ""}], "unknown"),
+            ([{"label": "boot_mode", "returncode": 0, "stdout": "something"}], "unknown"),
+            ([{"label": "boot_mode", "returncode": 0, "stdout": None}], "unknown"),
+            ([{"label": "boot_mode", "returncode": 0, "stdout": "uefi"}], "uefi"),
+            ([{"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"}], "bios"),
+        ]
+        for results, expected in cases:
+            with self.subTest(results=results):
+                self.assertEqual(summarize_inventory({"results": results})["boot_mode"], expected)
+
 
 if __name__ == "__main__":
     unittest.main()

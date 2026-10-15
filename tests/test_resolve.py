@@ -122,6 +122,22 @@ class ResolveTests(unittest.TestCase):
             resolve({"bootloader": "systemd-boot"})
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
 
+    def test_only_openrc_is_supported(self):
+        for layer in ("overrides", "profile"):
+            with self.subTest(layer=layer), self.assertRaises(AgentError) as caught:
+                if layer == "overrides":
+                    resolve({"init_system": "systemd"})
+                else:
+                    resolve(profile={"init_system": "systemd"})
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+            self.assertEqual(caught.exception.message,
+                             "Only OpenRC is supported in this version (init_system must be openrc).")
+            self.assertEqual(caught.exception.details, {"field": "init_system"})
+        with self.assertRaises(AgentError) as caught:
+            resolve_config(TARGET, {}, {}, {**DEFAULTS, "init_system": "systemd"}, inventory())
+        self.assertEqual(caught.exception.details, {"field": "init_system"})
+        self.assertEqual(resolve({"init_system": "openrc"})["install"]["init_system"], "openrc")
+
     def test_erase_flags_come_from_the_target(self):
         result = resolve_config({**TARGET, "disk_erase_authorized": False}, {}, {}, DEFAULTS, inventory())
         self.assertFalse(result["install"]["disk_erase_authorized"])

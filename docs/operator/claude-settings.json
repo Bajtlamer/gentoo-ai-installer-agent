@@ -4,8 +4,8 @@
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "filesystem": {
-      "denyWrite": ["./approvals", "./plans", "./runs", "./secrets", "./config", "./inventory"],
-      "denyRead": ["./secrets"]
+      "denyWrite": ["./approvals", "./plans", "./runs", "./secrets", "./config", "./inventory", "./.mcp.json", "./.claude"],
+      "denyRead": ["./secrets", "./runs"]
     }
   },
   "permissions": {
@@ -19,6 +19,8 @@
       "Edit(/secrets/**)",
       "Edit(/config/**)",
       "Edit(/inventory/**)",
+      "Edit(/.mcp.json)",
+      "Edit(/.claude/**)",
       "Bash(gentoo-agent approve:*)",
       "Bash(python -m gentoo_agent approve:*)",
       "Bash(python3 -m gentoo_agent approve:*)"
