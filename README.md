@@ -36,7 +36,9 @@ server.
 
 ## Requirements
 
-- Python 3.10 or newer on the operator machine.
+- Python 3.12 or newer on the operator machine.
+- Optional: `pip install -e .` provides the `gentoo-agent` command; every
+  `python tools/...` command below keeps working without installation.
 - OpenSSH client available as `ssh` on `PATH`.
 - A Gentoo live environment reachable over SSH.
 - A verified host key in the operator's SSH `known_hosts` file.
