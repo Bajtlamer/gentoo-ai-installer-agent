@@ -144,7 +144,7 @@ def lock_path() -> Path:
 def _lock_holder() -> str | None:
     try:
         return lock_path().read_text(encoding="utf-8").strip() or None
-    except (FileNotFoundError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError):
         return None
 
 
@@ -219,6 +219,8 @@ def acquire_lock(run_id: str, record: dict) -> None:
             if active:
                 message = f"Run {holder} is still active." if holder else "Another run holds the run lock."
                 raise AgentError(RUN_ALREADY_ACTIVE, message, {"run_id": holder})
+            if not lock_path().is_file():
+                raise AgentError(CONFIG_INVALID, "runs/active.lock is not a regular file; remove it manually.", {})
         _write_run_unlocked(run_id, record)
         _write_lock_unlocked(run_id)
 
@@ -289,11 +291,14 @@ def take_credentials(run_id: str) -> dict | None:
     except FileNotFoundError:
         return None
     try:
-        return load_json(claimed)
+        data = load_json(claimed)
     except ValueError as error:
         raise AgentError(CONFIG_INVALID, f"Credentials of run {run_id} are unreadable: {error}", {"run_id": run_id}) from None
     finally:
         claimed.unlink(missing_ok=True)
+    if not isinstance(data, dict):
+        raise AgentError(CONFIG_INVALID, f"Credentials of run {run_id} are not a JSON object.", {"run_id": run_id})
+    return data
 
 
 def _credentials_written_at(path: Path) -> dt.datetime:
@@ -330,7 +335,8 @@ def append_log(run_id: str, entry: dict) -> None:
 
 def read_log(run_id: str, offset: int = 0, limit: int = 50) -> dict:
     """Page through complete log lines; a partially written last line is skipped."""
-    if offset < 0 or not 1 <= limit <= MAX_LOG_PAGE:
+    if (not isinstance(offset, int) or isinstance(offset, bool) or not isinstance(limit, int)
+            or isinstance(limit, bool) or offset < 0 or not 1 <= limit <= MAX_LOG_PAGE):
         raise AgentError(CONFIG_INVALID, f"offset must be >= 0 and limit between 1 and {MAX_LOG_PAGE}", {"offset": offset, "limit": limit})
     read_run(run_id)
     path = run_dir(run_id) / "log.jsonl"

@@ -185,6 +185,21 @@ class ConcurrentLockTests(unittest.TestCase):
                 runs.acquire_lock(other, record(other))
             self.assertEqual(caught.exception.code, RUN_ALREADY_ACTIVE)
 
+    def test_lock_that_is_a_directory_never_raises_a_raw_error(self):
+        with temp_home():
+            runs.lock_path().mkdir(parents=True)
+            run_id = runs.new_run_id()
+            with self.assertRaises(AgentError) as caught:
+                runs.acquire_lock(run_id, record(run_id))
+            self.assertEqual(caught.exception.code, RUN_ALREADY_ACTIVE)
+            stamp = time.time() - 120
+            os.utime(runs.lock_path(), (stamp, stamp))
+            with self.assertRaises(AgentError) as caught:
+                runs.acquire_lock(run_id, record(run_id))
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+            self.assertIn("not a regular file", caught.exception.message)
+            self.assertTrue(runs.lock_path().is_dir())
+
     def test_acquire_needs_fcntl(self):
         with temp_home(), patch.object(runs, "fcntl", None):
             run_id = runs.new_run_id()
@@ -277,6 +292,16 @@ class CredentialsConcurrencyTests(unittest.TestCase):
             leftovers = [path.name for path in runs.run_dir(run_id).iterdir() if "credentials" in path.name]
             self.assertEqual(leftovers, [])
 
+    def test_credentials_that_are_not_an_object_are_rejected(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id, status="failed"))
+            runs.credentials_path(run_id).write_text("[1, 2]", encoding="utf-8")
+            with self.assertRaises(AgentError) as caught:
+                runs.take_credentials(run_id)
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+            self.assertFalse(runs.credentials_path(run_id).exists())
+
     def test_malformed_credentials_do_not_break_purge(self):
         with temp_home():
             old, fresh, naive, other = (runs.new_run_id() for _ in range(4))
@@ -298,6 +323,17 @@ class CredentialsConcurrencyTests(unittest.TestCase):
 
 
 class LogRobustnessTests(unittest.TestCase):
+    def test_non_integer_paging_is_rejected(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id))
+            runs.append_log(run_id, {"index": 0})
+            for offset, limit in (("1", 2), (None, 2), (0, "1"), (0, None), (True, 2), (0, True)):
+                with self.subTest(offset=offset, limit=limit):
+                    with self.assertRaises(AgentError) as caught:
+                        runs.read_log(run_id, offset=offset, limit=limit)
+                    self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
     def test_partial_and_corrupt_lines(self):
         with temp_home():
             run_id = runs.new_run_id()
