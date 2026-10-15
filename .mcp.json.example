@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gentoo-agent": {
+      "type": "stdio",
+      "command": "/ABSOLUTE/PATH/TO/protected-venv/bin/gentoo-agent-mcp",
+      "args": [],
+      "env": {
+        "GENTOO_AGENT_HOME": "/ABSOLUTE/PATH/TO/gentoo-agent-workdir"
+      }
+    }
+  }
+}
