@@ -32,6 +32,7 @@ READ_ONLY_COMMANDS = {
     "boot_mode": "if [ -d /sys/firmware/efi ]; then printf 'uefi'; else printf 'bios-or-unknown'; fi",
     "storage": "lsblk -e7 -o NAME,PATH,SIZE,TYPE,FSTYPE,FSVER,LABEL,UUID,MOUNTPOINTS,ROTA,MODEL",
     "storage_json": "lsblk -J -e7 -o NAME,PATH,SIZE,TYPE,FSTYPE,MODEL,MOUNTPOINTS",
+    "disk_identity": "lsblk -J -b -d -e7 -o PATH,TYPE,SIZE,MODEL,SERIAL,WWN",
     "block_ids": "blkid || true",
     "mounts": "findmnt -D || mount",
     "network": "ip -brief address; printf '\\n'; ip route",
