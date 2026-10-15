@@ -12,6 +12,15 @@ from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.paths import CONFIG, ROOT
 
 
+def _read_umask() -> int:
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+_UMASK = _read_umask()
+
+
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
 
@@ -21,14 +30,21 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
-def save_json(path: Path, value: dict, *, mode: int = 0o644) -> None:
+def save_json(path: Path, value: dict, *, mode: int | None = None) -> None:
     """Write JSON atomically through a unique temporary file in the same directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+        try:
+            handle = os.fdopen(descriptor, "w", encoding="utf-8", newline="\n")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with handle:
             json.dump(value, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
+        if mode is None:
+            mode = path.stat().st_mode & 0o777 if path.exists() else 0o666 & ~_UMASK
         os.chmod(temporary, mode)
         os.replace(temporary, path)
     except BaseException:
