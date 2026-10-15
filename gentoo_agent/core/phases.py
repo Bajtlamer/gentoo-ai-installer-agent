@@ -28,9 +28,10 @@ import time
 from pathlib import Path
 
 from gentoo_agent.core.config import install_config, load_json, now, save_json
-from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.paths import CONFIG, LOG_DIR, ROOT, STATE_DIR
 from gentoo_agent.core.ssh import ssh_base
+from gentoo_agent.core.validate import validated_settings
 
 
 MOUNT_ROOT = "/mnt/gentoo"
@@ -155,72 +156,6 @@ def save_state(state: dict) -> None:
 
 def disk_partition(disk: str, number: int) -> str:
     return f"{disk}{'p' if disk[-1:].isdigit() else ''}{number}"
-
-
-def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
-    disk = install.get("disk", "")
-    if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", disk):
-        raise AgentError(CONFIG_INVALID, f"Unsafe disk path in configuration: {disk!r}", {"field": "disk"})
-    layout = install.get("partition_layout")
-    if not isinstance(layout, list) or not layout:
-        raise AgentError(CONFIG_INVALID, "partition_layout is empty", {"field": "partition_layout"})
-    for item in layout:
-        device = item.get("device", "")
-        if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", device):
-            raise AgentError(CONFIG_INVALID, f"Unsafe partition path in configuration: {device!r}", {"field": "partition_layout"})
-    if target.get("user") != "root":
-        raise AgentError(CONFIG_INVALID, "The installation executor currently requires SSH user root.", {"field": "user"})
-    if install.get("boot_mode") == "uefi" and install.get("partition_table") != "gpt":
-        raise AgentError(CONFIG_CONFLICT, "UEFI requires GPT.", {"fields": ["boot_mode", "partition_table"]})
-    if install.get("root_filesystem") != "ext4":
-        raise AgentError(CONFIG_INVALID, "The executor currently supports ext4 root filesystems only.", {"field": "root_filesystem"})
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", str(install.get("hostname", ""))):
-        raise AgentError(CONFIG_INVALID, "hostname must be a simple DNS-compatible hostname", {"field": "hostname"})
-    if not re.fullmatch(r"[A-Za-z0-9._+/-]+", str(install.get("timezone", ""))):
-        raise AgentError(CONFIG_INVALID, "timezone contains unsafe characters", {"field": "timezone"})
-    create_user = install.get("create_user", True)
-    set_root_password = install.get("set_root_password", True)
-    install_user_ssh_key = install.get("install_user_ssh_key", True)
-    configure_sudo = install.get("configure_sudo", True)
-    allow_root_password_ssh = install.get("allow_root_password_ssh", False)
-    generate_missing_passwords = install.get("generate_missing_passwords", True)
-    for field, value in (
-        ("create_user", create_user),
-        ("set_root_password", set_root_password),
-        ("install_user_ssh_key", install_user_ssh_key),
-        ("configure_sudo", configure_sudo),
-        ("allow_root_password_ssh", allow_root_password_ssh),
-        ("generate_missing_passwords", generate_missing_passwords),
-    ):
-        if not isinstance(value, bool):
-            raise AgentError(CONFIG_INVALID, f"{field} must be boolean", {"field": field})
-    if install_user_ssh_key and not create_user:
-        raise AgentError(CONFIG_INVALID, "install_user_ssh_key requires create_user=true", {"field": "install_user_ssh_key"})
-    password_source = install.get("password_source", "environment")
-    if password_source not in {"prompt", "environment", "generate"}:
-        raise AgentError(CONFIG_INVALID, "password_source must be 'prompt', 'environment', or 'generate'", {"field": "password_source"})
-    if password_source == "environment":
-        for field in ("root_password_env", "user_password_env"):
-            env_name = str(install.get(field, ""))
-            if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", env_name):
-                raise AgentError(CONFIG_INVALID, f"{field} must contain a valid uppercase environment-variable name", {"field": field})
-    if not create_user and not set_root_password:
-        raise AgentError(CONFIG_INVALID, "at least one installed password must be configured", {"fields": ["create_user", "set_root_password"]})
-    if create_user:
-        username = str(install.get("username", ""))
-        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username) or username == "root":
-            raise AgentError(CONFIG_INVALID, "username must be a non-root Linux account name", {"field": "username"})
-        groups = install.get("user_groups", ["wheel"])
-        if not isinstance(groups, list) or any(
-            not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(group)) for group in groups
-        ):
-            raise AgentError(CONFIG_INVALID, "user_groups must contain simple Linux group names", {"field": "user_groups"})
-        if configure_sudo and "wheel" not in [str(group) for group in groups]:
-            raise AgentError(CONFIG_INVALID, "configure_sudo requires wheel in user_groups", {"field": "configure_sudo"})
-        shell = str(install.get("user_shell", "/bin/bash"))
-        if shell != "/bin/bash":
-            raise AgentError(CONFIG_INVALID, "user_shell must be /bin/bash; other shells are not installed by this workflow", {"field": "user_shell"})
-    return disk, layout
 
 
 def public_key_for_target(target: dict) -> str:
