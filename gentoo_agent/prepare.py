@@ -71,8 +71,6 @@ def ensure_target_config() -> dict:
     target["user"] = ask("SSH user", target.get("user", "root"))
     target["identity_file"] = ask("SSH private-key path", target.get("identity_file", "~/.ssh/id_rsa"))
     target["port"] = ask_int("SSH port", int(target.get("port", 22)))
-    target["execution_enabled"] = False
-    target["dangerous_operations_enabled"] = False
     save_json(path, target)
     return target
 
@@ -243,8 +241,6 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "generate_missing_passwords": defaults.get("generate_missing_passwords", True),
         "root_password_env": root_password_env,
         "user_password_env": user_password_env,
-        "execution_enabled": False,
-        "review_status": "pending_operator_review",
         "detected_live_boot_mode": detected_boot,
         "expected_disk_model": disk.get("model"),
         "expected_disk_size_gib": size_gib(disk.get("size")),
@@ -287,14 +283,7 @@ def main() -> int:
     result = validate_installation(target, install, load_plan(), latest_inventory())
     print(json.dumps(result, indent=2))
     print("\nReview the printed configuration and config/install.json.")
-    if input("Type REVIEWED to record that you reviewed it, or press Enter to leave it pending: ").strip() == "REVIEWED":
-        install["review_status"] = "reviewed_execution_disabled"
-        save_json(CONFIG / "install.json", install)
-        state["status"] = "reviewed_execution_disabled"
-        save_state(state)
-        print("Review recorded. Execution is still disabled.")
-    else:
-        print("Review remains pending. Execution is still disabled.")
+    print("Next: run 'gentoo-agent plan create', then approve the plan yourself in a terminal.")
     return 0
 
 

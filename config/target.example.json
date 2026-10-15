@@ -10,7 +10,5 @@
   "expected_target_description": "Disposable Gentoo live VM",
   "target_is_disposable": false,
   "disk_erase_authorized": false,
-  "install_config": "config/install.json",
-  "dangerous_operations_enabled": false,
-  "execution_enabled": false
+  "install_config": "config/install.json"
 }

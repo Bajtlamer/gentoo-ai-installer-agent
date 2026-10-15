@@ -127,8 +127,6 @@ def main() -> int:
         "expected_target_description": "Target created by init_config.py; review before use",
         "target_is_disposable": bool(args.allow_disk_erase),
         "disk_erase_authorized": bool(args.allow_disk_erase),
-        "execution_enabled": False,
-        "dangerous_operations_enabled": False,
     })
     install = load_json(CONFIG / "install.default.json")
     install.update({
@@ -158,8 +156,6 @@ def main() -> int:
         "generate_missing_passwords": True,
         "root_password_env": args.root_password_env,
         "user_password_env": args.user_password_env,
-        "execution_enabled": False,
-        "review_status": "pending_operator_review",
     })
 
     write_json(CONFIG / "target.json", target, args.overwrite)
@@ -167,7 +163,7 @@ def main() -> int:
     print("Created local configuration only:")
     print(f"  {CONFIG / 'target.json'}")
     print(f"  {CONFIG / 'install.json'}")
-    print("Execution remains disabled; review both files before continuing.")
+    print("Nothing can run until a plan is created and approved; review both files first.")
     return 0
 
 

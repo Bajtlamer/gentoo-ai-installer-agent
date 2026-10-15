@@ -137,23 +137,10 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
             errors.append("configure_sudo requires wheel in user_groups")
     if not create_user and not set_root_password:
         errors.append("at least one installed password must be configured")
-    execution_flags = [
-        target.get("execution_enabled"),
-        install.get("execution_enabled"),
-        plan.get("execution_enabled"),
-    ]
-    if len(set(execution_flags)) != 1:
-        errors.append("target, install, and plan execution_enabled flags must match")
-    if any(execution_flags) and install.get("review_status") != "approved_for_execution":
-        errors.append("execution_enabled=true requires approved_for_execution review status")
     if install.get("disk_must_be_erased") and not (
         install.get("target_is_disposable") and install.get("disk_erase_authorized")
     ):
         errors.append("disk erasure requires explicit disposable-target authorization")
-    if install.get("review_status") not in {
-        "pending_operator_review", "reviewed_execution_disabled", "approved_for_execution"
-    }:
-        warnings.append("unrecognized review_status")
 
     if inventory is not None:
         results = {item.get("label"): item for item in inventory.get("results", [])}
@@ -174,10 +161,8 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
 
     return {
         "valid_for_execution": not errors,
-        "execution_enabled": all(execution_flags),
         "errors": errors,
         "warnings": warnings,
         "target": target.get("name"),
         "installation": install,
-        "plan_review_status": plan.get("review_status"),
     }

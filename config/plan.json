@@ -1,8 +1,6 @@
 {
   "schema_version": 1,
   "installation_config": "config/install.json",
-  "execution_enabled": true,
-  "review_status": "approved_for_execution",
   "phases": [
     {
       "id": "preflight",
