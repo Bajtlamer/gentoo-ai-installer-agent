@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -23,13 +24,17 @@ from gentoo_agent.core.errors import (
     APPROVAL_REQUIRED,
     CONFIG_INVALID,
     INVENTORY_MISSING,
+    SSH_UNREACHABLE,
     AgentError,
 )
 from gentoo_agent.core.hardware import summarize_inventory
 from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
 from gentoo_agent.core.resolve import resolve_config as resolve_install
-from gentoo_agent.core.runs import read_log
+from gentoo_agent.core.runner import output_tail
+from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
+from gentoo_agent.core.ssh import remote_shell
+from gentoo_agent.jobs.launcher import cancel_run as launcher_cancel, resume_run as launcher_resume, start_run
 
 
 logger = logging.getLogger("gentoo_agent.mcp")
@@ -77,10 +82,6 @@ def plan_view(plan: dict) -> dict:
         "phases": [{"id": phase["id"], "destructive": phase["destructive"]} for phase in plan["phases"]],
         "approval": approval_status(plan["plan_id"]),
     }
-
-
-def _not_implemented() -> CallToolResult:
-    return error_result(AgentError(CONFIG_INVALID, "not implemented", {}))
 
 
 @server.tool(annotations=READ_ONLY)
@@ -190,34 +191,80 @@ async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
                       "approved_until": record["expires_at"]})
 
 
+PROMPT_UNAVAILABLE = (
+    "password_source 'prompt' cannot be used through MCP; reference environment variables or generate passwords."
+)
+
+
+def _refuse_prompt(plan_id: str) -> None:
+    if load_install_plan(plan_id)["install"].get("password_source") == "prompt":
+        raise AgentError(CONFIG_INVALID, PROMPT_UNAVAILABLE, {"field": "password_source"})
+
+
+def _start(plan_id: str, phase_ids: list[str] | None = None) -> dict:
+    _refuse_prompt(plan_id)
+    run_id = start_run(plan_id, phase_ids=phase_ids)
+    return {"run_id": run_id, "plan_id": plan_id, "status": "starting"}
+
+
 @server.tool(annotations=DESTRUCTIVE, meta=HUMAN_CONFIRMS)
 def start_install(plan_id: str) -> CallToolResult:
-    return _not_implemented()
+    """Start the approved plan in the background. Erases the target disk. Returns run_id."""
+    return respond(_start, plan_id)
 
 
 @server.tool(annotations=DESTRUCTIVE, meta=HUMAN_CONFIRMS)
 def run_phase(plan_id: str, phases: list[str]) -> CallToolResult:
-    return _not_implemented()
+    """Run only the listed phases of an approved plan (in plan order), in the background."""
+    return respond(_start, plan_id, phases)
 
 
 @server.tool(annotations=DESTRUCTIVE, meta=HUMAN_CONFIRMS)
 def resume_run(run_id: str) -> CallToolResult:
-    return _not_implemented()
+    """Start a new run of the same approved plan; completed phases are checked and skipped."""
+    def run() -> dict:
+        _refuse_prompt(read_run(run_id)["plan_id"])
+        return {"run_id": launcher_resume(run_id), "resumed_from": run_id}
+    return respond(run)
 
 
 @server.tool(annotations=LOCAL_WRITE)
 def cancel_run(run_id: str) -> CallToolResult:
-    return _not_implemented()
+    """Stop a run at the next phase boundary."""
+    return respond(launcher_cancel, run_id)
 
 
 @server.tool(annotations=READ_ONLY)
 def get_run_status(run_id: str) -> CallToolResult:
-    return _not_implemented()
+    """Run status, phase index, current phase, and last error. Never returns passwords."""
+    def run() -> dict:
+        record = run_status(run_id)
+        waiting = credentials_path(run_id).exists()
+        result = {**record, "credentials_waiting": waiting}
+        if waiting:
+            result["credentials_hint"] = (
+                f"Generated passwords are waiting. Read them yourself in a terminal: gentoo-agent run status {run_id}"
+            )
+        return result
+    return respond(run)
 
 
 @server.tool(annotations=REMOTE_READ)
 def verify_install(plan_id: str) -> CallToolResult:
-    return _not_implemented()
+    """Run each phase's read-only check from the stored plan and report which are complete."""
+    def run() -> dict:
+        plan = load_install_plan(plan_id)
+        phases = []
+        for phase in plan["phases"]:
+            try:
+                result = remote_shell(plan["target"], f"{phase['id']}-verify-install", phase["check"], timeout=300)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise AgentError(SSH_UNREACHABLE, f"Could not run the {phase['id']} check: {exc}",
+                                 {"phase": phase["id"]}) from exc
+            phases.append({"id": phase["id"], "complete": result["returncode"] == 0,
+                           "output_tail": output_tail(result["stdout"] + result["stderr"])})
+        return {"plan_id": plan_id, "phases": phases}
+    return respond(run)
 
 
 def main() -> int:
