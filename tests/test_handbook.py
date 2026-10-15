@@ -29,6 +29,19 @@ class HandbookTests(unittest.TestCase):
         self.assertEqual(metadata["content_type"], "text/html; charset=UTF-8")
         self.assertIn("retrieved_at", metadata)
 
+    def test_network_failure_is_reported_with_a_stable_code(self):
+        import urllib.error
+
+        from gentoo_agent.core.errors import HANDBOOK_UNAVAILABLE, AgentError
+
+        with temp_home(), patch.object(
+            handbook.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")
+        ):
+            with self.assertRaises(AgentError) as caught:
+                handbook.fetch_handbook({"handbook_url": "https://wiki.gentoo.org/wiki/Handbook:AMD64"})
+        self.assertEqual(caught.exception.code, HANDBOOK_UNAVAILABLE)
+        self.assertEqual(caught.exception.details, {"url": "https://wiki.gentoo.org/wiki/Handbook:AMD64"})
+
 
 if __name__ == "__main__":
     unittest.main()
