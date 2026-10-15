@@ -4,6 +4,7 @@ import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from gentoo_agent import cli
@@ -59,6 +60,16 @@ class ApproveCommandTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("error [APPROVAL_REQUIRED]: approve needs an interactive terminal", stderr.getvalue())
         self.assertFalse(approved)
+
+    def test_open_tty_without_o_noctty_reports_approval_required(self):
+        def refuse(*args):
+            raise OSError("no terminal")
+
+        windows_os = SimpleNamespace(open=refuse, O_RDWR=os.O_RDWR, close=os.close)
+        with patch.object(cli, "os", windows_os):
+            with self.assertRaises(cli.AgentError) as caught:
+                cli.open_tty()
+        self.assertEqual(caught.exception.code, "APPROVAL_REQUIRED")
 
     def test_approve_with_the_exact_phrase_records_approval(self):
         with temp_home():
@@ -203,7 +214,7 @@ class EdgeCaseTests(unittest.TestCase):
 
     def test_status_wording_for_failed_run_with_applied_credentials(self):
         text = self._status_output("failed", True)
-        self.assertIn("may have been applied (the authentication phase was attempted)", text)
+        self.assertIn("may have been applied (the authentication phase was attempted or the worker stopped early)", text)
         self.assertNotIn("were applied", text)
 
     def test_status_wording_for_installed_run(self):
@@ -211,6 +222,11 @@ class EdgeCaseTests(unittest.TestCase):
 
     def test_status_wording_when_not_applied(self):
         self.assertIn("were generated but the authentication phase did not run", self._status_output("failed", False))
+
+    def test_status_wording_when_applied_is_pending(self):
+        text = self._status_output("interrupted", None)
+        self.assertIn("may have been applied (the authentication phase was attempted or the worker stopped early)", text)
+        self.assertNotIn("did not run", text)
 
 
 class DenyRuleTests(unittest.TestCase):

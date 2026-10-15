@@ -27,7 +27,7 @@ except ImportError:  # Windows
 
 from gentoo_agent.core import paths
 from gentoo_agent.core.config import load_json, now, save_json
-from gentoo_agent.core.errors import CONFIG_INVALID, RUN_ALREADY_ACTIVE, RUN_NOT_FOUND, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, RUN_ALREADY_ACTIVE, RUN_NOT_FOUND, AgentError
 
 
 RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}")
@@ -264,10 +264,12 @@ def run_status(run_id: str) -> dict:
         if _is_active_status(record.get("status")):
             fallback = _lock_recent() if _lock_holder() == run_id else False
             if not _record_active(record, fallback=fallback):
+                error = AgentError(PHASE_FAILED, "The worker process ended without recording a result.", {"run_id": run_id})
                 record = _update_run_unlocked(
                     run_id,
                     status="interrupted",
-                    last_error="The worker process ended without recording a result.",
+                    last_error=error.message,
+                    error=error.to_dict(),
                     finished_at=now(),
                 )
                 _release_lock_unlocked(run_id)

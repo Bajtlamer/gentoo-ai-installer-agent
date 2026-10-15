@@ -11,7 +11,8 @@ instead of inventing their structure.
 
 - Treat the target as potentially destructive and production-critical.
 - Read `config/target.json`, `config/plan.json`, and `state/state.json` before
-  proposing or executing a phase.
+  proposing or executing a phase. Run progress lives in
+  `runs/<run_id>/run.json`; read it with `run status <run_id>`.
 - Read `config/install.json` and run the local validation command before
   proposing installation changes.
 - Use `python tools/gentoo_agent.py inspect` for target discovery.
@@ -22,15 +23,17 @@ instead of inventing their structure.
 - Never run arbitrary root commands over SSH.
 - Never partition, format, delete, repair, replace a bootloader, or reboot
   unless the reviewed configuration explicitly authorizes the operation. Disk
-  erasure requires `disk_must_be_erased`, `target_is_disposable`, and
-  `disk_erase_authorized` set to `true` in both `config/target.json` and
-  `config/install.json`; `plan create` refuses otherwise.
+  erasure requires `disk_must_be_erased: true` in `config/install.json`, and
+  `target_is_disposable` and `disk_erase_authorized` set to `true` in both
+  `config/target.json` and `config/install.json`; `plan create` refuses
+  otherwise.
 - Execution happens only through an approved plan: `plan create`, then a human
   runs `approve <plan_id>` in their own terminal, then `run start <plan_id>`.
   Never run `approve` yourself and never ask to have a deny rule removed.
   Never write, edit, or delete files under `approvals/` or `plans/`, by any
   tool. An approval is bound to the plan hash, expires after 60 minutes, and is
-  void when the plan or the disk identity changes.
+  void when the plan changes; a run also stops with `TARGET_DRIFT` if the disk
+  identity no longer matches.
 - If evidence is incomplete or contradictory, stop and ask the operator.
 - Preserve logs and existing user files. Do not reset or overwrite unrelated
   changes in this repository.

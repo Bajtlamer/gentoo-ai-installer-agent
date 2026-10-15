@@ -19,7 +19,7 @@ from gentoo_agent.core import paths
 from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.credentials import PasswordPrompt, password_input
-from gentoo_agent.core.errors import RUN_ALREADY_ACTIVE, AgentError
+from gentoo_agent.core.errors import PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
 from gentoo_agent.core.runs import (
     ACTIVE_STATUSES,
     acquire_lock,
@@ -71,6 +71,7 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
         "resumed_from": resumed_from,
     })
     process = None
+    handing_over = False
     try:
         with (run_dir(run_id) / "worker.err").open("ab") as worker_errors:
             process = subprocess.Popen(
@@ -84,6 +85,7 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
             )
         update_run(run_id, pid=process.pid)
         payload = {"password_records": password_records, "generated_credentials": generated}
+        handing_over = True
         process.stdin.write(json.dumps(payload).encode("utf-8"))
         process.stdin.close()
     except BaseException as exc:
@@ -93,11 +95,15 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
                 process.kill()
             except OSError:
                 pass
+        error = AgentError(PHASE_FAILED, f"Could not start the worker: {exc}", {"run_id": run_id})
         try:
-            update_run(run_id, status="failed", last_error=f"Could not start the worker: {exc}", finished_at=now())
+            update_run(run_id, status="failed", last_error=error.message, error=error.to_dict(), finished_at=now())
         except AgentError:
             pass
         release_lock(run_id)
+        if handing_over and isinstance(exc, OSError):  # BrokenPipeError: the worker is already gone
+            raise AgentError(PHASE_FAILED, "The worker exited before receiving its start payload.",
+                             {"run_id": run_id}) from exc
         raise
     return run_id
 

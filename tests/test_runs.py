@@ -81,7 +81,13 @@ class StatusTests(unittest.TestCase):
             runs.acquire_lock(run_id, record(run_id, pid=dead_pid()))
             status = runs.run_status(run_id)
             self.assertFalse(runs.lock_path().exists())
+            stored = runs.read_run(run_id)
         self.assertEqual(status["status"], "interrupted")
+        expected = {"code": "PHASE_FAILED", "message": "The worker process ended without recording a result.",
+                    "details": {"run_id": run_id}}
+        self.assertEqual(status["error"], expected)
+        self.assertEqual(stored["error"], expected)
+        self.assertEqual(stored["last_error"], expected["message"])
 
 
 class CredentialsAndLogTests(unittest.TestCase):

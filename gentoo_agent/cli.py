@@ -45,7 +45,7 @@ PASSWORD_NEEDS_TERMINAL = "password_source 'prompt' needs an interactive termina
 
 def open_tty():
     try:
-        fd = os.open(TTY_PATH, os.O_RDWR | os.O_NOCTTY)
+        fd = os.open(TTY_PATH, os.O_RDWR | getattr(os, "O_NOCTTY", 0))
     except OSError as exc:
         raise AgentError(APPROVAL_REQUIRED, NO_TERMINAL) from exc
     try:
@@ -115,12 +115,13 @@ def cmd_run_status(args: argparse.Namespace) -> int:
     if record["status"] not in ACTIVE_STATUSES:
         credentials = take_credentials(args.run_id)
         if credentials:
-            if not credentials.get("applied"):
+            applied = credentials.get("applied")
+            if applied is False:
                 state = "were generated but the authentication phase did not run"
-            elif record["status"] == "installed_pending_reboot":
+            elif applied is True and record["status"] == "installed_pending_reboot":
                 state = "were applied"
-            else:
-                state = "may have been applied (the authentication phase was attempted)"
+            else:  # applied, or None: pending because the worker stopped before recording it
+                state = "may have been applied (the authentication phase was attempted or the worker stopped early)"
             print(f"Generated credentials ({state}; shown once, save them now):")
             for username, password in credentials["credentials"].items():
                 print(f"  {username}: {password}")

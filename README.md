@@ -43,7 +43,7 @@ server.
 - A Gentoo live environment reachable over SSH.
 - A verified host key in the operator's SSH `known_hosts` file.
 - A dedicated temporary SSH key for the live session.
-- Background runs (`run start`, `run resume`) need macOS or Linux; on Windows use WSL. Dry run, `inspect`, `plan create`, and `approve` work everywhere.
+- Dry run, `inspect`, and `plan create` work on any platform. `approve` and background runs (`run start`, `run resume`) need macOS or Linux; on Windows use WSL.
 
 ## First setup
 
@@ -143,8 +143,13 @@ During the authentication phase the agent installs OpenSSH and sudo, verifies
 the root authorized key and enabled services, creates the configured regular user, and
 reads password environment variables without prompting. It generates random
 replacements when configured values are absent. Generated
-credentials are shown once by `run status` (for a failed run whose authentication phase was attempted it says they may have been applied) but never saved in
-configuration files or phase logs. The regular user is the normal post-reboot login. Root SSH is
+credentials are kept in `runs/<run_id>/credentials.json` with mode 0600 until
+`run status` shows them once (if the authentication phase was attempted but the
+install did not finish, or the worker stopped early, it says they may have been
+applied), are deleted
+when shown, and are otherwise purged 24 hours after being written the next time
+any `run status` runs. They are never stored in configuration files or phase
+logs. The regular user is the normal post-reboot login. Root SSH is
 key-only by default; the reviewed configuration may explicitly allow root
 password SSH login while retaining the root public key as a fallback.
 
