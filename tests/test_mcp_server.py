@@ -209,5 +209,96 @@ class ApprovalTests(unittest.TestCase):
         self.assertFalse(status["approved"])
 
 
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ExecutionTests(unittest.TestCase):
+    def create(self, home, **install_changes):
+        from gentoo_agent.core.config import load_json, save_json
+
+        write_home(home)
+        if install_changes:
+            path = home / "config" / "install.default.json"
+            save_json(path, {**load_json(path), **install_changes})
+        with patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            return call("create_plan", {}).structured_content["plan_id"]
+
+    def approve(self, plan_id):
+        from gentoo_agent.core.approval import record_approval
+        from gentoo_agent.core.install_plan import load_install_plan
+
+        record_approval(load_install_plan(plan_id), "cli")
+
+    def test_unapproved_plan_is_refused(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen") as popen:
+            plan_id = self.create(home)
+            result = call("start_install", {"plan_id": plan_id})
+        self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
+        popen.assert_not_called()
+
+    def test_start_and_status_never_return_passwords(self):
+        from gentoo_agent.core import runs
+        from tests.helpers import temp_home
+        from tests.test_launcher import FakeProcess
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen", return_value=FakeProcess()):
+            plan_id = self.create(home, password_source="generate")
+            self.approve(plan_id)
+            started = call("start_install", {"plan_id": plan_id})
+            run_id = started.structured_content["run_id"]
+            runs.update_run(run_id, status="failed")
+            runs.release_lock(run_id)
+            runs.write_credentials(run_id, {"credentials": {"root": "s3cret"}, "applied": True})
+            status = call("get_run_status", {"run_id": run_id})
+            still_there = runs.credentials_path(run_id).exists()
+        self.assertFalse(started.is_error, started.content[0].text)
+        self.assertTrue(status.structured_content["credentials_waiting"])
+        self.assertIn(f"gentoo-agent run status {run_id}", status.structured_content["credentials_hint"])
+        self.assertNotIn("s3cret", json.dumps(status.structured_content) + status.content[0].text)
+        self.assertTrue(still_there)
+
+    def test_run_phase_records_the_selection(self):
+        from gentoo_agent.core import runs
+        from tests.helpers import temp_home
+        from tests.test_launcher import FakeProcess
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen", return_value=FakeProcess()):
+            plan_id = self.create(home, password_source="generate")
+            self.approve(plan_id)
+            result = call("run_phase", {"plan_id": plan_id, "phases": ["kernel"]})
+            record = runs.read_run(result.structured_content["run_id"])
+        self.assertEqual(record["phase_ids"], ["kernel"])
+
+    def test_prompt_password_source_is_refused(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen") as popen:
+            plan_id = self.create(home, password_source="prompt")
+            self.approve(plan_id)
+            result = call("start_install", {"plan_id": plan_id})
+        self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+        popen.assert_not_called()
+
+    def test_verify_install_runs_only_plan_checks(self):
+        from gentoo_agent.core.install_plan import load_install_plan
+        from tests.helpers import temp_home
+
+        seen = []
+
+        def fake_shell(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            seen.append((label, command, input_data))
+            return {"label": label, "command": command, "returncode": 0, "stdout": "ok\n", "stderr": "",
+                    "finished_at": "t"}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell):
+            plan_id = self.create(home)
+            plan = load_install_plan(plan_id)
+            result = call("verify_install", {"plan_id": plan_id})
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertEqual([command for _, command, _ in seen], [phase["check"] for phase in plan["phases"]])
+        self.assertTrue(all(data is None for _, _, data in seen))
+        self.assertTrue(all(item["complete"] for item in result.structured_content["phases"]))
+
+
 if __name__ == "__main__":
     unittest.main()
