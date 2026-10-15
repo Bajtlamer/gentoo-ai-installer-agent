@@ -1,9 +1,10 @@
 """Detached worker process: runs one approved plan and records the outcome.
 
 Started only by jobs.launcher.start_run(). It reads and validates the start
-payload from stdin, claims the run, re-checks the approval, runs the plan,
-writes generated credentials for one-time pickup, and always releases the run
-lock. A missing or malformed payload fails the run without executing anything.
+payload from stdin, claims the run, re-checks the approval, writes generated
+credentials for one-time pickup (pending until the plan returns), runs the
+plan, and always releases the run lock. A missing or malformed payload fails
+the run without executing anything.
 """
 
 from __future__ import annotations
@@ -60,32 +61,43 @@ def plan_needs_passwords(plan: dict) -> bool:
 
 
 def run(run_id: str, payload: dict) -> dict:
-    result: dict = {"authentication_applied": False}
-    claimed = False
+    """Run one claimed plan. Generated credentials are written with "applied": None
+    (pending) before execution starts, so they survive a killed worker, and are
+    rewritten with the real outcome when execute_plan returns."""
+    generated = payload.get("generated_credentials") or {}
+
+    def save_credentials(applied: bool | None) -> None:
+        if generated:
+            write_credentials(run_id, {"credentials": generated, "applied": applied})
+
+    def fail(error: AgentError) -> dict:
+        update_run(run_id, status="failed", last_error=error.message, error=error.to_dict(), finished_at=now())
+        return {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
+
     try:
         try:
             record = claim_run(run_id, os.getpid())
         except AgentError as error:
             # Not our run, or no longer startable: record nothing on it.
-            result = {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
-            return result
-        claimed = True
-        plan = require_approved_plan(record["plan_id"])
-        if plan["plan_hash"] != record.get("plan_hash"):
-            raise AgentError(PLAN_HASH_MISMATCH, "The plan changed after the run was started.", {"run_id": run_id})
-        password_records = payload.get("password_records")
-        if password_records is None and plan_needs_passwords(plan):
-            raise AgentError(CONFIG_INVALID, "No password records were handed to the worker.", {"run_id": run_id})
-        result = execute_plan(plan, run_id, password_records)
-        return result
-    except AgentError as error:
-        update_run(run_id, status="failed", last_error=error.message, error=error.to_dict(), finished_at=now())
-        result = {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
+            return {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
+        try:
+            plan = require_approved_plan(record["plan_id"])
+            if plan["plan_hash"] != record.get("plan_hash"):
+                raise AgentError(PLAN_HASH_MISMATCH, "The plan changed after the run was started.", {"run_id": run_id})
+            password_records = payload.get("password_records")
+            if password_records is None and plan_needs_passwords(plan):
+                raise AgentError(CONFIG_INVALID, "No password records were handed to the worker.", {"run_id": run_id})
+        except AgentError as error:
+            save_credentials(False)
+            return fail(error)
+        save_credentials(None)
+        try:
+            result = execute_plan(plan, run_id, password_records)
+        except AgentError as error:
+            return fail(error)  # credentials stay pending
+        save_credentials(bool(result.get("authentication_applied")))
         return result
     finally:
-        generated = payload.get("generated_credentials") or {}
-        if claimed and generated:
-            write_credentials(run_id, {"credentials": generated, "applied": bool(result.get("authentication_applied"))})
         release_lock(run_id)
 
 

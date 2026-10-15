@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from gentoo_agent.core import approval, runs
+from gentoo_agent.core.config import load_json
 from gentoo_agent.jobs import launcher, worker
 from tests.helpers import temp_home
 from tests.test_launcher import approved_plan
@@ -30,6 +31,46 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(execute.call_args.args[2], "root:x\n")
         self.assertEqual(credentials["credentials"], {"root": "x"})
         self.assertTrue(credentials["applied"])
+        self.assertFalse(lock_exists)
+
+    def test_credentials_are_pending_while_the_plan_executes(self):
+        seen = {}
+
+        def execute(plan, run_id, records):
+            seen["credentials"] = load_json(runs.credentials_path(run_id))
+            return {"status": "installed_pending_reboot", "authentication_applied": True}
+
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            with patch.object(worker, "execute_plan", side_effect=execute):
+                worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {"root": "x"}})
+            credentials = runs.take_credentials(run_id)
+        self.assertEqual(seen["credentials"]["credentials"], {"root": "x"})
+        self.assertIn("applied", seen["credentials"])
+        self.assertIsNone(seen["credentials"]["applied"])
+        self.assertIs(credentials["applied"], True)
+
+    def test_final_applied_value_is_written_after_execution(self):
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            outcome = {"status": "failed", "authentication_applied": False}
+            with patch.object(worker, "execute_plan", return_value=outcome):
+                worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {"root": "x"}})
+            credentials = runs.take_credentials(run_id)
+        self.assertIs(credentials["applied"], False)
+
+    def test_credentials_stay_pending_when_execution_is_interrupted(self):
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            with patch.object(worker, "execute_plan", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {"root": "x"}})
+            credentials = runs.take_credentials(run_id)
+            lock_exists = runs.lock_path().exists()
+        self.assertIsNone(credentials["applied"])
         self.assertFalse(lock_exists)
 
     def test_worker_refuses_a_plan_whose_approval_is_gone(self):
@@ -118,7 +159,8 @@ class WorkerTests(unittest.TestCase):
             run_id = launcher.start_run(plan["plan_id"])
             deadline = time.monotonic() + 60
             record = runs.run_status(run_id)
-            while record["status"] in runs.ACTIVE_STATUSES and time.monotonic() < deadline:
+            while ((record["status"] in runs.ACTIVE_STATUSES or runs.lock_path().exists())
+                   and time.monotonic() < deadline):
                 time.sleep(0.2)
                 record = runs.run_status(run_id)
             errors = (runs.run_dir(run_id) / "worker.err").read_text(encoding="utf-8", errors="replace")

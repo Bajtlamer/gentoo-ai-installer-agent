@@ -169,7 +169,11 @@ Remove-Item Env:GENTOO_ROOT_PASSWORD, Env:GENTOO_USER_PASSWORD
 ```
 
 With `generate_missing_passwords: true`, missing environment values are
-replaced by random passwords. The generated credentials are shown once by `run status` and are not saved by the agent. Save them and change them
+replaced by random passwords. The generated credentials are kept in
+`runs/<run_id>/credentials.json` with mode 0600 until `run status` shows them
+once, and are deleted when shown. Credentials that are never shown are purged
+24 hours after being written, the next time any `run status` runs. They are
+never stored in configuration files or phase logs. Save them and change them
 after first login. Anyone who can see the terminal or captured console output
 can read them, so this fallback is intended for disposable or controlled
 targets.
@@ -250,8 +254,9 @@ command and edits to `approvals/` and `plans/` for the agent. This stops an
 agent that follows the rules but is not a security boundary: a process can
 allocate its own pseudo-terminal or write a record directly.
 
-Background runs (`run start`, `run resume`) need macOS or Linux; on Windows use
-WSL. Dry run, `inspect`, `plan create`, and `approve` work everywhere.
+Dry run, `inspect`, and `plan create` work on any platform. `approve` and
+background runs (`run start`, `run resume`) need macOS or Linux; on Windows use
+WSL.
 
 ## What is optional and what is not
 

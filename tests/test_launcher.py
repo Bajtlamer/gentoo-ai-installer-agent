@@ -1,11 +1,14 @@
+import io
 import json
 import os
+from contextlib import redirect_stderr
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from gentoo_agent.core import approval, install_plan, phases, runs
-from gentoo_agent.core.errors import APPROVAL_REQUIRED, RUN_ALREADY_ACTIVE, AgentError
+from gentoo_agent import cli
+from gentoo_agent.core.errors import APPROVAL_REQUIRED, PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
 from gentoo_agent.jobs import launcher
 from tests.helpers import temp_home
 
@@ -100,13 +103,47 @@ class LauncherTests(unittest.TestCase):
         with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=BrokenProcess()), \
                 patch.object(launcher, "new_run_id", return_value="20261015T000000Z-abcdef"):
             plan = approved_plan()
-            with self.assertRaises(BrokenPipeError):
+            with self.assertRaises(AgentError) as caught:
                 launcher.start_run(plan["plan_id"])
             record = runs.read_run("20261015T000000Z-abcdef")
             lock_exists = runs.lock_path().exists()
         self.assertTrue(BrokenProcess.killed)
+        self.assertEqual(caught.exception.code, PHASE_FAILED)
+        self.assertEqual(caught.exception.message, "The worker exited before receiving its start payload.")
+        self.assertEqual(caught.exception.details, {"run_id": "20261015T000000Z-abcdef"})
+        self.assertIsInstance(caught.exception.__cause__, BrokenPipeError)
         self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"]["code"], PHASE_FAILED)
+        self.assertEqual(record["error"]["message"], record["last_error"])
         self.assertFalse(lock_exists)
+
+    def test_a_failed_spawn_records_an_error_object(self):
+        with temp_home(), patch.object(launcher.subprocess, "Popen", side_effect=OSError("no python")), \
+                patch.object(launcher, "new_run_id", return_value="20261015T000000Z-abcdef"):
+            plan = approved_plan()
+            with self.assertRaises(OSError):
+                launcher.start_run(plan["plan_id"])
+            record = runs.read_run("20261015T000000Z-abcdef")
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["last_error"], "Could not start the worker: no python")
+        self.assertEqual(record["error"], {"code": PHASE_FAILED, "message": record["last_error"],
+                                           "details": {"run_id": "20261015T000000Z-abcdef"}})
+
+    def test_cli_prints_a_clean_error_when_the_worker_exits_early(self):
+        class BrokenProcess(FakeProcess):
+            def write(self, data):
+                raise BrokenPipeError("worker went away")
+
+            def kill(self):
+                pass
+
+        stderr = io.StringIO()
+        with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=BrokenProcess()), \
+                redirect_stderr(stderr):
+            plan = approved_plan()
+            code = cli.main(["run", "start", plan["plan_id"]])
+        self.assertEqual(code, 1)
+        self.assertIn("error [PHASE_FAILED]: The worker exited before receiving its start payload.", stderr.getvalue())
 
     def test_second_start_while_active_is_refused(self):
         with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=FakeProcess()):
