@@ -16,13 +16,10 @@ import shutil
 from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
+from gentoo_agent.core.layout import build_layout
 from gentoo_agent.core import paths
 from gentoo_agent.core.state import load_state, save_state
 from gentoo_agent.core.validate import validate_installation
-
-
-def partition_device(disk: str, number: int) -> str:
-    return f"{disk}{'p' if disk[-1:].isdigit() else ''}{number}"
 
 
 def ask(prompt: str, default: str | None = None) -> str:
@@ -187,19 +184,7 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         root_password_env = ask("Root password environment variable", root_password_env)
         user_password_env = ask("User password environment variable", user_password_env)
 
-    if boot_mode == "uefi":
-        partition_table = "gpt"
-        layout = [
-            {"device": partition_device(disk_path, 1), "size_mib": 512, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"},
-            {"device": partition_device(disk_path, 2), "size_mib": swap_mb, "type": "linux-swap", "mount": None},
-            {"device": partition_device(disk_path, 3), "size": "remaining", "type": "linux-root", "filesystem": root_filesystem, "mount": "/"},
-        ]
-    else:
-        partition_table = "mbr"
-        layout = [
-            {"device": partition_device(disk_path, 1), "size_mib": swap_mb, "type": "linux-swap", "mount": None},
-            {"device": partition_device(disk_path, 2), "size": "remaining", "type": "linux-root", "filesystem": root_filesystem, "mount": "/"},
-        ]
+    partition_table, layout = build_layout(disk_path, boot_mode, swap_mb, root_filesystem)
 
     print(f"\nThe selected disk is {disk_path}. This plan will erase it during a future storage phase.")
     preauthorized = bool(target.get("target_is_disposable") and target.get("disk_erase_authorized"))

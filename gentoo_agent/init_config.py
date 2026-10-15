@@ -12,12 +12,7 @@ from pathlib import Path
 
 
 from gentoo_agent.core import paths
-
-
-def partition_device(disk: str, number: int) -> str:
-    """Return a partition path for both /dev/sda and /dev/nvme0n1 styles."""
-    separator = "p" if disk[-1:].isdigit() else ""
-    return f"{disk}{separator}{number}"
+from gentoo_agent.core.layout import build_layout
 
 
 def write_json(path: Path, value: dict, overwrite: bool) -> None:
@@ -73,47 +68,7 @@ def main() -> int:
             "after confirming the exact target disk."
         )
 
-    if args.boot_mode == "uefi":
-        layout = [
-            {
-                "device": partition_device(args.disk, 1),
-                "size_mib": 512,
-                "type": "efi-system",
-                "filesystem": "vfat",
-                "mount": "/boot",
-            },
-            {
-                "device": partition_device(args.disk, 2),
-                "size_mib": args.swap_mb,
-                "type": "linux-swap",
-                "mount": None,
-            },
-            {
-                "device": partition_device(args.disk, 3),
-                "size": "remaining",
-                "type": "linux-root",
-                "filesystem": args.root_filesystem,
-                "mount": "/",
-            },
-        ]
-        partition_table = "gpt"
-    else:
-        layout = [
-            {
-                "device": partition_device(args.disk, 1),
-                "size_mib": args.swap_mb,
-                "type": "linux-swap",
-                "mount": None,
-            },
-            {
-                "device": partition_device(args.disk, 2),
-                "size": "remaining",
-                "type": "linux-root",
-                "filesystem": args.root_filesystem,
-                "mount": "/",
-            },
-        ]
-        partition_table = "mbr"
+    partition_table, layout = build_layout(args.disk, args.boot_mode, args.swap_mb, args.root_filesystem)
 
     target = load_json(paths.config_dir() / "target.default.json")
     target.update({
