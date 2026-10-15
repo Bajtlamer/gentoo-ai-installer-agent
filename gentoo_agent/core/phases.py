@@ -27,7 +27,8 @@ import queue
 import time
 from pathlib import Path
 
-from gentoo_agent.core.config import install_config, load_json, now, save_json, target_config
+from gentoo_agent.core.config import install_config, load_json, now, save_json
+from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
 from gentoo_agent.core.paths import CONFIG, LOG_DIR, ROOT, STATE_DIR
 from gentoo_agent.core.ssh import ssh_base
 
@@ -159,90 +160,92 @@ def disk_partition(disk: str, number: int) -> str:
 def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
     disk = install.get("disk", "")
     if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", disk):
-        raise SystemExit(f"Unsafe disk path in configuration: {disk!r}")
+        raise AgentError(CONFIG_INVALID, f"Unsafe disk path in configuration: {disk!r}", {"field": "disk"})
     layout = install.get("partition_layout")
     if not isinstance(layout, list) or not layout:
-        raise SystemExit("partition_layout is empty")
+        raise AgentError(CONFIG_INVALID, "partition_layout is empty", {"field": "partition_layout"})
     for item in layout:
         device = item.get("device", "")
         if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", device):
-            raise SystemExit(f"Unsafe partition path in configuration: {device!r}")
+            raise AgentError(CONFIG_INVALID, f"Unsafe partition path in configuration: {device!r}", {"field": "partition_layout"})
     if target.get("user") != "root":
-        raise SystemExit("The installation executor currently requires SSH user root.")
+        raise AgentError(CONFIG_INVALID, "The installation executor currently requires SSH user root.", {"field": "user"})
     if install.get("boot_mode") == "uefi" and install.get("partition_table") != "gpt":
-        raise SystemExit("UEFI requires GPT.")
+        raise AgentError(CONFIG_CONFLICT, "UEFI requires GPT.", {"fields": ["boot_mode", "partition_table"]})
     if install.get("root_filesystem") != "ext4":
-        raise SystemExit("The executor currently supports ext4 root filesystems only.")
+        raise AgentError(CONFIG_INVALID, "The executor currently supports ext4 root filesystems only.", {"field": "root_filesystem"})
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", str(install.get("hostname", ""))):
-        raise SystemExit("hostname must be a simple DNS-compatible hostname")
+        raise AgentError(CONFIG_INVALID, "hostname must be a simple DNS-compatible hostname", {"field": "hostname"})
     if not re.fullmatch(r"[A-Za-z0-9._+/-]+", str(install.get("timezone", ""))):
-        raise SystemExit("timezone contains unsafe characters")
+        raise AgentError(CONFIG_INVALID, "timezone contains unsafe characters", {"field": "timezone"})
     create_user = install.get("create_user", True)
     set_root_password = install.get("set_root_password", True)
     install_user_ssh_key = install.get("install_user_ssh_key", True)
     configure_sudo = install.get("configure_sudo", True)
     allow_root_password_ssh = install.get("allow_root_password_ssh", False)
-    if not isinstance(create_user, bool):
-        raise SystemExit("create_user must be boolean")
-    if not isinstance(set_root_password, bool):
-        raise SystemExit("set_root_password must be boolean")
-    if not isinstance(install_user_ssh_key, bool):
-        raise SystemExit("install_user_ssh_key must be boolean")
-    if not isinstance(configure_sudo, bool):
-        raise SystemExit("configure_sudo must be boolean")
-    if not isinstance(allow_root_password_ssh, bool):
-        raise SystemExit("allow_root_password_ssh must be boolean")
     generate_missing_passwords = install.get("generate_missing_passwords", True)
-    if not isinstance(generate_missing_passwords, bool):
-        raise SystemExit("generate_missing_passwords must be boolean")
+    for field, value in (
+        ("create_user", create_user),
+        ("set_root_password", set_root_password),
+        ("install_user_ssh_key", install_user_ssh_key),
+        ("configure_sudo", configure_sudo),
+        ("allow_root_password_ssh", allow_root_password_ssh),
+        ("generate_missing_passwords", generate_missing_passwords),
+    ):
+        if not isinstance(value, bool):
+            raise AgentError(CONFIG_INVALID, f"{field} must be boolean", {"field": field})
     if install_user_ssh_key and not create_user:
-        raise SystemExit("install_user_ssh_key requires create_user=true")
+        raise AgentError(CONFIG_INVALID, "install_user_ssh_key requires create_user=true", {"field": "install_user_ssh_key"})
     password_source = install.get("password_source", "environment")
     if password_source not in {"prompt", "environment", "generate"}:
-        raise SystemExit("password_source must be 'prompt', 'environment', or 'generate'")
+        raise AgentError(CONFIG_INVALID, "password_source must be 'prompt', 'environment', or 'generate'", {"field": "password_source"})
     if password_source == "environment":
         for field in ("root_password_env", "user_password_env"):
             env_name = str(install.get(field, ""))
             if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", env_name):
-                raise SystemExit(f"{field} must contain a valid uppercase environment-variable name")
+                raise AgentError(CONFIG_INVALID, f"{field} must contain a valid uppercase environment-variable name", {"field": field})
     if not create_user and not set_root_password:
-        raise SystemExit("at least one installed password must be configured")
+        raise AgentError(CONFIG_INVALID, "at least one installed password must be configured", {"fields": ["create_user", "set_root_password"]})
     if create_user:
         username = str(install.get("username", ""))
         if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username) or username == "root":
-            raise SystemExit("username must be a non-root Linux account name")
+            raise AgentError(CONFIG_INVALID, "username must be a non-root Linux account name", {"field": "username"})
         groups = install.get("user_groups", ["wheel"])
         if not isinstance(groups, list) or any(
             not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(group)) for group in groups
         ):
-            raise SystemExit("user_groups must contain simple Linux group names")
+            raise AgentError(CONFIG_INVALID, "user_groups must contain simple Linux group names", {"field": "user_groups"})
         if configure_sudo and "wheel" not in [str(group) for group in groups]:
-            raise SystemExit("configure_sudo requires wheel in user_groups")
+            raise AgentError(CONFIG_INVALID, "configure_sudo requires wheel in user_groups", {"field": "configure_sudo"})
         shell = str(install.get("user_shell", "/bin/bash"))
         if shell != "/bin/bash":
-            raise SystemExit("user_shell must be /bin/bash; other shells are not installed by this workflow")
+            raise AgentError(CONFIG_INVALID, "user_shell must be /bin/bash; other shells are not installed by this workflow", {"field": "user_shell"})
     return disk, layout
 
 
 def public_key_for_target(target: dict) -> str:
     identity = target.get("identity_file")
     if not identity:
-        raise SystemExit("target.identity_file is required for installed SSH access")
+        raise AgentError(CONFIG_INVALID, "target.identity_file is required for installed SSH access", {"field": "identity_file"})
     private_path = Path(identity).expanduser()
     candidates = [Path(str(private_path) + ".pub")]
     if private_path.suffix:
         candidates.append(private_path.with_suffix(".pub"))
     public_path = next((path for path in candidates if path.exists()), None)
     if public_path is None:
-        raise SystemExit(f"Missing SSH public key next to {private_path}; expected {candidates[0]}")
+        raise AgentError(
+            CONFIG_INVALID,
+            f"Missing SSH public key next to {private_path}; expected {candidates[0]}",
+            {"field": "identity_file"},
+        )
     public_key = public_path.read_text(encoding="utf-8").strip()
     if not public_key or "\n" in public_key:
-        raise SystemExit(f"SSH public key must contain exactly one line: {public_path}")
+        raise AgentError(CONFIG_INVALID, f"SSH public key must contain exactly one line: {public_path}", {"field": "identity_file"})
     return public_key
 
 
-def partition_script(install: dict) -> str:
-    disk, layout = validated_settings(target_config(), install)
+def partition_script(target: dict, install: dict) -> str:
+    disk, layout = validated_settings(target, install)
     label = "dos" if install["partition_table"] == "mbr" else install["partition_table"]
     lines = [f"label: {label}", "unit: sectors"]
     for item in layout:
@@ -293,11 +296,11 @@ def preflight_commands(target: dict, install: dict) -> list[str]:
     return commands
 
 
-def storage_command(install: dict) -> str:
-    disk, _ = validated_settings(target_config(), install)
-    script = partition_script(install)
+def storage_command(target: dict, install: dict) -> str:
+    disk, _ = validated_settings(target, install)
+    script = partition_script(target, install)
     encoded = q(script)
-    _, layout = validated_settings(target_config(), install)
+    _, layout = validated_settings(target, install)
     root = next(item["device"] for item in layout if item.get("mount") == "/")
     swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), None)
     recovery_checks = [
@@ -325,8 +328,8 @@ def storage_command(install: dict) -> str:
     ])
 
 
-def filesystem_command(install: dict) -> str:
-    disk, layout = validated_settings(target_config(), install)
+def filesystem_command(target: dict, install: dict) -> str:
+    disk, layout = validated_settings(target, install)
     root = next(item["device"] for item in layout if item.get("mount") == "/")
     swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), None)
     efi = next((item["device"] for item in layout if item.get("type") == "efi-system"), None)
@@ -567,8 +570,8 @@ def kernel_command(install: dict) -> str:
     return chroot(inside)
 
 
-def bootloader_command(install: dict) -> str:
-    disk, _ = validated_settings(target_config(), install)
+def bootloader_command(target: dict, install: dict) -> str:
+    disk, _ = validated_settings(target, install)
     if install["boot_mode"] == "bios":
         inside = "\n".join([
             "emerge --noreplace --verbose sys-boot/grub",
@@ -584,8 +587,8 @@ def bootloader_command(install: dict) -> str:
     return chroot(inside)
 
 
-def validation_command(install: dict) -> str:
-    disk, layout = validated_settings(target_config(), install)
+def validation_command(target: dict, install: dict) -> str:
+    disk, layout = validated_settings(target, install)
     root = next(item["device"] for item in layout if item.get("mount") == "/")
     checks = [
         "set -eu",
@@ -605,8 +608,8 @@ def validation_command(install: dict) -> str:
     return "\n".join(checks)
 
 
-def storage_check_command(install: dict) -> str:
-    disk, layout = validated_settings(target_config(), install)
+def storage_check_command(target: dict, install: dict) -> str:
+    disk, layout = validated_settings(target, install)
     lines = [
         "set -eu",
         f"disk={q(disk)}",
@@ -623,8 +626,8 @@ def storage_check_command(install: dict) -> str:
     return "\n".join(lines)
 
 
-def filesystem_check_command(install: dict) -> str:
-    _, layout = validated_settings(target_config(), install)
+def filesystem_check_command(target: dict, install: dict) -> str:
+    _, layout = validated_settings(target, install)
     root = next(item["device"] for item in layout if item.get("mount") == "/")
     swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), None)
     efi = next((item["device"] for item in layout if item.get("type") == "efi-system"), None)
@@ -696,9 +699,9 @@ def check_command_for(phase: str, target: dict, install: dict) -> str:
     if phase == "preflight":
         return "\n".join(preflight_commands(target, install))
     if phase == "storage":
-        return storage_check_command(install)
+        return storage_check_command(target, install)
     if phase == "filesystems":
-        return filesystem_check_command(install)
+        return filesystem_check_command(target, install)
     if phase == "base-system":
         return base_system_check_command()
     if phase == "configuration":
@@ -710,17 +713,17 @@ def check_command_for(phase: str, target: dict, install: dict) -> str:
     if phase == "bootloader":
         return bootloader_check_command(install)
     if phase == "validation":
-        return validation_command(install)
-    raise SystemExit(f"Unknown installation phase: {phase}")
+        return validation_command(target, install)
+    raise AgentError(CONFIG_INVALID, f"Unknown installation phase: {phase}", {"phase": phase})
 
 
 def command_for(phase: str, target: dict, install: dict) -> str:
     if phase == "preflight":
         return "\n".join(preflight_commands(target, install))
     if phase == "storage":
-        return storage_command(install)
+        return storage_command(target, install)
     if phase == "filesystems":
-        return filesystem_command(install)
+        return filesystem_command(target, install)
     if phase == "base-system":
         return base_system_command(install)
     if phase == "configuration":
@@ -730,10 +733,10 @@ def command_for(phase: str, target: dict, install: dict) -> str:
     if phase == "kernel":
         return kernel_command(install)
     if phase == "bootloader":
-        return bootloader_command(install)
+        return bootloader_command(target, install)
     if phase == "validation":
-        return validation_command(install)
-    raise SystemExit(f"Unknown installation phase: {phase}")
+        return validation_command(target, install)
+    raise AgentError(CONFIG_INVALID, f"Unknown installation phase: {phase}", {"phase": phase})
 
 
 def dry_run(target: dict, install: dict, phases: list[str]) -> None:
@@ -847,6 +850,8 @@ def execute(target: dict, install: dict, phases: list[str]) -> int:
 
 
 def cmd_install(args) -> int:
+    from gentoo_agent.core.config import target_config
+
     target = target_config()
     install = install_config()
     plan = load_plan()
@@ -868,6 +873,8 @@ def cmd_install(args) -> int:
 
 
 def approve_execution(_: object) -> int:
+    from gentoo_agent.core.config import target_config
+
     target = target_config()
     install = install_config()
     plan = load_plan()

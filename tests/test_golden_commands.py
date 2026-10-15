@@ -26,9 +26,7 @@ PUBLIC_KEY = "ssh-ed25519 AAAAGOLDEN gentoo-agent-golden"
 def render(install: dict) -> str:
     from gentoo_agent.core import phases
 
-    with patch("gentoo_agent.core.phases.target_config", return_value=TARGET), patch(
-        "gentoo_agent.core.phases.public_key_for_target", return_value=PUBLIC_KEY
-    ):
+    with patch("gentoo_agent.core.phases.public_key_for_target", return_value=PUBLIC_KEY):
         parts = []
         for phase in phases.PHASES:
             parts.append(f"===== {phase} apply =====")
