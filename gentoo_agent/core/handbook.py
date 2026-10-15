@@ -7,6 +7,7 @@ import html.parser
 import urllib.request
 
 from gentoo_agent.core.config import now, save_json
+from gentoo_agent.core.errors import HANDBOOK_UNAVAILABLE, AgentError
 from gentoo_agent.core import paths
 
 
@@ -32,12 +33,16 @@ class TitleParser(html.parser.HTMLParser):
 def fetch_handbook(target: dict) -> dict:
     url = target["handbook_url"]
     request = urllib.request.Request(url, headers={"User-Agent": "gentoo-agent/0.1"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        raw = response.read()
-        content_type = response.headers.get("Content-Type", "")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read()
+            content_type = response.headers.get("Content-Type", "")
+    except OSError as exc:
+        raise AgentError(HANDBOOK_UNAVAILABLE, f"Could not fetch the Handbook from {url}: {exc}", {"url": url}) from exc
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    inventory_dir = paths.inventory_dir()
+    root = paths.root()
+    inventory_dir = root / "inventory"
     inventory_dir.mkdir(parents=True, exist_ok=True)
     html_path = inventory_dir / f"handbook-{stamp}.html"
     html_path.write_bytes(raw)
@@ -49,7 +54,7 @@ def fetch_handbook(target: dict) -> dict:
         "content_type": content_type,
         "bytes": len(raw),
         "title": "".join(parser.title_parts).strip(),
-        "saved_html": str(html_path.relative_to(paths.root())),
+        "saved_html": str(html_path.relative_to(root)),
     }
-    save_json(inventory_dir /f"handbook-{stamp}.json", metadata)
+    save_json(inventory_dir / f"handbook-{stamp}.json", metadata)
     return metadata
