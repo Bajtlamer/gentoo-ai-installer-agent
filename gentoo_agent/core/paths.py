@@ -43,3 +43,7 @@ def plans_dir() -> Path:
 
 def runs_dir() -> Path:
     return root() / "runs"
+
+
+def secrets_dir() -> Path:
+    return root() / "secrets"

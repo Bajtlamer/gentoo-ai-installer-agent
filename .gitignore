@@ -12,6 +12,7 @@ inventory/*.html
 approvals/*.json
 runs/
 plans/*.json
+secrets/
 ssh-known-hosts
 *.key
 *.pem

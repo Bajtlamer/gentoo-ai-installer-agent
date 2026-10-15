@@ -24,6 +24,14 @@ TARGET = {
 START = dt.datetime(2026, 10, 15, 12, 0, tzinfo=dt.timezone.utc)
 
 
+def save_signed(plan_id: str, record: dict) -> None:
+    from gentoo_agent.core import signing
+
+    unsigned = {name: value for name, value in record.items() if name != "signature"}
+    save_json(approval.approval_path(plan_id),
+              {**unsigned, "signature": signing.sign(unsigned, signing.load_or_create_key())})
+
+
 def make_plan(serial: str = "QM00001") -> dict:
     install = json.loads((REPO / "tests" / "golden" / "configs" / "bios_mbr_user_sudo.json").read_text(encoding="utf-8"))
     install.update({"disk_must_be_erased": True, "target_is_disposable": True, "disk_erase_authorized": True})
@@ -73,7 +81,7 @@ class ApprovalTests(unittest.TestCase):
         with temp_home():
             plan = make_plan()
             record = approval.record_approval(plan, "cli", at=START)
-            save_json(approval.approval_path(plan["plan_id"]), {**record, "plan_hash": "0" * 64})
+            save_signed(plan["plan_id"], {**record, "plan_hash": "0" * 64})
             with self.assertRaises(AgentError) as caught:
                 approval.require_approved_plan(plan["plan_id"], at=START)
         self.assertEqual(caught.exception.code, PLAN_HASH_MISMATCH)
@@ -101,7 +109,7 @@ class ApprovalTests(unittest.TestCase):
         value = {**record, **changes}
         for key in [k for k, v in changes.items() if v is KeyError]:
             del value[key]
-        save_json(approval.approval_path(plan["plan_id"]), value)
+        save_signed(plan["plan_id"], value)
 
     def _assert_invalid(self, plan, at=START):
         with self.assertRaises(AgentError) as caught:
