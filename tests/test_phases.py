@@ -1,6 +1,8 @@
 import json
+import shlex
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from gentoo_agent.core import config, phases
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
@@ -47,6 +49,54 @@ class PhaseGeneratorTests(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             phases.command_for("reboot", TARGET, fixture("bios_mbr_user_sudo"))
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+
+def chroot_lines(command: str) -> list[str]:
+    """Return the lines of the bash program passed to chroot."""
+    tokens = shlex.split(command)
+    program = tokens[tokens.index("-c") + 1]
+    return program.splitlines()
+
+
+class ConfigurationQuotingTests(unittest.TestCase):
+    def configuration(self, **changes) -> list[str]:
+        install = fixture("uefi_gpt_root_only_static")
+        install.update(changes)
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            return chroot_lines(phases.configuration_command(TARGET, install))
+
+    def network_tokens(self, lines: list[str]) -> list[str]:
+        line = next(line for line in lines if line.startswith("printf") and "dhcpcd.conf.d/gentoo-agent.conf" in line)
+        return shlex.split(line)
+
+    def test_static_network_lines_are_quoted_once(self):
+        tokens = self.network_tokens(self.configuration())
+        self.assertEqual(tokens[2:6], [
+            "interface ens33",
+            "static ip_address=192.168.10.20/24",
+            "static routers=192.168.10.1",
+            "static domain_name_servers=1.1.1.1 9.9.9.9",
+        ])
+
+    def test_hostile_static_values_stay_single_arguments(self):
+        hostile = "10.0.0.2/24 x; touch /PWNED"
+        for static in (
+            {"address": hostile, "gateway": "10.0.0.1", "dns": ["1.1.1.1"]},
+            {"address": "10.0.0.2/24", "gateway": "a'b; touch /PWNED", "dns": ["1.1.1.1"]},
+            {"address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1'; touch /PWNED; '"]},
+        ):
+            with self.subTest(static=static):
+                tokens = self.network_tokens(self.configuration(network_static=static))
+                self.assertNotIn("touch", tokens)
+                self.assertEqual(len(tokens), 8)
+        tokens = self.network_tokens(self.configuration(
+            network_static={"address": hostile, "gateway": "10.0.0.1", "dns": ["1.1.1.1"]}))
+        self.assertIn("static ip_address=" + hostile, tokens)
+
+    def test_zoneinfo_path_is_quoted(self):
+        lines = self.configuration(timezone="UTC; touch /PWNED")
+        line = next(line for line in lines if line.startswith("ln -snf"))
+        self.assertEqual(shlex.split(line), ["ln", "-snf", "/usr/share/zoneinfo/UTC; touch /PWNED", "/etc/localtime"])
 
 
 class ConfigLoadingTests(unittest.TestCase):

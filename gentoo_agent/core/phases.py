@@ -228,19 +228,25 @@ def configuration_command(target: dict, install: dict) -> str:
         network_setup = "emerge --noreplace --verbose net-misc/dhcpcd\nrc-update add dhcpcd default"
     else:
         static = install.get("network_static") or {}
-        address = q(static.get("address", ""))
-        gateway = q(static.get("gateway", ""))
-        dns_lines = "\\n".join(q(item) for item in static.get("dns", []))
+        address = str(static.get("address", ""))
+        gateway = str(static.get("gateway", ""))
+        dns = " ".join(str(item) for item in static.get("dns", []))
+        # Quote each dhcpcd.conf line exactly once, as a whole.
+        dhcpcd_lines = " ".join(q(line) for line in (
+            "interface ens33",
+            "static ip_address=" + address,
+            "static routers=" + gateway,
+            "static domain_name_servers=" + dns,
+        ))
         network_setup = "\n".join([
             "emerge --noreplace --verbose net-misc/dhcpcd",
             "install -d /etc/dhcpcd.conf.d",
-            f"printf '%s\\n' 'interface ens33' 'static ip_address={address}' 'static routers={gateway}' > /etc/dhcpcd.conf.d/gentoo-agent.conf",
-            f"printf '%s\\n' {dns_lines} | sed 's#^#static domain_name_servers #' >> /etc/dhcpcd.conf.d/gentoo-agent.conf",
+            f"printf '%s\\n' {dhcpcd_lines} > /etc/dhcpcd.conf.d/gentoo-agent.conf",
             "rc-update add dhcpcd default",
         ])
     inside = "\n".join([
         f"printf '%s\\n' {hostname} > /etc/hostname",
-        f"ln -snf /usr/share/zoneinfo/{timezone_value} /etc/localtime",
+        f"ln -snf {q('/usr/share/zoneinfo/' + str(timezone_value))} /etc/localtime",
         "printf '%s\\n' 'en_US.UTF-8 UTF-8' > /etc/locale.gen",
         "locale-gen",
         "eselect locale set en_US.utf8 || true",

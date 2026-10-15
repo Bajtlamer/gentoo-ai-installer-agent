@@ -137,8 +137,7 @@ printf '"'"'%s\n'"'"' "UUID=$root_uuid / ext4 noatime 0 1" > /etc/fstab
 if [ -n "$swap_uuid" ]; then printf '"'"'%s\n'"'"' "UUID=$swap_uuid none swap sw 0 0" >> /etc/fstab; fi
 emerge --noreplace --verbose net-misc/dhcpcd
 install -d /etc/dhcpcd.conf.d
-printf '"'"'%s\n'"'"' '"'"'interface ens33'"'"' '"'"'static ip_address=192.168.10.20/24'"'"' '"'"'static routers=192.168.10.1'"'"' > /etc/dhcpcd.conf.d/gentoo-agent.conf
-printf '"'"'%s\n'"'"' 1.1.1.1\n9.9.9.9 | sed '"'"'s#^#static domain_name_servers #'"'"' >> /etc/dhcpcd.conf.d/gentoo-agent.conf
+printf '"'"'%s\n'"'"' '"'"'interface ens33'"'"' '"'"'static ip_address=192.168.10.20/24'"'"' '"'"'static routers=192.168.10.1'"'"' '"'"'static domain_name_servers=1.1.1.1 9.9.9.9'"'"' > /etc/dhcpcd.conf.d/gentoo-agent.conf
 rc-update add dhcpcd default
 emerge --noreplace --verbose net-misc/openssh
 install -d -m 700 /root/.ssh

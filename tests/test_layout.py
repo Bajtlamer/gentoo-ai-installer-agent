@@ -24,6 +24,19 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual([item["device"] for item in layout], ["/dev/sda1", "/dev/sda2"])
         self.assertEqual(layout[0]["type"], "linux-swap")
 
+    def test_zero_swap_omits_the_swap_partition(self):
+        table, layout = build_layout("/dev/nvme0n1", "uefi", 0)
+        self.assertEqual(table, "gpt")
+        self.assertEqual(layout, [
+            {"device": "/dev/nvme0n1p1", "size_mib": 512, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"},
+            {"device": "/dev/nvme0n1p2", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"},
+        ])
+        table, layout = build_layout("/dev/sda", "bios", 0)
+        self.assertEqual(table, "mbr")
+        self.assertEqual(layout, [
+            {"device": "/dev/sda1", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"},
+        ])
+
     def test_invalid_inputs(self):
         for args in (("/dev/sda", "efi", 1024), ("/dev/sda", "bios", -1), ("/dev/sda", "bios", True)):
             with self.subTest(args=args), self.assertRaises(AgentError) as caught:
