@@ -60,7 +60,7 @@ configuration for review. It does not start installation.
 | `tools/*.py` | Yes | Compatibility entry points for the package | Commit |
 | `roles/*.md` | Recommended | Role-specific agent instructions | Commit |
 | `phases/` | Required before execution | Version-controlled phase contracts/scripts | Commit |
-| `inventory/`, `logs/`, `approvals/` | Generated | Evidence, transcripts, and approvals | Private/ignored |
+| `inventory/`, `logs/`, `plans/`, `approvals/`, `runs/` | Generated | Evidence, transcripts, plans, approvals, and run records | Private/ignored |
 
 The `*.example.json` files are safe templates for GitHub. Do not commit the
 real target configuration, private key, logs, inventory, or approvals.
@@ -84,7 +84,6 @@ Required fields:
 | `architecture` | string | Gentoo architecture, for example `amd64` |
 | `handbook_url` | string | Official Handbook URL for that architecture |
 | `install_config` | string | Usually `config/install.json` |
-| `execution_enabled` | boolean | `false` during review; enabled only by `approve-install` |
 
 Optional fields:
 
@@ -94,7 +93,6 @@ Optional fields:
 | `expected_target_description` | string | Human-readable target description |
 | `target_is_disposable` | boolean | Marks the target as intentionally disposable |
 | `disk_erase_authorized` | boolean | Pre-authorizes erasing the selected disk when disposable |
-| `dangerous_operations_enabled` | boolean | Additional safety flag; keep `false` until explicitly approved |
 
 ## `config/install.json`
 
@@ -129,8 +127,6 @@ Required fields:
 | `generate_missing_passwords` | boolean | Generate random passwords when environment values are absent |
 | `root_password_env` | string | Environment variable name for the root password |
 | `user_password_env` | string | Environment variable name for the regular-user password |
-| `execution_enabled` | boolean | `false` during review; enabled only by `approve-install` |
-| `review_status` | string | `pending_operator_review`, `reviewed_execution_disabled`, or `approved_for_execution` |
 
 Optional identity fields:
 
@@ -168,13 +164,12 @@ provided values can be supplied as follows:
 ```powershell
 $env:GENTOO_ROOT_PASSWORD = "choose-a-strong-root-password"
 $env:GENTOO_USER_PASSWORD = "choose-a-different-user-password"
-python tools/gentoo_agent.py install --execute --confirm "INSTALL gentoo ON /dev/sda"
+python tools/gentoo_agent.py run start <plan_id>
 Remove-Item Env:GENTOO_ROOT_PASSWORD, Env:GENTOO_USER_PASSWORD
 ```
 
 With `generate_missing_passwords: true`, missing environment values are
-replaced by random passwords. The generated credentials are printed once after
-all phases complete and are not saved by the agent. Save them and change them
+replaced by random passwords. The generated credentials are shown once by `run status` and are not saved by the agent. Save them and change them
 after first login. Anyone who can see the terminal or captured console output
 can read them, so this fallback is intended for disposable or controlled
 targets.
@@ -220,9 +215,7 @@ The active disposable VM currently uses BIOS/MBR instead:
 ```
 
 This is a proposal for review. For the active disposable VM, disk erasure is
-explicitly pre-authorized, but execution remains disabled. The executor checks
-the live boot mode and exact disk model/size again immediately before storage
-changes.
+explicitly pre-authorized, and execution still requires an approved plan. The worker checks the disk identity again before any change.
 
 ## Starting the guarded executor
 
@@ -232,19 +225,33 @@ The default command is read-only and prints generated commands:
 python tools/gentoo_agent.py install --dry-run
 ```
 
-After reviewing the files and dry-run output, type the exact phrase requested
-by:
+Freeze the reviewed configuration into a plan, approve it yourself in an
+interactive terminal, and start it:
 
 ```powershell
-python tools/gentoo_agent.py approve-install
+python tools/gentoo_agent.py plan create
+python tools/gentoo_agent.py approve <plan_id>
+python tools/gentoo_agent.py run start <plan_id>
 ```
 
-Then start with the confirmation printed by that command. The executor logs
-each phase under `logs/`, stops on failure, and never reboots automatically.
-Every phase is checked against the actual target before it is applied and
-verified again afterward. After a failure, rerun the same command: it starts
-at the beginning and skips phases whose target state is already complete. Use
-`--from-phase` only when an explicit restart point is required.
+`plan create` refuses a target disk without a serial number or WWN when another
+disk has the same size and model (`DISK_AMBIGUOUS`). The run continues in the
+background and writes `runs/<run_id>/run.json` and `log.jsonl`. It first
+re-reads the disk serial and WWN and stops with `TARGET_DRIFT` if they differ
+from the plan. It stops on failure and never reboots. `run resume <run_id>`
+starts a new run of the same plan and skips phases whose target state is
+already complete. `run cancel <run_id>` stops at the next phase boundary.
+
+Approval records are validated strictly: exact fields, expiry exactly 60
+minutes after approval, and no approval time in the future. A malformed or
+hand-edited record counts as not approved. The `approve` command needs an
+interactive terminal, and the committed `.claude/settings.json` denies the
+command and edits to `approvals/` and `plans/` for the agent. This stops an
+agent that follows the rules but is not a security boundary: a process can
+allocate its own pseudo-terminal or write a record directly.
+
+Background runs (`run start`, `run resume`) need macOS or Linux; on Windows use
+WSL. Dry run, `inspect`, `plan create`, and `approve` work everywhere.
 
 ## What is optional and what is not
 

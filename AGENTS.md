@@ -21,12 +21,16 @@ instead of inventing their structure.
   address.
 - Never run arbitrary root commands over SSH.
 - Never partition, format, delete, repair, replace a bootloader, or reboot
-  unless the reviewed configuration explicitly authorizes the operation. For
-  this disposable VM, disk erasure is authorized by both
-  `target_is_disposable: true` and `disk_erase_authorized: true`; execution is
-  still separately controlled by `execution_enabled`.
-- Do not start execution while `execution_enabled` is `false` or
-  `review_status` is not `approved`.
+  unless the reviewed configuration explicitly authorizes the operation. Disk
+  erasure requires `disk_must_be_erased`, `target_is_disposable`, and
+  `disk_erase_authorized` set to `true` in both `config/target.json` and
+  `config/install.json`; `plan create` refuses otherwise.
+- Execution happens only through an approved plan: `plan create`, then a human
+  runs `approve <plan_id>` in their own terminal, then `run start <plan_id>`.
+  Never run `approve` yourself and never ask to have a deny rule removed.
+  Never write, edit, or delete files under `approvals/` or `plans/`, by any
+  tool. An approval is bound to the plan hash, expires after 60 minutes, and is
+  void when the plan or the disk identity changes.
 - If evidence is incomplete or contradictory, stop and ask the operator.
 - Preserve logs and existing user files. Do not reset or overwrite unrelated
   changes in this repository.
@@ -39,11 +43,13 @@ Executor must remain a narrow, approval-aware tool.
 
 ## Current implementation status
 
-The repository provides the read-only inspector, Handbook fetcher, state files,
-approval records, and guarded executors in `gentoo_agent/core/` (phase
-generators in `phases.py`, the check/apply/verify loop in `runner.py`). The
-executor is dry-run by default. It may execute only after `approve-install`
-enables all matching execution flags and the operator passes the exact
-confirmation phrase. Authentication installs and configures sudo for the
-configured wheel-group user by default. Test on the disposable VM before using
-physical hardware.
+The repository provides the read-only inspector, Handbook fetcher, plans bound
+by `plan_hash`, human approval records, and a background worker. Code lives in
+`gentoo_agent/core/` (phase generators in `phases.py`, plans in
+`install_plan.py`, approvals in `approval.py`, runs in `runs.py`, the executor
+in `runner.py`) and `gentoo_agent/jobs/` (launcher and worker). `install
+--dry-run` prints commands without connecting. A run starts only from an
+approved plan, re-checks the disk serial before any change, and never reboots
+the target. Authentication installs and configures sudo for the configured
+wheel-group user by default. Test on the disposable VM before using physical
+hardware.
