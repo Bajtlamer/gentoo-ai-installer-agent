@@ -120,7 +120,9 @@ python tools/gentoo_agent.py plan create
 The plan records the generated commands and the target disk serial, and its
 `plan_hash` covers both. Approve it yourself in an interactive terminal; the
 command refuses to run without one. The agent is instructed never to approve
-and is denied the command, but this is a convention, not a security boundary:
+and is denied the command. With the operator profile and protected mode from
+docs/OPERATING.md the agent cannot create a valid approval; without them, the
+check is a convention.
 
 ```sh
 python tools/gentoo_agent.py approve <plan_id>
@@ -173,6 +175,46 @@ trusted, stop and verify it through the live console before reconnecting.
 
 The Handbook provides procedure. The state machine, approval records, and
 phase scripts provide repeatability and safety.
+
+## AI-driven installation (MCP)
+
+An AI client can drive the whole installation through a stdio MCP server.
+Install the optional extra and register the server:
+
+```sh
+pip install -e '.[mcp]'
+```
+
+Point your client at `gentoo-agent-mcp` using `.mcp.json.example`. For a setup
+where the agent cannot approve its own plan, follow `docs/OPERATING.md`
+(protected copy of the server plus the sandbox profile in
+`docs/operator/claude-settings.json`).
+
+The tools are used in this order:
+
+1. `detect_hardware` inspects the live target and summarizes CPU, firmware,
+   disks, and network cards.
+2. `resolve_config` merges the request into a validated install configuration
+   and reports the source of every value (overrides, profile, inferred from
+   hardware, fallbacks, defaults). It returns `DISK_AMBIGUOUS` or
+   `CONFIG_CONFLICT` instead of guessing.
+3. `create_plan` freezes the configuration into a plan with a `plan_hash`.
+4. `approve_plan` shows the human an approval dialog (elicitation). Only an
+   explicit accept writes a signed approval record. If the client cannot show
+   the dialog, the tool returns `APPROVAL_REQUIRED` with the command to run in
+   your own terminal.
+5. `start_install` starts the background run; `get_run_status` and
+   `get_run_log` follow it, and `verify_install` runs read-only checks after
+   it.
+
+Passwords are passed only as `{"env": "NAME"}`, where the variable name ends
+in `_PASSWORD` or `_PW`. Plain-text passwords are rejected. Generated
+passwords are never returned to the model; the status reports that credentials
+are waiting, and you read them in a terminal:
+
+```sh
+gentoo-agent run status <run_id>
+```
 
 ## References
 
