@@ -7,6 +7,7 @@ approval of the hash is an approval of these exact commands on this exact disk.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -69,7 +70,7 @@ def create_install_plan(target: dict, install: dict, project_plan: dict, invento
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "target": {field: target.get(field) for field in TARGET_FIELDS},
-        "install": install,
+        "install": copy.deepcopy(install),
         "disks": [disk],
         "inventory_hash": hashlib.sha256(canonical(inventory)).hexdigest(),
         "phases": [
@@ -94,18 +95,39 @@ def plan_path(plan_id: str) -> Path:
     return paths.plans_dir() / f"{plan_id}.json"
 
 
+def _verify(plan: dict, path: Path) -> None:
+    plan_hash = plan.get("plan_hash")
+    if (
+        not isinstance(plan_hash, str)
+        or plan_hash != compute_plan_hash(plan)
+        or plan.get("plan_id") != plan_hash[:PLAN_ID_LENGTH]
+    ):
+        raise AgentError(
+            PLAN_HASH_MISMATCH,
+            f"Plan file {path} was modified after it was created.",
+            {"plan_id": plan.get("plan_id")},
+        )
+
+
 def load_install_plan(plan_id: str) -> dict:
     path = plan_path(plan_id)
     if not path.exists():
         raise AgentError(PLAN_NOT_FOUND, f"Plan {plan_id} does not exist.", {"plan_id": plan_id})
-    plan = load_json(path)
-    if plan.get("plan_id") != plan_id or plan.get("plan_hash") != compute_plan_hash(plan):
+    try:
+        plan = load_json(path)
+    except ValueError:
+        plan = None
+    if not isinstance(plan, dict):
+        raise AgentError(PLAN_HASH_MISMATCH, f"Plan file {path} is not a valid plan.", {"plan_id": plan_id})
+    if plan.get("plan_id") != plan_id:
         raise AgentError(PLAN_HASH_MISMATCH, f"Plan file {path} was modified after it was created.", {"plan_id": plan_id})
+    _verify(plan, path)
     return plan
 
 
 def save_install_plan(plan: dict) -> dict:
     path = plan_path(plan["plan_id"])
+    _verify(plan, path)
     if path.exists():
         existing = load_install_plan(plan["plan_id"])
         if existing["plan_hash"] != plan["plan_hash"]:
