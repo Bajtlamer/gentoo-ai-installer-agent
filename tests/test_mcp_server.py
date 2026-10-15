@@ -79,5 +79,62 @@ class SkeletonTests(unittest.TestCase):
         self.assertIn("storage", ids)
 
 
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class DiscoveryAndPlanningTests(unittest.TestCase):
+    def test_detect_hardware_summarizes_the_latest_inventory(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_home(home)
+            result = call("detect_hardware", {})
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["disks"][0]["path"], "/dev/nvme0n1")
+
+    def test_detect_hardware_without_inventory_asks_for_refresh(self):
+        from gentoo_agent.core.config import save_json
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            save_json(home / "config" / "target.json", {"name": "gentoo", "host": "192.0.2.10", "user": "root"})
+            result = call("detect_hardware", {})
+        self.assertEqual(result.structured_content["code"], "INVENTORY_MISSING")
+
+    def test_resolve_config_preview_never_writes(self):
+        from gentoo_agent.core import paths
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_home(home)
+            result = call("resolve_config", {"overrides": {"username": "Alex"}, "fallbacks": {"hostname": "server"}})
+            plans_exist = paths.plans_dir().exists()
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertEqual(result.structured_content["install"]["username"], "alex")
+        self.assertEqual(result.structured_content["sources"]["hostname"], "fallback")
+        self.assertFalse(plans_exist)
+
+    def test_create_plan_then_get_plan(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home)
+            created = call("create_plan", {"overrides": {"user_password": {"env": "ALEX_PW"}}})
+            plan_id = created.structured_content["plan_id"]
+            shown = call("get_plan", {"plan_id": plan_id})
+        self.assertFalse(created.is_error, created.content[0].text)
+        self.assertEqual(shown.structured_content["plan_hash"], created.structured_content["plan_hash"])
+        self.assertFalse(shown.structured_content["approval"]["approved"])
+        self.assertIn("serial=S0", created.structured_content["summary"])
+        self.assertEqual(created.structured_content["sources"]["user_password_env"], "override")
+
+    def test_plain_text_password_is_refused(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_home(home)
+            result = call("create_plan", {"overrides": {"user_password": "hunter2"}})
+        self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+        self.assertNotIn("hunter2", result.content[0].text)
+
+
 if __name__ == "__main__":
     unittest.main()
