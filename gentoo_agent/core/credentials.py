@@ -30,7 +30,7 @@ def password_input(install: dict, prompt: PasswordPrompt | None = None) -> tuple
         if password_source == "environment":
             env_name = str(install.get(env_field, ""))
             value = os.environ.get(env_name)
-            if value is None:
+            if not value:
                 if not install.get("generate_missing_passwords", True):
                     raise AgentError(
                         CONFIG_INVALID,
