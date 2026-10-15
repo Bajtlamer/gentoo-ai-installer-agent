@@ -1,4 +1,6 @@
+import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from gentoo_agent.core import approval, paths, signing
 from gentoo_agent.core.config import load_json, save_json
@@ -85,6 +87,75 @@ class SignedApprovalTests(unittest.TestCase):
                 approval.require_approved_plan(plan["plan_id"], at=START)
             self.assertFalse(signing.key_path().exists())
         self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+
+
+class HardeningTests(unittest.TestCase):
+    def assert_key_refused(self):
+        with self.assertRaises(AgentError) as caught:
+            signing.load_key()
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+
+    def test_verify_rejects_non_hex_or_non_ascii_signatures(self):
+        key = b"a" * 64
+        fields = {"plan_id": "x"}
+        self.assertFalse(signing.verify(fields, "é" * 64, key))
+        self.assertFalse(signing.verify(fields, "A" * 64, key))
+        self.assertFalse(signing.verify(fields, "a" * 63, key))
+
+    def test_verify_rejects_unencodable_fields(self):
+        self.assertFalse(signing.verify({"x": "\ud800"}, "a" * 64, b"a" * 64))
+
+    def test_record_with_lone_surrogate_is_invalid_not_a_crash(self):
+        with temp_home():
+            plan = make_plan()
+            approval.record_approval(plan, "cli", at=START)
+            path = approval.approval_path(plan["plan_id"])
+            text = path.read_text(encoding="utf-8").replace('"cli"', '"\\ud800"')
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaises(AgentError) as caught:
+                approval.require_approved_plan(plan["plan_id"], at=START)
+            self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+            self.assertFalse(approval.approval_status(plan["plan_id"], at=START)["approved"])
+
+    def test_key_path_that_is_a_directory_is_refused(self):
+        with temp_home():
+            signing.key_path().mkdir(parents=True)
+            self.assert_key_refused()
+
+    def test_group_readable_key_is_refused(self):
+        with temp_home():
+            signing.load_or_create_key()
+            os.chmod(signing.key_path(), 0o644)
+            self.assert_key_refused()
+
+    def test_symlinked_key_is_refused(self):
+        with temp_home():
+            signing.load_or_create_key()
+            real = signing.key_path().parent / "real.key"
+            signing.key_path().rename(real)
+            signing.key_path().symlink_to(real)
+            self.assert_key_refused()
+
+    @unittest.skipIf(hasattr(os, "getuid") and os.getuid() == 0, "root can read anything")
+    def test_unreadable_key_is_refused(self):
+        with temp_home():
+            signing.load_or_create_key()
+            os.chmod(signing.key_path(), 0o000)
+            self.assert_key_refused()
+
+    def test_secrets_path_that_is_a_file_is_refused(self):
+        with temp_home():
+            paths.secrets_dir().write_text("x", encoding="ascii")
+            with self.assertRaises(AgentError) as caught:
+                signing.load_or_create_key()
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+
+    def test_concurrent_creation_yields_one_key(self):
+        with temp_home():
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                keys = list(pool.map(lambda _: signing.load_or_create_key(), range(8)))
+            self.assertEqual(len(set(keys)), 1)
+            self.assertEqual(sorted(p.name for p in signing.key_path().parent.iterdir()), ["approval.key"])
 
 
 if __name__ == "__main__":
