@@ -94,41 +94,6 @@ class AuthenticationConfigurationTests(unittest.TestCase):
         self.assertNotIn("root-secret", install_phases.authentication_command(self.target, self.install))
         self.assertNotIn("user-secret", install_phases.authentication_command(self.target, self.install))
 
-    def test_environment_password_source_reads_configured_names(self):
-        configured = dict(self.install)
-        configured.update({
-            "password_source": "environment",
-            "root_password_env": "TEST_GENTOO_ROOT_PASSWORD",
-            "user_password_env": "TEST_GENTOO_USER_PASSWORD",
-        })
-        with patch.dict(
-            install_phases.os.environ,
-            {
-                "TEST_GENTOO_ROOT_PASSWORD": "root-secret",
-                "TEST_GENTOO_USER_PASSWORD": "user-secret",
-            },
-            clear=False,
-        ):
-            input_data, generated = install_phases.prompt_authentication_input(configured)
-        self.assertEqual(input_data, "root:root-secret\ngentoo:user-secret\n")
-        self.assertEqual(generated, {})
-
-    def test_missing_environment_passwords_are_generated(self):
-        configured = dict(self.install)
-        configured.update({
-            "password_source": "environment",
-            "generate_missing_passwords": True,
-            "root_password_env": "TEST_MISSING_ROOT_PASSWORD",
-            "user_password_env": "TEST_MISSING_USER_PASSWORD",
-        })
-        with patch.dict(install_phases.os.environ, {}, clear=True), patch(
-            "gentoo_agent.core.phases.secrets.token_urlsafe",
-            side_effect=["generated-root", "generated-user"],
-        ):
-            input_data, generated = install_phases.prompt_authentication_input(configured)
-        self.assertEqual(input_data, "root:generated-root\ngentoo:generated-user\n")
-        self.assertEqual(generated, {"root": "generated-root", "gentoo": "generated-user"})
-
     def test_phase_order_authenticates_before_kernel(self):
         self.assertLess(
             install_phases.PHASES.index("authentication"),

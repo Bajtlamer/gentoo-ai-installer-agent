@@ -3,19 +3,36 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
-import os
-from pathlib import Path
-import shlex
 import sys
 
-
-from gentoo_agent.core.config import install_config, load_json, load_plan, now, save_json, target_config
-from gentoo_agent.core.errors import AgentError
+from gentoo_agent.core.approval import approval_phrase, enable_execution
+from gentoo_agent.core.config import install_config, load_plan, now, save_json, target_config
+from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
-from gentoo_agent.core.paths import APPROVAL_DIR, CONFIG, STATE_DIR
-from gentoo_agent.core.validate import validate_installation
+from gentoo_agent.core.paths import APPROVAL_DIR
+from gentoo_agent.core.phases import PHASES
+from gentoo_agent.core.runner import execute, execution_gate, install_phrase, render_dry_run, select_phases
+from gentoo_agent.core.state import load_state, state_path
+from gentoo_agent.core.validate import validate_installation, validated_settings
+
+
+def ask_password(label: str) -> str:
+    first = getpass.getpass(f"New Gentoo {label} password: ")
+    second = getpass.getpass(f"Repeat Gentoo {label} password: ")
+    if not first or first != second:
+        raise AgentError(CONFIG_INVALID, f"Passwords for {label} were empty or did not match.")
+    return first
+
+
+def print_credentials(credentials: dict[str, str]) -> None:
+    if not credentials:
+        return
+    print("Generated credentials (save them now; they are not stored by the agent):")
+    for username, password in credentials.items():
+        print(f"  {username}: {password}")
 
 
 def cmd_handbook(_: argparse.Namespace) -> int:
@@ -31,12 +48,12 @@ def cmd_inspect(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_status(_: argparse.Namespace) -> None:
-    state_path = STATE_DIR / "state.json"
-    if not state_path.exists():
+def cmd_status(_: argparse.Namespace) -> int:
+    if not state_path().exists():
         print("No state/state.json exists. Copy state.example.json first.")
-        return
-    print(json.dumps(load_json(state_path), indent=2))
+        return 0
+    print(json.dumps(load_state(), indent=2))
+    return 0
 
 
 def cmd_validate(_: argparse.Namespace) -> int:
@@ -45,7 +62,7 @@ def cmd_validate(_: argparse.Namespace) -> int:
     return 2 if result["errors"] else 0
 
 
-def cmd_approve(args: argparse.Namespace) -> None:
+def cmd_approve(args: argparse.Namespace) -> int:
     if args.confirm != "I_CONFIRM_TARGET_AND_PHASE":
         raise SystemExit("Refusing approval: use the exact confirmation phrase.")
     target = target_config()
@@ -60,36 +77,69 @@ def cmd_approve(args: argparse.Namespace) -> None:
     path = APPROVAL_DIR / f"{target['name']}-{args.phase}.json"
     save_json(path, approval)
     print(path)
+    return 0
 
 
-def cmd_phase(args: argparse.Namespace) -> None:
-    plan = load_json(CONFIG / "plan.json")
+def cmd_install(args: argparse.Namespace) -> int:
+    target = target_config()
+    install = install_config()
+    plan = load_plan()
+    validated_settings(target, install)
+    if args.execute and args.dry_run:
+        raise AgentError(CONFIG_INVALID, "Choose either --execute or --dry-run, not both.")
+    if args.from_phase is None:
+        print("Starting from the beginning; completed phases will be checked and skipped.")
+    phases = select_phases(args.from_phase)
+    if not args.execute:
+        print(render_dry_run(target, install, phases))
+        return 0
+    execution_gate(target, install, plan, args.confirm)
+    result = execute(
+        target,
+        install,
+        phases,
+        prompt=ask_password,
+        on_event=lambda message: print(message, flush=True),
+        on_output=lambda line: print(f"    {line}", end="", flush=True),
+    )
+    if result["status"] != "installed_pending_reboot":
+        print(result["stderr"], file=sys.stderr, end="")
+        print_credentials(result["generated_credentials"])
+        return result["returncode"]
+    print("Installation phases completed. The target was not rebooted.")
+    print_credentials(result["generated_credentials"])
+    print("Review the target through the console before rebooting it.")
+    return 0
+
+
+def cmd_phase(args: argparse.Namespace) -> int:
+    plan = load_plan()
     phase = next((item for item in plan["phases"] if item["id"] == args.phase), None)
     if phase is None:
-        raise SystemExit(f"Unknown phase: {args.phase}")
+        raise AgentError(CONFIG_INVALID, f"Unknown phase: {args.phase}")
     if not phase.get("implemented"):
-        raise SystemExit(
-            f"Phase '{args.phase}' is not implemented. No target changes were made."
-        )
+        raise AgentError(CONFIG_INVALID, f"Phase '{args.phase}' is not implemented. No target changes were made.")
     if args.phase == "discovery":
-        cmd_inspect(args)
-        return
-    from gentoo_agent.core.phases import cmd_install
+        return cmd_inspect(args)
     args.from_phase = args.phase
     args.execute = False
     args.dry_run = True
     args.confirm = ""
-    cmd_install(args)
-
-
-def cmd_install_command(args: argparse.Namespace) -> int:
-    from gentoo_agent.core.phases import cmd_install
     return cmd_install(args)
 
 
-def cmd_approve_install(args: argparse.Namespace) -> None:
-    from gentoo_agent.core.phases import approve_execution
-    approve_execution(args)
+def cmd_approve_install(_: argparse.Namespace) -> int:
+    target = target_config()
+    install = install_config()
+    plan = load_plan()
+    expected = approval_phrase(target, install)
+    print("Review target.json, install.json, the latest inventory, and the dry-run output first.")
+    if input(f"Type {expected}: ").strip() != expected:
+        raise SystemExit("Approval not recorded.")
+    enable_execution(target, install, plan)
+    print("Execution enabled in all three local configuration files.")
+    print(f"Start with: python tools/gentoo_agent.py install --execute --confirm {install_phrase(target, install)!r}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,11 +162,9 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--execute", action="store_true", help="Execute after explicit approval; dry-run is the default")
     install.add_argument("--dry-run", action="store_true", help="Print generated phases without connecting (default)")
     install.add_argument("--confirm", default="", help="Exact confirmation phrase printed by approve-install")
-    install.add_argument("--from-phase", choices=[
-        "preflight", "storage", "filesystems", "base-system", "configuration", "authentication",
-        "kernel", "bootloader", "validation",
-    ], default=None, help="Explicit restart point; omitted means resume from the first incomplete phase")
-    install.set_defaults(func=cmd_install_command)
+    install.add_argument("--from-phase", choices=PHASES, default=None,
+                         help="Explicit restart point; omitted means resume from the first incomplete phase")
+    install.set_defaults(func=cmd_install)
     approve_install = sub.add_parser("approve-install", help="Approve the reviewed installation for execution")
     approve_install.set_defaults(func=cmd_approve_install)
     return parser
