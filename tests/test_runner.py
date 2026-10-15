@@ -111,6 +111,40 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(saved["status"], "failed")
         self.assertEqual(saved["last_error"], "storage apply returned 3")
 
+    def run_authentication(self, results_by_label: dict[str, int]) -> tuple[dict, dict[str, str | None], str]:
+        inputs: dict[str, str | None] = {}
+
+        def fake_remote_shell(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            inputs[label] = input_data
+            return {"label": label, "command": command, "returncode": results_by_label.get(label, 0),
+                    "stdout": "", "stderr": "", "finished_at": "now"}
+
+        install = {**fixture(), "password_source": "generate"}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(state, "STATE_DIR", Path(tmp) / "state"), patch.object(
+            runner, "LOG_DIR", Path(tmp) / "logs"
+        ), patch.object(runner, "remote_shell", fake_remote_shell), patch(
+            "gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA test"
+        ), patch(
+            "gentoo_agent.core.credentials.secrets.token_urlsafe", side_effect=["gen-root", "gen-user"]
+        ):
+            result = runner.execute(TARGET, install, ["authentication"])
+            logs = list((Path(tmp) / "logs").glob("*.json"))
+            self.assertEqual(len(logs), 1)
+            log_text = logs[0].read_text(encoding="utf-8")
+        return result, inputs, log_text
+
+    def test_failed_run_still_returns_generated_credentials(self):
+        result, _, _ = self.run_authentication({"authentication-check": 1, "authentication": 5})
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["generated_credentials"], {"root": "gen-root", "gentoo": "gen-user"})
+
+    def test_passwords_reach_stdin_but_not_the_log(self):
+        result, inputs, log_text = self.run_authentication({"authentication-check": 1})
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        self.assertEqual(inputs["authentication"], "root:gen-root\ngentoo:gen-user\n")
+        self.assertNotIn("gen-root", log_text)
+        self.assertNotIn("gen-user", log_text)
+
     def test_failed_verify_stops(self):
         result, saved, _ = self.run_execute({"storage-check": 1, "storage-verify": 1}, ["storage"])
         self.assertEqual(result["status"], "failed")
