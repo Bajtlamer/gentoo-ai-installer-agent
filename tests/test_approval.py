@@ -96,6 +96,102 @@ class ApprovalTests(unittest.TestCase):
             status = approval.approval_status(plan["plan_id"], at=START)
         self.assertEqual(status, {"approved": True, "channel": "elicitation", "expires_at": "2026-10-15T13:00:00+00:00"})
 
+    def _write(self, plan, **changes):
+        record = approval.record_approval(plan, "cli", at=START)
+        value = {**record, **changes}
+        for key in [k for k, v in changes.items() if v is KeyError]:
+            del value[key]
+        save_json(approval.approval_path(plan["plan_id"]), value)
+
+    def _assert_invalid(self, plan, at=START):
+        with self.assertRaises(AgentError) as caught:
+            approval.require_approved_plan(plan["plan_id"], at=at)
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+        self.assertIn("is invalid", caught.exception.message)
+        self.assertFalse(approval.approval_status(plan["plan_id"], at=at)["approved"])
+
+    def test_far_future_expiry_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            self._write(plan, expires_at="2999-01-01T00:00:00+00:00")
+            self._assert_invalid(plan)
+
+    def test_approval_recorded_in_the_future_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            approval.record_approval(plan, "cli", at=dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc))
+            with self.assertRaises(AgentError) as caught:
+                approval.require_approved_plan(plan["plan_id"])
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+
+    def test_extra_or_missing_key_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            self._write(plan, extra="x")
+            self._assert_invalid(plan)
+            self._write(plan, channel=KeyError)
+            self._assert_invalid(plan)
+
+    def test_record_for_another_plan_id_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            self._write(plan, plan_id="0" * 16)
+            self._assert_invalid(plan)
+
+    def test_record_with_unknown_channel_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            self._write(plan, channel="model")
+            self._assert_invalid(plan)
+
+    def test_naive_timestamp_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            self._write(plan, expires_at="2026-10-15T13:00:00")
+            self._assert_invalid(plan)
+
+    def test_garbage_files_are_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            path = approval.approval_path(plan["plan_id"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("not json", encoding="utf-8")
+            self._assert_invalid(plan)
+            path.write_text("[]", encoding="utf-8")
+            self._assert_invalid(plan)
+
+    def test_naive_at_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            with self.assertRaises(AgentError) as caught:
+                approval.record_approval(plan, "cli", at=dt.datetime(2026, 10, 15, 12, 0))
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_non_string_channel_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            with self.assertRaises(AgentError) as caught:
+                approval.record_approval(plan, ["cli"], at=START)
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_caller_dict_must_match_the_stored_plan(self):
+        with temp_home():
+            plan = make_plan()
+            forged = {**plan, "plan_hash": "0" * 64}
+            with self.assertRaises(AgentError) as caught:
+                approval.record_approval(forged, "cli", at=START)
+            self.assertEqual(caught.exception.code, PLAN_HASH_MISMATCH)
+            with self.assertRaises(AgentError) as caught:
+                approval.approval_summary(forged)
+            self.assertEqual(caught.exception.code, PLAN_HASH_MISMATCH)
+
+    def test_summary_describes_the_install(self):
+        with temp_home():
+            summary = approval.approval_summary(make_plan())
+        self.assertIn("Install: boot=bios", summary)
+        self.assertIn("hostname=gentoo", summary)
+        self.assertIn("Created: ", summary)
+
 
 if __name__ == "__main__":
     unittest.main()
