@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 
-ROOT = Path(os.environ.get("GENTOO_AGENT_HOME") or Path(__file__).resolve().parents[2])
+ROOT = Path(os.environ.get("GENTOO_AGENT_HOME") or Path(__file__).resolve().parents[2]).expanduser().resolve()
 CONFIG = ROOT / "config"
 STATE_DIR = ROOT / "state"
 INVENTORY_DIR = ROOT / "inventory"

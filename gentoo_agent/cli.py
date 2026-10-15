@@ -16,6 +16,7 @@ import urllib.request
 
 
 from gentoo_agent.core.config import install_config, load_json, now, save_json, target_config
+from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.paths import APPROVAL_DIR, CONFIG, INVENTORY_DIR, ROOT, STATE_DIR
 from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
 
@@ -298,6 +299,9 @@ def main(argv: list[str] | None = None) -> int:
     parsed = build_parser().parse_args(argv)
     try:
         result = parsed.func(parsed)
+    except AgentError as error:
+        print(f"error [{error.code}]: {error.message}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         raise SystemExit("Interrupted")
     return result if isinstance(result, int) else 0
