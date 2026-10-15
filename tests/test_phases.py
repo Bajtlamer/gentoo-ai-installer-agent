@@ -1,11 +1,10 @@
 import json
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from gentoo_agent.core import config, phases
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
+from tests.helpers import temp_home
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +51,7 @@ class PhaseGeneratorTests(unittest.TestCase):
 
 class ConfigLoadingTests(unittest.TestCase):
     def test_missing_target_config_is_invalid(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.object(config, "CONFIG", Path(tmp)):
+        with temp_home():
             with self.assertRaises(AgentError) as caught:
                 config.target_config()
         self.assertEqual(caught.exception.code, CONFIG_INVALID)

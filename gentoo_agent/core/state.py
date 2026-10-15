@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from gentoo_agent.core.config import load_json, now, save_json
-from gentoo_agent.core.paths import STATE_DIR
+from gentoo_agent.core import paths
 
 
 def state_path() -> Path:
-    return STATE_DIR / "state.json"
+    return paths.state_dir() / "state.json"
 
 
 def load_state() -> dict:

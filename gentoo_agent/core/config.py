@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
-from gentoo_agent.core.paths import CONFIG, ROOT
+from gentoo_agent.core import paths
 
 
 def _read_umask() -> int:
@@ -53,7 +53,7 @@ def save_json(path: Path, value: dict, *, mode: int | None = None) -> None:
 
 
 def target_config() -> dict:
-    path = CONFIG / "target.json"
+    path = paths.config_dir() / "target.json"
     if not path.exists():
         raise AgentError(CONFIG_INVALID, "Missing config/target.json; copy target.example.json first.", {"path": str(path)})
     return load_json(path)
@@ -61,11 +61,11 @@ def target_config() -> dict:
 
 def install_config() -> dict:
     target = target_config()
-    configured_path = ROOT / target.get("install_config", "config/install.json")
+    configured_path = paths.root() / target.get("install_config", "config/install.json")
     if not configured_path.exists():
         raise AgentError(CONFIG_INVALID, f"Missing installation configuration: {configured_path}", {"path": str(configured_path)})
     return load_json(configured_path)
 
 
 def load_plan() -> dict:
-    return load_json(CONFIG / "plan.json")
+    return load_json(paths.config_dir() / "plan.json")

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 
-from gentoo_agent.core.paths import CONFIG
+from gentoo_agent.core import paths
 
 
 def partition_device(disk: str, number: int) -> str:
@@ -115,7 +115,7 @@ def main() -> int:
         ]
         partition_table = "mbr"
 
-    target = load_json(CONFIG / "target.default.json")
+    target = load_json(paths.config_dir() / "target.default.json")
     target.update({
         "name": args.name,
         "host": args.host,
@@ -128,7 +128,7 @@ def main() -> int:
         "target_is_disposable": bool(args.allow_disk_erase),
         "disk_erase_authorized": bool(args.allow_disk_erase),
     })
-    install = load_json(CONFIG / "install.default.json")
+    install = load_json(paths.config_dir() / "install.default.json")
     install.update({
         "profile": f"gentoo-{args.architecture}-{args.init_system}",
         "boot_mode": args.boot_mode,
@@ -158,11 +158,11 @@ def main() -> int:
         "user_password_env": args.user_password_env,
     })
 
-    write_json(CONFIG / "target.json", target, args.overwrite)
-    write_json(CONFIG / "install.json", install, args.overwrite)
+    write_json(paths.config_dir() / "target.json", target, args.overwrite)
+    write_json(paths.config_dir() / "install.json", install, args.overwrite)
     print("Created local configuration only:")
-    print(f"  {CONFIG / 'target.json'}")
-    print(f"  {CONFIG / 'install.json'}")
+    print(f"  {paths.config_dir() / 'target.json'}")
+    print(f"  {paths.config_dir() / 'install.json'}")
     print("Nothing can run until a plan is created and approved; review both files first.")
     return 0
 

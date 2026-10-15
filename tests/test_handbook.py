@@ -1,9 +1,8 @@
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from gentoo_agent.core import handbook
+from tests.helpers import temp_home
 
 
 class FakeResponse:
@@ -21,14 +20,10 @@ class FakeResponse:
 
 class HandbookTests(unittest.TestCase):
     def test_fetch_records_url_title_and_creates_directory(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            inventory_dir = root / "inventory"
-            with patch.object(handbook, "ROOT", root), patch.object(handbook, "INVENTORY_DIR", inventory_dir), patch.object(
-                handbook.urllib.request, "urlopen", return_value=FakeResponse()
-            ):
-                metadata = handbook.fetch_handbook({"handbook_url": "https://wiki.gentoo.org/wiki/Handbook:AMD64"})
-            self.assertTrue((root / metadata["saved_html"]).exists())
+        with temp_home() as home, patch.object(handbook.urllib.request, "urlopen", return_value=FakeResponse()):
+            metadata = handbook.fetch_handbook({"handbook_url": "https://wiki.gentoo.org/wiki/Handbook:AMD64"})
+            self.assertTrue((home / metadata["saved_html"]).exists())
+            self.assertTrue(metadata["saved_html"].startswith("inventory/"))
         self.assertEqual(metadata["url"], "https://wiki.gentoo.org/wiki/Handbook:AMD64")
         self.assertEqual(metadata["title"], "Handbook:AMD64 - Gentoo Wiki")
         self.assertEqual(metadata["content_type"], "text/html; charset=UTF-8")
