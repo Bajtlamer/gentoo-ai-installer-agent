@@ -10,6 +10,7 @@ that can read secrets/ can create valid ones.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 from gentoo_agent.core import paths
@@ -52,37 +53,62 @@ def _stored_plan(plan: dict) -> dict:
     return stored
 
 
+SHOWN_LIMIT = 200
+
+
+def _shown(value: object) -> str:
+    """Render one interpolated value so it can never fake lines in the dialog.
+
+    Short printable strings appear as is; anything else (newlines, control
+    characters, non-strings, long values) is shown JSON-escaped and truncated.
+    """
+    if isinstance(value, str) and value.isprintable() and len(value) <= SHOWN_LIMIT:
+        return value
+    text = json.dumps(value, ensure_ascii=True, default=str)
+    if len(text) > SHOWN_LIMIT:
+        text = text[:SHOWN_LIMIT] + "..."
+    return text
+
+
 def approval_summary(plan: dict) -> str:
     plan = _stored_plan(plan)
     target = plan["target"]
     install = plan["install"]
     user = (install.get("username") or "none") if install.get("create_user") else "none"
     erase = "YES, all data on the disk will be destroyed" if install.get("disk_must_be_erased") else "no"
+    destructive = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]
+    # Erase and destructive lines come before any value read from the target or inventory.
     lines = [
-        f"Plan: {plan['plan_id']}",
-        f"Plan hash: {plan['plan_hash']}",
-        f"Target: {target['user']}@{target['host']}:{target.get('port') or 22} ({target['name']})",
-        f"Created: {plan['created_at']}",
+        f"Plan: {_shown(plan['plan_id'])}",
+        f"Plan hash: {_shown(plan['plan_hash'])}",
+        f"Disk erase: {erase}",
+        "Destructive phases: " + ", ".join(destructive),
         (
-            f"Install: boot={install.get('boot_mode')} table={install.get('partition_table')} "
-            f"hostname={install.get('hostname')} user={user} init={install.get('init_system')}"
+            f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
+            f"({_shown(target['name'])})"
+        ),
+        f"Created: {_shown(plan['created_at'])}",
+        (
+            f"Install: boot={_shown(install.get('boot_mode'))} table={_shown(install.get('partition_table'))} "
+            f"hostname={_shown(install.get('hostname'))} user={_shown(user)} init={_shown(install.get('init_system'))}"
         ),
     ]
     if install.get("network_method", "dhcp") == "static":
         static = install.get("network_static") or {}
+        dns = ",".join(str(item) for item in static.get("dns") or [])
         lines.append(
-            f"Network: static address={static.get('address')} gateway={static.get('gateway')} "
-            f"dns={','.join(str(item) for item in static.get('dns') or [])}"
+            f"Network: static address={_shown(static.get('address'))} gateway={_shown(static.get('gateway'))} "
+            f"dns={_shown(dns)}"
         )
     else:
-        lines.append(f"Network: {install.get('network_method', 'dhcp')}")
+        lines.append(f"Network: {_shown(install.get('network_method', 'dhcp'))}")
     password_source = install.get("password_source", "environment")
-    passwords = f"Passwords: source={password_source}"
+    passwords = f"Passwords: source={_shown(password_source)}"
     if password_source == "environment":
         # Variable names only; values are never read here.
         passwords += (
-            f" root_password_env={install.get('root_password_env')}"
-            f" user_password_env={install.get('user_password_env')}"
+            f" root_password_env={_shown(install.get('root_password_env'))}"
+            f" user_password_env={_shown(install.get('user_password_env'))}"
         )
     lines.append(passwords)
 
@@ -92,17 +118,16 @@ def approval_summary(plan: dict) -> str:
     groups = ",".join(str(group) for group in install.get("user_groups", ["wheel"])) if install.get("create_user") else "none"
     lines.append(
         f"Access: allow_root_password_ssh={yes_no(install.get('allow_root_password_ssh', False))} "
-        f"configure_sudo={yes_no(install.get('configure_sudo', True))} user_groups={groups}"
+        f"configure_sudo={yes_no(install.get('configure_sudo', True))} user_groups={_shown(groups)}"
     )
     for disk in plan["disks"]:
         lines.append(
-            f"Disk: {disk['path']}  size={disk['size_bytes']} bytes  model={disk['model'] or 'unknown'}  "
-            f"serial={disk['serial'] or 'none'}  wwn={disk['wwn'] or 'none'}"
+            f"Disk: {_shown(disk['path'])}  size={_shown(str(disk['size_bytes']))} bytes  "
+            f"model={_shown(disk['model'] or 'unknown')}  "
+            f"serial={_shown(disk['serial'] or 'none')}  wwn={_shown(disk['wwn'] or 'none')}"
         )
         if identity_strength(disk) == "weak":
             lines.append("WARNING: this disk has no serial number or WWN; drift detection relies on path, size, and model only.")
-    lines.append(f"Disk erase: {erase}")
-    lines.append("Destructive phases: " + ", ".join(phase["id"] for phase in plan["phases"] if phase["destructive"]))
     return "\n".join(lines)
 
 

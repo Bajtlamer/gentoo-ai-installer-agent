@@ -52,13 +52,17 @@ def _size_bytes(device: dict) -> int:
 
 
 def _identity(device: dict) -> dict:
-    return {
+    identity = {
         "path": _text(device.get("path")),
         "size_bytes": _size_bytes(device),
         "model": _text(device.get("model")),
         "serial": _text(device.get("serial")),
         "wwn": _text(device.get("wwn")),
     }
+    # These values reach the human approval dialog; control characters could fake lines in it.
+    if not all(identity[field].isprintable() for field in ("path", "model", "serial", "wwn")):
+        raise AgentError(INVENTORY_MISSING, "disk identity contains unprintable characters", {"label": IDENTITY_LABEL})
+    return identity
 
 
 def parse_disk_identities(stdout: str) -> list[dict]:

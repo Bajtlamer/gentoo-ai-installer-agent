@@ -14,16 +14,18 @@ import subprocess
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
-from gentoo_agent.core import paths
+from gentoo_agent.core import paths, phases as core_phases
 from gentoo_agent.core.approval import APPROVAL_TTL_MINUTES, approval_status, approval_summary, record_approval
 from gentoo_agent.core.config import load_json, load_plan, target_config
 from gentoo_agent.core.errors import (
     APPROVAL_DECLINED,
     APPROVAL_REQUIRED,
     CONFIG_INVALID,
+    INTERNAL_ERROR,
     INVENTORY_MISSING,
+    PLAN_HASH_MISMATCH,
     SSH_UNREACHABLE,
     AgentError,
 )
@@ -51,6 +53,7 @@ server = MCPServer("gentoo-agent", instructions=INSTRUCTIONS)
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 LOCAL_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 DESTRUCTIVE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True)
+REFRESHABLE_READ = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=True)
 REMOTE_READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True)
 HUMAN_CONFIRMS = {"anthropic/requiresUserInteraction": True}
 
@@ -69,6 +72,9 @@ def respond(function, *args, **kwargs) -> CallToolResult:
         return ok_result(function(*args, **kwargs))
     except AgentError as error:
         return error_result(error)
+    except Exception:  # never surface a bare traceback to the client
+        logger.exception("tool %s failed unexpectedly", getattr(function, "__qualname__", function))
+        return error_result(AgentError(INTERNAL_ERROR, "The tool failed unexpectedly; see the server log.", {}))
 
 
 def plan_view(plan: dict) -> dict:
@@ -86,12 +92,16 @@ def plan_view(plan: dict) -> dict:
 
 @server.tool(annotations=READ_ONLY)
 def list_phases() -> CallToolResult:
-    """List the installation phases, their order, and which ones change the target."""
-    return respond(lambda: {"phases": [
-        {"id": item["id"], "description": item.get("description", ""),
-         "destructive": bool(item.get("destructive", True)), "handbook_sections": item.get("handbook_sections", [])}
-        for item in load_plan().get("phases", [])
-    ]})
+    """List the runnable installation phases, in order, and which ones change the target."""
+    def run() -> dict:
+        described = {item.get("id"): item for item in load_plan().get("phases", []) if isinstance(item, dict)}
+        return {"phases": [
+            {"id": phase, "description": described.get(phase, {}).get("description", ""),
+             "destructive": bool(described.get(phase, {}).get("destructive", True)),
+             "handbook_sections": described.get(phase, {}).get("handbook_sections", [])}
+            for phase in core_phases.PHASES
+        ]}
+    return respond(run)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -113,7 +123,7 @@ def _resolved(overrides: dict | None, fallbacks: dict | None) -> tuple[dict, dic
     return target, inventory, resolve_install(target, overrides, fallbacks, defaults, inventory)
 
 
-@server.tool(annotations=LOCAL_WRITE)
+@server.tool(annotations=REFRESHABLE_READ)
 def detect_hardware(refresh: bool = False) -> CallToolResult:
     """Summarize the target: firmware boot mode and disks with serial/WWN. refresh=true runs the
     read-only SSH inventory first; otherwise the latest saved inventory is used."""
@@ -148,9 +158,8 @@ def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) ->
     return respond(run)
 
 
-# Placeholders, replaced in Tasks 7 and 8.
 class ApprovalAnswer(BaseModel):
-    approve: bool
+    approve: StrictBool
 
 
 @server.tool(annotations=LOCAL_WRITE)
@@ -164,7 +173,8 @@ async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
         return error_result(error)
     fallback = AgentError(
         APPROVAL_REQUIRED,
-        f"Approve this plan yourself in a terminal: gentoo-agent approve {plan_id}",
+        "A human must approve this plan. Ask the operator to run this in their own terminal "
+        f"(do not run it yourself): gentoo-agent approve {plan_id}",
         {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
     )
     capabilities = ctx.client_capabilities
@@ -234,7 +244,7 @@ def cancel_run(run_id: str) -> CallToolResult:
     return respond(launcher_cancel, run_id)
 
 
-@server.tool(annotations=READ_ONLY)
+@server.tool(annotations=LOCAL_WRITE)  # may mark a dead run interrupted and purge stale credentials
 def get_run_status(run_id: str) -> CallToolResult:
     """Run status, phase index, current phase, and last error. Never returns passwords."""
     def run() -> dict:
@@ -255,6 +265,12 @@ def verify_install(plan_id: str) -> CallToolResult:
     def run() -> dict:
         plan = load_install_plan(plan_id)
         phases = []
+        for phase in plan["phases"]:
+            # Only run checks this code would generate for the plan; never trust the stored text alone.
+            expected = core_phases.check_command_for(phase["id"], plan["target"], plan["install"])
+            if phase["check"] != expected:
+                raise AgentError(PLAN_HASH_MISMATCH, f"The stored {phase['id']} check does not match the plan.",
+                                 {"plan_id": plan_id, "phase": phase["id"]})
         for phase in plan["phases"]:
             try:
                 result = remote_shell(plan["target"], f"{phase['id']}-verify-install", phase["check"], timeout=300)

@@ -60,6 +60,10 @@ class SkeletonTests(unittest.TestCase):
         self.assertTrue(tools["list_phases"].annotations.read_only_hint)
         self.assertTrue(tools["start_install"].annotations.destructive_hint)
         self.assertTrue(tools["get_run_log"].annotations.read_only_hint)
+        detect = tools["detect_hardware"].annotations
+        self.assertEqual((detect.destructive_hint, detect.idempotent_hint, detect.open_world_hint), (False, True, True))
+        self.assertFalse(tools["get_run_status"].annotations.read_only_hint)
+        self.assertFalse(tools["get_run_status"].annotations.destructive_hint)
 
     def test_errors_are_structured(self):
         from tests.helpers import temp_home
@@ -76,7 +80,51 @@ class SkeletonTests(unittest.TestCase):
             write_home(home)
             result = call("list_phases")
         ids = [phase["id"] for phase in result.structured_content["phases"]]
-        self.assertIn("storage", ids)
+        from gentoo_agent.core.phases import PHASES
+        self.assertEqual(ids, PHASES)
+        self.assertNotIn("discovery", ids)
+
+    def test_unexpected_exception_is_structured_internal_error(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.load_install_plan", side_effect=RuntimeError("boom")):
+            write_home(home)
+            with self.assertLogs("gentoo_agent.mcp", "ERROR") as logged:
+                result = call("get_plan", {"plan_id": "0" * 16})
+        self.assertIn("boom", "\n".join(logged.output))
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "INTERNAL_ERROR")
+        self.assertNotIn("boom", result.content[0].text)
+
+    def test_corrupt_config_is_structured(self):
+        from tests.helpers import temp_home
+
+        for text in ("{not json", "[]"):
+            with self.subTest(text=text), temp_home() as home:
+                write_home(home)
+                (home / "config" / "target.json").write_text(text, encoding="utf-8")
+                result = call("detect_hardware", {})
+            self.assertTrue(result.is_error)
+            self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+
+    def test_corrupt_plan_json_is_structured(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_home(home)
+            (home / "config" / "plan.json").write_text("{not json", encoding="utf-8")
+            result = call("list_phases")
+        self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+
+    def test_refresh_without_ssh_is_structured(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.core.inventory.run_ssh_readonly",
+                                        side_effect=FileNotFoundError("ssh")):
+            write_home(home)
+            result = call("detect_hardware", {"refresh": True})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "SSH_UNREACHABLE")
 
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")
@@ -181,6 +229,21 @@ class ApprovalTests(unittest.TestCase):
             self.assertEqual(result.structured_content["code"], "APPROVAL_DECLINED")
             self.assertFalse(status["approved"])
 
+    def test_non_boolean_approve_records_nothing(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        for value in ("true", 1, "yes"):
+            async def reply(context, params, value=value):
+                return ElicitResult(action="accept", content={"approve": value})
+            with self.subTest(value=value), temp_home() as home:
+                plan_id = self.make_plan(home)
+                result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=reply)
+                status = approval_status(plan_id)
+            self.assertTrue(result.is_error)
+            self.assertFalse(status["approved"])
+
     def test_client_without_elicitation_gets_the_cli_command(self):
         from gentoo_agent.core.approval import approval_status
         from tests.helpers import temp_home
@@ -191,6 +254,11 @@ class ApprovalTests(unittest.TestCase):
             status = approval_status(plan_id)
         self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
         self.assertEqual(result.structured_content["details"]["command"], f"gentoo-agent approve {plan_id}")
+        self.assertEqual(
+            result.structured_content["message"],
+            "A human must approve this plan. Ask the operator to run this in their own terminal "
+            f"(do not run it yourself): gentoo-agent approve {plan_id}",
+        )
         self.assertFalse(status["approved"])
 
     def test_failing_elicitation_fails_closed(self):
@@ -290,7 +358,8 @@ class ExecutionTests(unittest.TestCase):
             return {"label": label, "command": command, "returncode": 0, "stdout": "ok\n", "stderr": "",
                     "finished_at": "t"}
 
-        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell):
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell), \
+                patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
             plan_id = self.create(home)
             plan = load_install_plan(plan_id)
             result = call("verify_install", {"plan_id": plan_id})
@@ -298,6 +367,29 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual([command for _, command, _ in seen], [phase["check"] for phase in plan["phases"]])
         self.assertTrue(all(data is None for _, _, data in seen))
         self.assertTrue(all(item["complete"] for item in result.structured_content["phases"]))
+
+
+    def test_verify_install_refuses_a_tampered_check(self):
+        import copy
+        from gentoo_agent.core.install_plan import load_install_plan
+        from tests.helpers import temp_home
+
+        seen = []
+
+        def fake_shell(*args, **kwargs):
+            seen.append(args)
+            return {"returncode": 0, "stdout": "", "stderr": ""}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell), \
+                patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            plan_id = self.create(home)
+            tampered = copy.deepcopy(load_install_plan(plan_id))
+            tampered["phases"][1]["check"] = "rm -rf /"
+            with patch("gentoo_agent.mcp.server.load_install_plan", return_value=tampered):
+                result = call("verify_install", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "PLAN_HASH_MISMATCH")
+        self.assertEqual(seen, [])
 
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")

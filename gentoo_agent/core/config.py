@@ -30,6 +30,19 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
+def _config_object(path: Path) -> dict:
+    """Load a configuration file that must hold a JSON object; CONFIG_INVALID otherwise."""
+    try:
+        value = load_json(path)
+    except FileNotFoundError as exc:
+        raise AgentError(CONFIG_INVALID, f"Missing configuration file: {path}", {"path": str(path)}) from exc
+    except (OSError, ValueError, RecursionError) as exc:
+        raise AgentError(CONFIG_INVALID, f"{path} is not readable JSON: {exc}", {"path": str(path)}) from exc
+    if not isinstance(value, dict):
+        raise AgentError(CONFIG_INVALID, f"{path} must contain a JSON object.", {"path": str(path)})
+    return value
+
+
 def save_json(path: Path, value: dict, *, mode: int | None = None) -> None:
     """Write JSON atomically through a unique temporary file in the same directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +69,7 @@ def target_config() -> dict:
     path = paths.config_dir() / "target.json"
     if not path.exists():
         raise AgentError(CONFIG_INVALID, "Missing config/target.json; copy target.example.json first.", {"path": str(path)})
-    return load_json(path)
+    return _config_object(path)
 
 
 def install_config() -> dict:
@@ -64,8 +77,8 @@ def install_config() -> dict:
     configured_path = paths.root() / target.get("install_config", "config/install.json")
     if not configured_path.exists():
         raise AgentError(CONFIG_INVALID, f"Missing installation configuration: {configured_path}", {"path": str(configured_path)})
-    return load_json(configured_path)
+    return _config_object(configured_path)
 
 
 def load_plan() -> dict:
-    return load_json(paths.config_dir() / "plan.json")
+    return _config_object(paths.config_dir() / "plan.json")
