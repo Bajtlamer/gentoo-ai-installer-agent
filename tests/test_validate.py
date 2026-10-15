@@ -98,6 +98,13 @@ INVALID = [
     ("dns four", static(dns=["1.1.1.1", "1.0.0.1", "9.9.9.9", "8.8.8.8"]), "network_static"),
     ("dns int", static(dns=[16843009]), "network_static"),
     ("dns injection", static(dns=["1.1.1.1; touch /PWNED"]), "network_static"),
+    ("address bare", static(address="192.168.10.20"), "network_static"),
+    ("address ipv6", static(address="2001:db8::2/64", gateway="2001:db8::1"), "network_static"),
+    ("address prefix 7", static(address="10.0.0.2/7", gateway="10.0.0.1"), "network_static"),
+    ("address prefix 31", static(address="192.168.10.20/31", gateway="192.168.10.21"), "network_static"),
+    ("address prefix 32", static(address="192.168.10.20/32", gateway="192.168.10.20"), "network_static"),
+    ("gateway ipv6", static(gateway="2001:db8::1"), "network_static"),
+    ("gateway outside subnet", static(gateway="192.168.11.1"), "network_static"),
     ("sudo without user", changed("uefi_gpt_root_only_static", configure_sudo=True), "configure_sudo"),
     ("sudo default without user", changed("uefi_gpt_root_only_static", configure_sudo=DROP), "configure_sudo"),
     ("swap bool", changed("uefi_gpt_user_sudo", swap_mb=True), "swap_mb"),
@@ -116,8 +123,20 @@ VALID = [
     ("etc timezone", changed("uefi_gpt_user_sudo", timezone="Etc/GMT+5")),
     ("static ipv4", static()),
     ("static three dns", static(dns=["1.1.1.1", "9.9.9.9", "2606:4700:4700::1111"])),
-    ("static ipv6", static(address="2001:db8::2/64", gateway="2001:db8::1", dns=["2001:db8::53"])),
+    ("static ipv6 dns", static(dns=["2001:db8::53"])),
+    ("static prefix 8", static(address="10.1.2.3/8", gateway="10.200.0.1")),
+    ("static prefix 30", static(address="192.168.10.21/30", gateway="192.168.10.22")),
 ]
+
+# Names a model could pick to exfiltrate an unrelated variable as a password.
+REJECTED_ENV_NAMES = (
+    "PATH", "HOME", "GENTOO_AGENT_HOME", "SSH_AUTH_SOCK", "LD_PRELOAD", "PYTHONPATH", "GITHUB_TOKEN",
+    "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "ANTHROPIC_KEY", "SHLVL", "HOSTNAME", "USERNAME", "LC_ALL",
+    "TZ", "DISPLAY", "DATABASE_URL", "GOOGLE_APPLICATION_CREDENTIALS", "PASSWORD", "PW", "_PW", "MY_PW_X",
+    "SSH_PASSWORD", "GIT_PASSWORD", "AWS_PASSWORD", "MY_SECRET_PASSWORD", "OPENAI_PW", "GITHUB_TOKEN_PASSWORD",
+    "PYTHON_PW", "LD_PW", "ANTHROPIC_PASSWORD", "DB_PRIVATE_PW",
+)
+VALID_ENV_NAMES = ("ALEX_PW", "GENTOO_ROOT_PASSWORD", "GENTOO_USER_PASSWORD", "ROOT_PW", "TEST_GENTOO_USER_PASSWORD")
 
 
 class SettingValidationTests(unittest.TestCase):
@@ -131,14 +150,21 @@ class SettingValidationTests(unittest.TestCase):
 
     def test_unsafe_password_env_names_are_rejected(self):
         for field in ("root_password_env", "user_password_env"):
-            for name in ("PATH", "HOME", "GENTOO_AGENT_HOME", "SSH_AUTH_SOCK", "LD_PRELOAD", "PYTHONPATH",
-                         "GITHUB_TOKEN", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "ANTHROPIC_KEY"):
+            for name in REJECTED_ENV_NAMES:
                 with self.subTest(field=field, name=name):
                     with self.assertRaises(AgentError) as caught:
                         validated_settings(TARGET, changed("uefi_gpt_user_sudo", **{field: name}))
                     self.assertEqual(caught.exception.code, CONFIG_INVALID)
                     self.assertEqual(caught.exception.details.get("field"), field)
-        validated_settings(TARGET, changed("uefi_gpt_user_sudo", user_password_env="GENTOO_USER_PASSWORD"))
+                    self.assertIn("must end in _PASSWORD or _PW", caught.exception.message)
+            for name in VALID_ENV_NAMES:
+                with self.subTest(field=field, name=name):
+                    validated_settings(TARGET, changed("uefi_gpt_user_sudo", **{field: name}))
+
+    def test_static_address_message(self):
+        with self.assertRaises(AgentError) as caught:
+            validated_settings(TARGET, static(address="192.168.10.20"))
+        self.assertEqual(caught.exception.message, "Static addresses must be IPv4 in CIDR form, for example 192.168.10.20/24")
 
     def test_valid_settings_are_accepted(self):
         for name, install in VALID:
