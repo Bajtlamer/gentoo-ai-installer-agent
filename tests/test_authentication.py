@@ -94,6 +94,28 @@ class AuthenticationConfigurationTests(unittest.TestCase):
         self.assertNotIn("root-secret", install_phases.authentication_command(self.target, self.install))
         self.assertNotIn("user-secret", install_phases.authentication_command(self.target, self.install))
 
+    def test_password_records_reach_only_chpasswd(self):
+        command = install_phases.authentication_command(self.target, self.install)
+        lines = command.splitlines()
+        capture = lines.index("records=$(cat)")
+        first_chroot = next(index for index, line in enumerate(lines) if "chroot" in line)
+        self.assertLess(capture, first_chroot)
+        self.assertEqual(lines[capture + 1], "exec </dev/null")
+        users = [line for line in lines if "records" in line]
+        self.assertEqual(users, ["records=$(cat)", "printf '%s\\n' \"$records\" | chroot /mnt/gentoo chpasswd"])
+        # chpasswd no longer runs inside the chroot program that does everything else.
+        self.assertNotIn("chpasswd", lines[first_chroot])
+        self.assertNotIn("set -x", command)
+        self.assertNotIn("echo", command)
+        self.assertEqual(lines[0], "set -eu")
+        self.assertTrue(lines[-1].startswith("touch "))
+
+    def test_no_password_records_without_chpasswd(self):
+        configured = dict(self.install, create_user=False, set_root_password=False)
+        command = install_phases.authentication_command(self.target, configured)
+        self.assertNotIn("records", command)
+        self.assertNotIn("chpasswd", command)
+
     def test_phase_order_authenticates_before_kernel(self):
         self.assertLess(
             install_phases.PHASES.index("authentication"),

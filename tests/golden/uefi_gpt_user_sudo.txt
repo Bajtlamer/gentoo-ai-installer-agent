@@ -169,6 +169,9 @@ test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
 printf 'configuration-ok\n'
 ===== authentication apply =====
+set -eu
+records=$(cat)
+exec </dev/null
 chroot /mnt/gentoo /bin/bash -c 'set -e
 set -eu
 if ! getent passwd alex >/dev/null; then useradd -m -s /bin/bash -G wheel alex; else usermod -s /bin/bash alex; fi
@@ -180,8 +183,8 @@ chmod 600 /home/alex/.ssh/authorized_keys
 emerge --noreplace --verbose app-admin/sudo
 sudo_rule='"'"'%wheel ALL=(ALL:ALL) ALL'"'"'
 if ! grep -Fqx "$sudo_rule" /etc/sudoers; then printf '"'"'%s\n'"'"' "$sudo_rule" >> /etc/sudoers; fi
-/usr/sbin/visudo -cf /etc/sudoers
-chpasswd'
+/usr/sbin/visudo -cf /etc/sudoers'
+printf '%s\n' "$records" | chroot /mnt/gentoo chpasswd
 touch /mnt/gentoo/.gentoo-agent-authentication-complete
 ===== authentication check =====
 set -eu
