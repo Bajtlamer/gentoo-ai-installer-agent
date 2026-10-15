@@ -14,7 +14,10 @@ class AgentError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-        self.details = details or {}
+        self.details = dict(details or {})
+
+    def __reduce__(self):
+        return (type(self), (self.code, self.message, self.details))
 
     def to_dict(self) -> dict:
         return {"code": self.code, "message": self.message, "details": self.details}

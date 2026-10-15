@@ -19,6 +19,15 @@ class AgentErrorTests(unittest.TestCase):
     def test_details_default_to_empty_dict(self):
         self.assertEqual(AgentError(CONFIG_INVALID, "x").details, {})
 
+    def test_error_survives_pickle_round_trip(self):
+        import pickle
+
+        error = AgentError(CONFIG_INVALID, "disk path is unsafe", {"disk": "/dev/x"})
+        restored = pickle.loads(pickle.dumps(error))
+        self.assertIsInstance(restored, AgentError)
+        self.assertEqual(restored.to_dict(), error.to_dict())
+        self.assertEqual(str(restored), "disk path is unsafe")
+
     def test_cli_reports_agent_error_with_code_and_exit_1(self):
         from gentoo_agent import cli
 
