@@ -300,5 +300,26 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(all(item["complete"] for item in result.structured_content["phases"]))
 
 
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ResourceAndPromptTests(unittest.TestCase):
+    def test_plan_resource_and_prompt(self):
+        from tests.helpers import temp_home
+
+        async def go(plan_id):
+            async with Client(mcp_server.server, mode="legacy") as client:
+                resource = await client.read_resource(f"gentoo://plan/{plan_id}")
+                prompt = await client.get_prompt("install_gentoo", {"request": "user alex, UEFI"})
+                return resource, prompt
+
+        with temp_home() as home, patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home)
+            plan_id = call("create_plan", {}).structured_content["plan_id"]
+            resource, prompt = anyio.run(go, plan_id)
+        self.assertEqual(json.loads(resource.contents[0].text)["plan_id"], plan_id)
+        text = prompt.messages[0].content.text
+        self.assertIn("approve_plan", text)
+        self.assertIn("user alex, UEFI", text)
+
+
 if __name__ == "__main__":
     unittest.main()

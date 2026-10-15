@@ -267,6 +267,36 @@ def verify_install(plan_id: str) -> CallToolResult:
     return respond(run)
 
 
+@server.resource("gentoo://plan/{plan_id}")
+def plan_resource(plan_id: str) -> str:
+    return json.dumps(plan_view(load_install_plan(plan_id)), indent=2)
+
+
+@server.resource("gentoo://run/{run_id}/state")
+def run_state_resource(run_id: str) -> str:
+    return json.dumps(run_status(run_id), indent=2)
+
+
+@server.resource("gentoo://run/{run_id}/log")
+def run_log_resource(run_id: str) -> str:
+    return json.dumps(read_log(run_id, 0, 500), indent=2)
+
+
+@server.prompt()
+def install_gentoo(request: str = "") -> str:
+    return (
+        "Install Gentoo on the configured disposable target.\n"
+        f"User request: {request}\n\n"
+        "1. detect_hardware(refresh=true). If several disks are listed, ask the user which one.\n"
+        "2. Translate the request into overrides and fallbacks; passwords only as {\"env\": \"NAME\"}.\n"
+        "3. resolve_config to preview; report conflicts to the user instead of guessing.\n"
+        "4. create_plan, then approve_plan. Never try to approve any other way.\n"
+        "5. start_install, then poll get_run_status and read get_run_log until the run ends.\n"
+        "6. On failure, report the error code and output tail; resume_run only if the user agrees.\n"
+        "7. Never reboot the target. If credentials are waiting, tell the user to read them in a terminal."
+    )
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO)  # stderr; stdout carries the protocol
     server.run()
