@@ -33,10 +33,22 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(credentials["applied"])
         self.assertFalse(lock_exists)
 
+    def test_worker_passes_the_recorded_phase_subset_to_execute_plan(self):
+        with temp_home():
+            plan = approved_plan()
+            run_id = runs.new_run_id()
+            runs.acquire_lock(run_id, {"run_id": run_id, "plan_id": plan["plan_id"], "plan_hash": plan["plan_hash"],
+                                       "status": "starting", "pid": None, "started_at": runs.now(),
+                                       "phase_ids": ["kernel"]})
+            outcome = {"status": "installed_pending_reboot", "authentication_applied": False}
+            with patch.object(worker, "execute_plan", return_value=outcome) as execute:
+                worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {}})
+        self.assertEqual(execute.call_args.kwargs["phase_ids"], ["kernel"])
+
     def test_credentials_are_pending_while_the_plan_executes(self):
         seen = {}
 
-        def execute(plan, run_id, records):
+        def execute(plan, run_id, records, phase_ids=None):
             seen["credentials"] = load_json(runs.credentials_path(run_id))
             return {"status": "installed_pending_reboot", "authentication_applied": True}
 

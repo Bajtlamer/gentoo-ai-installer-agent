@@ -19,7 +19,7 @@ from gentoo_agent.core import paths
 from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.credentials import PasswordPrompt, password_input
-from gentoo_agent.core.errors import PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
 from gentoo_agent.core.runs import (
     ACTIVE_STATUSES,
     acquire_lock,
@@ -48,8 +48,20 @@ def worker_environment(exclude: set[str] | frozenset[str] = frozenset()) -> dict
     return environment
 
 
-def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_from: str | None = None) -> str:
+def start_run(
+    plan_id: str,
+    *,
+    prompt: PasswordPrompt | None = None,
+    resumed_from: str | None = None,
+    phase_ids: list[str] | None = None,
+) -> str:
     plan = require_approved_plan(plan_id)
+    if phase_ids is not None:
+        known = {phase["id"] for phase in plan["phases"]}
+        unknown = sorted(set(phase_ids) - known)
+        if unknown or not phase_ids:
+            raise AgentError(CONFIG_INVALID, f"Unknown or empty phase selection: {unknown or list(phase_ids)}",
+                             {"phase_ids": list(phase_ids)})
     install = plan["install"]
     password_variables = {
         str(name) for name in (install.get("root_password_env"), install.get("user_password_env")) if name
@@ -63,7 +75,8 @@ def start_run(plan_id: str, *, prompt: PasswordPrompt | None = None, resumed_fro
         "status": "starting",
         "pid": None,
         "started_at": now(),
-        "phase_count": len(plan["phases"]),
+        "phase_ids": phase_ids,
+        "phase_count": len(phase_ids) if phase_ids else len(plan["phases"]),
         "phase_index": 0,
         "current_phase": None,
         "completed_phases": [],
@@ -112,7 +125,8 @@ def resume_run(run_id: str, *, prompt: PasswordPrompt | None = None) -> str:
     record = run_status(run_id)
     if record["status"] in ACTIVE_STATUSES:
         raise AgentError(RUN_ALREADY_ACTIVE, f"Run {run_id} is still active.", {"run_id": run_id})
-    return start_run(record["plan_id"], prompt=prompt, resumed_from=run_id)
+    return start_run(record["plan_id"], prompt=prompt, resumed_from=run_id,
+                     phase_ids=record.get("phase_ids"))
 
 
 def cancel_run(run_id: str) -> dict:
