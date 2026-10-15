@@ -10,6 +10,8 @@ logs/*.json
 inventory/*.json
 inventory/*.html
 approvals/*.json
+runs/
+plans/*.json
 ssh-known-hosts
 *.key
 *.pem

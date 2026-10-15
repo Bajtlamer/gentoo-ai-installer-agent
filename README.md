@@ -43,6 +43,7 @@ server.
 - A Gentoo live environment reachable over SSH.
 - A verified host key in the operator's SSH `known_hosts` file.
 - A dedicated temporary SSH key for the live session.
+- Background runs (`run start`, `run resume`) need macOS or Linux; on Windows use WSL. Dry run, `inspect`, `plan create`, and `approve` work everywhere.
 
 ## First setup
 
@@ -110,31 +111,39 @@ python tools/gentoo_agent.py install --dry-run
 ```
 
 After reviewing `config/target.json`, `config/install.json`, the latest
-inventory, and the dry-run output, record the explicit execution approval:
+inventory, and the dry-run output, freeze them into a plan:
 
-```powershell
-python tools/gentoo_agent.py approve-install
+```sh
+python tools/gentoo_agent.py plan create
 ```
 
-Only then can the installer be started. The approval command prints the exact
-confirmation phrase required by the executor:
+The plan records the generated commands and the target disk serial, and its
+`plan_hash` covers both. Approve it yourself in an interactive terminal; the
+command refuses to run without one. The agent is instructed never to approve
+and is denied the command, but this is a convention, not a security boundary:
 
-```powershell
-python tools/gentoo_agent.py install --execute --confirm "INSTALL gentoo ON /dev/sda"
+```sh
+python tools/gentoo_agent.py approve <plan_id>
+```
+
+The approval is valid for 60 minutes. Start the run, which continues in the
+background, and follow it:
+
+```sh
+python tools/gentoo_agent.py run start <plan_id>
+python tools/gentoo_agent.py run status <run_id>
+python tools/gentoo_agent.py run log <run_id>
 ```
 
 The phases are preflight, storage, filesystems, base system, configuration,
-authentication, kernel, bootloader, and validation. A failure stops the workflow and preserves
-the local log under `logs/`; the target is left running for console recovery.
-Every phase has a read-only state check and a post-apply verification. If
-`--from-phase` is omitted, a run starts at the beginning, checks every phase,
-and skips work that is already complete.
+authentication, kernel, bootloader, and validation. A failure stops the run and preserves its log under `runs/<run_id>/`; the target is left running for console recovery.
+Every phase has a read-only state check and a post-apply verification. After a failure, `run resume <run_id>` starts a new run of the same plan and skips phases whose target state is already complete.
 
 During the authentication phase the agent installs OpenSSH and sudo, verifies
 the root authorized key and enabled services, creates the configured regular user, and
 reads password environment variables without prompting. It generates random
 replacements when configured values are absent. Generated
-credentials are printed once after successful completion but never saved in
+credentials are shown once by `run status` (for a failed run whose authentication phase was attempted it says they may have been applied) but never saved in
 configuration files or phase logs. The regular user is the normal post-reboot login. Root SSH is
 key-only by default; the reviewed configuration may explicitly allow root
 password SSH login while retaining the root public key as a fallback.
@@ -154,7 +163,7 @@ trusted, stop and verify it through the live console before reconnecting.
 3. Configure `config/target.json`.
 4. Run `handbook` and `inspect`.
 5. Run `install --dry-run` and review the generated commands.
-6. Run `approve-install`, then start `install --execute` with its exact phrase.
+6. Run `plan create`, approve the plan yourself with `approve <plan_id>`, then `run start <plan_id>`.
 7. Verify the phase, update state, and preserve the transcript.
 
 The Handbook provides procedure. The state machine, approval records, and

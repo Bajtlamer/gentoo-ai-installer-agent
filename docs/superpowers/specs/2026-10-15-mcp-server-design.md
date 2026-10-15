@@ -146,9 +146,10 @@ no percentage, because phase durations differ by orders of magnitude.
 ### Error codes
 
 `HOST_KEY_UNKNOWN`, `SSH_UNREACHABLE`, `CONFIG_INVALID`, `CONFIG_CONFLICT`,
-`DISK_AMBIGUOUS`, `PLAN_NOT_FOUND`, `PLAN_HASH_MISMATCH`, `APPROVAL_REQUIRED`,
-`APPROVAL_EXPIRED`, `APPROVAL_DECLINED`, `TARGET_DRIFT`, `RUN_ALREADY_ACTIVE`,
-`PHASE_PRECONDITION_FAILED`, `PHASE_FAILED`.
+`DISK_AMBIGUOUS`, `INVENTORY_MISSING`, `HANDBOOK_UNAVAILABLE`,
+`PLAN_NOT_FOUND`, `PLAN_HASH_MISMATCH`, `APPROVAL_REQUIRED`,
+`APPROVAL_EXPIRED`, `APPROVAL_DECLINED`, `TARGET_DRIFT`, `RUN_NOT_FOUND`,
+`RUN_ALREADY_ACTIVE`, `PHASE_PRECONDITION_FAILED`, `PHASE_FAILED`.
 
 Errors are returned as `isError: true` results with `code`, `message`, and
 structured `details`, never as raw exceptions.
@@ -214,13 +215,14 @@ CLI approval (`gentoo-agent approve <plan_id>`):
 
 - prints the same server-built summary;
 - reads the confirmation phrase from `/dev/tty` and refuses when no interactive
-  terminal is attached, so a model's non-interactive shell cannot complete it;
+  terminal is attached, which stops a model's non-interactive shell (a
+  convention, not a security boundary, since a process can allocate its own
+  pseudo-terminal);
 - writes the record with `channel: "cli"`.
 
 A committed `.claude/settings.json` adds a deny rule for
 `Bash(gentoo-agent approve:*)` as a second barrier against the model running
-the CLI itself. The human runs it in their own terminal or with
-`! gentoo-agent approve <plan_id>` in Claude Code.
+the CLI itself. The human runs it in their own terminal. Commands run through Claude Code's `!` prefix may not have an interactive terminal, so a separate terminal is the reliable choice.
 
 `require_approved_plan(plan_id)` in `core/approval.py` is the only gate. It is
 called by `start_install`, `run_phase`, and `resume_run`, and checks that the
