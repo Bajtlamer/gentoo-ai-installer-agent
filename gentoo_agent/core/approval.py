@@ -3,6 +3,8 @@
 Only a human writes approval records: the TTY-only CLI command now, and MCP
 elicitation in plan 3. No function here prompts; front ends do that and then
 call record_approval(). require_approved_plan() is the single execution gate.
+Records are signed (HMAC-SHA256, key in secrets/approval.key); only processes
+that can read secrets/ can create valid ones.
 """
 
 from __future__ import annotations
@@ -21,12 +23,13 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.install_plan import load_install_plan, plan_path
+from gentoo_agent.core.signing import load_key, load_or_create_key, sign, verify
 
 
 APPROVAL_TTL_MINUTES = 60
 CHANNELS = {"cli", "elicitation"}
 CLOCK_SKEW = dt.timedelta(seconds=60)
-RECORD_KEYS = {"plan_id", "plan_hash", "channel", "approved_at", "expires_at"}
+RECORD_KEYS = {"plan_id", "plan_hash", "channel", "approved_at", "expires_at", "signature"}
 
 
 def _utcnow() -> dt.datetime:
@@ -96,6 +99,7 @@ def record_approval(plan: dict, channel: str, *, at: dt.datetime | None = None) 
         "approved_at": approved_at.isoformat(),
         "expires_at": (approved_at + dt.timedelta(minutes=APPROVAL_TTL_MINUTES)).isoformat(),
     }
+    record["signature"] = sign(record, load_or_create_key())
     save_json(approval_path(stored["plan_id"]), record)
     return record
 
@@ -115,6 +119,10 @@ def _validated_record(plan: dict, at: dt.datetime) -> dict:
     except Exception:
         raise invalid() from None
     if not isinstance(record, dict) or set(record) != RECORD_KEYS:
+        raise invalid()
+    key = load_key()
+    unsigned = {name: value for name, value in record.items() if name != "signature"}
+    if key is None or not verify(unsigned, record["signature"], key):
         raise invalid()
     if record["plan_id"] != plan_id or not isinstance(record["channel"], str) or record["channel"] not in CHANNELS:
         raise invalid()
