@@ -234,8 +234,10 @@ class DenyRuleTests(unittest.TestCase):
         settings = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
         deny = settings["permissions"]["deny"]
         for directory in ("approvals", "plans"):
-            for rule in (f"Edit({directory}/**)", f"Edit(./{directory}/**)", f"Edit(/{directory}/**)"):
-                self.assertIn(rule, deny)
+            self.assertIn(f"Edit(/{directory}/**)", deny)
+            # Unanchored forms would also match nested dirs such as docs/superpowers/plans/.
+            self.assertNotIn(f"Edit({directory}/**)", deny)
+            self.assertNotIn(f"Edit(./{directory}/**)", deny)
         self.assertFalse([rule for rule in deny if rule.startswith("Write(")])
 
     def test_agent_may_not_run_approve_or_write_approval_files(self):
@@ -247,8 +249,8 @@ class DenyRuleTests(unittest.TestCase):
             "Bash(python3 -m gentoo_agent approve:*)",
             "Bash(python tools/gentoo_agent.py approve:*)",
             "Bash(python3 tools/gentoo_agent.py approve:*)",
-            "Edit(approvals/**)",
-            "Edit(plans/**)",
+            "Edit(/approvals/**)",
+            "Edit(/plans/**)",
         ):
             self.assertIn(rule, deny)
 

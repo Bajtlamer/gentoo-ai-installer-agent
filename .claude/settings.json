@@ -8,11 +8,7 @@
       "Bash(python3 tools/gentoo_agent.py approve:*)",
       "Bash(tools/gentoo_agent.py approve:*)",
       "Bash(./tools/gentoo_agent.py approve:*)",
-      "Edit(approvals/**)",
-      "Edit(./approvals/**)",
       "Edit(/approvals/**)",
-      "Edit(plans/**)",
-      "Edit(./plans/**)",
       "Edit(/plans/**)"
     ]
   }
