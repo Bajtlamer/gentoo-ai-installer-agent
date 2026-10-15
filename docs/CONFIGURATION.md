@@ -56,7 +56,8 @@ configuration for review. It does not start installation.
 | `config/install.json` | Yes | Installation decisions | Private/ignored |
 | `config/plan.json` | Yes | Ordered phases and implementation status | Commit |
 | `state/state.json` | Yes at runtime | Resumable local state | Private/ignored |
-| `tools/gentoo_agent.py` | Yes | Read-only inspection and validation | Commit |
+| `gentoo_agent/` | Yes | Installer package: `core/` logic, `cli.py`, `prepare.py` | Commit |
+| `tools/*.py` | Yes | Compatibility entry points for the package | Commit |
 | `roles/*.md` | Recommended | Role-specific agent instructions | Commit |
 | `phases/` | Required before execution | Version-controlled phase contracts/scripts | Commit |
 | `inventory/`, `logs/`, `approvals/` | Generated | Evidence, transcripts, and approvals | Private/ignored |

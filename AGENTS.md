@@ -40,7 +40,8 @@ Executor must remain a narrow, approval-aware tool.
 ## Current implementation status
 
 The repository provides the read-only inspector, Handbook fetcher, state files,
-approval records, and guarded executors in `tools/install_phases.py`. The
+approval records, and guarded executors in `gentoo_agent/core/` (phase
+generators in `phases.py`, the check/apply/verify loop in `runner.py`). The
 executor is dry-run by default. It may execute only after `approve-install`
 enables all matching execution flags and the operator passes the exact
 confirmation phrase. Authentication installs and configures sudo for the
