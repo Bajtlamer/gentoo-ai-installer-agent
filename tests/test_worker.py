@@ -1,3 +1,4 @@
+import io
 import shutil
 import time
 import unittest
@@ -56,7 +57,59 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"]["code"], "CONFIG_INVALID")
         self.assertEqual(record["status"], "interrupted")
-        self.assertFalse(credentials["applied"])
+        self.assertIsNone(credentials)
+
+    def test_unclaimed_run_writes_no_credentials(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            with patch.object(worker, "execute_plan") as execute:
+                result = worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {"root": "x"}})
+            credentials_exist = runs.credentials_path(run_id).exists()
+        execute.assert_not_called()
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(credentials_exist)
+
+    def run_main_with_stdin(self, text):
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            with patch.object(worker.sys, "stdin", io.StringIO(text)), \
+                    patch.object(worker, "execute_plan") as execute:
+                exit_code = worker.main([run_id])
+            record = runs.read_run(run_id)
+            lock_exists = runs.lock_path().exists()
+        return exit_code, execute, record, lock_exists
+
+    def test_invalid_start_payload_never_executes(self):
+        for text in ["", '{"password_records": "root:x', "[]",
+                     '{"password_records": null}',
+                     '{"password_records": 5, "generated_credentials": {}}',
+                     '{"password_records": null, "generated_credentials": {"root": 1}}',
+                     '{"password_records": null, "generated_credentials": {}, "extra": 1}']:
+            with self.subTest(stdin=text):
+                exit_code, execute, record, lock_exists = self.run_main_with_stdin(text)
+                execute.assert_not_called()
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(record["status"], "failed")
+                self.assertEqual(record["error"]["code"], "CONFIG_INVALID")
+                self.assertFalse(lock_exists)
+
+    def test_parse_payload_accepts_a_valid_handshake(self):
+        payload = worker.parse_payload('{"password_records": "root:x\\n", "generated_credentials": {"root": "x"}}')
+        self.assertEqual(payload, {"password_records": "root:x\n", "generated_credentials": {"root": "x"}})
+
+    def test_missing_password_records_for_a_plan_that_sets_passwords_fails(self):
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            with patch.object(worker, "execute_plan") as execute:
+                result = worker.run(run_id, {"password_records": None, "generated_credentials": {}})
+            record = runs.read_run(run_id)
+            lock_exists = runs.lock_path().exists()
+        execute.assert_not_called()
+        self.assertEqual(result["error"]["code"], "CONFIG_INVALID")
+        self.assertEqual(record["status"], "failed")
+        self.assertFalse(lock_exists)
 
     @unittest.skipUnless(shutil.which("ssh"), "OpenSSH client not installed")
     def test_real_worker_process_reports_an_unreachable_target(self):

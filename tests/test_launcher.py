@@ -64,7 +64,7 @@ class LauncherTests(unittest.TestCase):
             record = runs.read_run(run_id)
             command = popen.call_args.args[0]
             kwargs = popen.call_args.kwargs
-        self.assertEqual(command[1:], ["-m", "gentoo_agent.jobs.worker", run_id])
+        self.assertEqual(command[1:], ["-P", "-m", "gentoo_agent.jobs.worker", run_id])
         self.assertTrue(kwargs["start_new_session"])
         self.assertEqual(kwargs["env"]["GENTOO_AGENT_HOME"], str(home))
         self.assertTrue(kwargs["env"]["PYTHONPATH"].startswith(str(REPO)))
@@ -76,6 +76,37 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(record["pid"], 424242)
         self.assertEqual(record["plan_hash"], plan["plan_hash"])
         self.assertNotIn("password", json.dumps(record))
+
+    def test_password_variables_are_not_passed_to_the_worker(self):
+        secrets_env = {"GENTOO_ROOT_PASSWORD": "root-secret", "GENTOO_USER_PASSWORD": "user-secret"}
+        with temp_home(), patch.dict(os.environ, secrets_env), \
+                patch.object(launcher.subprocess, "Popen", return_value=FakeProcess()) as popen:
+            plan = approved_plan()
+            launcher.start_run(plan["plan_id"])
+            environment = popen.call_args.kwargs["env"]
+        # Compare names only, so a failure never prints the whole environment.
+        self.assertEqual(set(secrets_env) & set(environment), set())
+
+    def test_a_failed_handover_kills_the_worker_and_fails_the_run(self):
+        class BrokenProcess(FakeProcess):
+            killed = False
+
+            def write(self, data):
+                raise BrokenPipeError("worker went away")
+
+            def kill(self):
+                BrokenProcess.killed = True
+
+        with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=BrokenProcess()), \
+                patch.object(launcher, "new_run_id", return_value="20261015T000000Z-abcdef"):
+            plan = approved_plan()
+            with self.assertRaises(BrokenPipeError):
+                launcher.start_run(plan["plan_id"])
+            record = runs.read_run("20261015T000000Z-abcdef")
+            lock_exists = runs.lock_path().exists()
+        self.assertTrue(BrokenProcess.killed)
+        self.assertEqual(record["status"], "failed")
+        self.assertFalse(lock_exists)
 
     def test_second_start_while_active_is_refused(self):
         with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=FakeProcess()):
