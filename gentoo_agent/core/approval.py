@@ -25,6 +25,8 @@ from gentoo_agent.core.install_plan import load_install_plan, plan_path
 
 APPROVAL_TTL_MINUTES = 60
 CHANNELS = {"cli", "elicitation"}
+CLOCK_SKEW = dt.timedelta(seconds=60)
+RECORD_KEYS = {"plan_id", "plan_hash", "channel", "approved_at", "expires_at"}
 
 
 def _utcnow() -> dt.datetime:
@@ -35,12 +37,33 @@ def approval_phrase(plan: dict) -> str:
     return f"APPROVE {plan['plan_id']}"
 
 
+def _stored_plan(plan: dict) -> dict:
+    """Load the stored plan and require the caller's dict to match it by hash."""
+    stored = load_install_plan(plan["plan_id"])
+    if stored["plan_hash"] != plan.get("plan_hash"):
+        raise AgentError(
+            PLAN_HASH_MISMATCH,
+            f"The supplied plan does not match stored plan {plan['plan_id']}.",
+            {"plan_id": plan["plan_id"]},
+        )
+    return stored
+
+
 def approval_summary(plan: dict) -> str:
+    plan = _stored_plan(plan)
     target = plan["target"]
+    install = plan["install"]
+    user = (install.get("username") or "none") if install.get("create_user") else "none"
+    erase = "YES, all data on the disk will be destroyed" if install.get("disk_must_be_erased") else "no"
     lines = [
         f"Plan: {plan['plan_id']}",
         f"Plan hash: {plan['plan_hash']}",
         f"Target: {target['user']}@{target['host']}:{target.get('port') or 22} ({target['name']})",
+        f"Created: {plan['created_at']}",
+        (
+            f"Install: boot={install.get('boot_mode')} table={install.get('partition_table')} "
+            f"hostname={install.get('hostname')} user={user} init={install.get('init_system')}"
+        ),
     ]
     for disk in plan["disks"]:
         lines.append(
@@ -49,7 +72,7 @@ def approval_summary(plan: dict) -> str:
         )
         if identity_strength(disk) == "weak":
             lines.append("WARNING: this disk has no serial number or WWN; drift detection relies on path, size, and model only.")
-    lines.append("Disk erase: YES, all data on the disk will be destroyed")
+    lines.append(f"Disk erase: {erase}")
     lines.append("Destructive phases: " + ", ".join(phase["id"] for phase in plan["phases"] if phase["destructive"]))
     return "\n".join(lines)
 
@@ -60,45 +83,87 @@ def approval_path(plan_id: str) -> Path:
 
 
 def record_approval(plan: dict, channel: str, *, at: dt.datetime | None = None) -> dict:
-    if channel not in CHANNELS:
-        raise AgentError(CONFIG_INVALID, f"Unknown approval channel: {channel!r}", {"channel": channel})
+    if not isinstance(channel, str) or channel not in CHANNELS:
+        raise AgentError(CONFIG_INVALID, f"Unknown approval channel: {channel!r}", {"channel": str(channel)})
+    if at is not None and at.tzinfo is None:
+        raise AgentError(CONFIG_INVALID, "Approval time must be timezone-aware.", {})
+    stored = _stored_plan(plan)
     approved_at = at or _utcnow()
     record = {
-        "plan_id": plan["plan_id"],
-        "plan_hash": plan["plan_hash"],
+        "plan_id": stored["plan_id"],
+        "plan_hash": stored["plan_hash"],
         "channel": channel,
         "approved_at": approved_at.isoformat(),
         "expires_at": (approved_at + dt.timedelta(minutes=APPROVAL_TTL_MINUTES)).isoformat(),
     }
-    save_json(approval_path(plan["plan_id"]), record)
+    save_json(approval_path(stored["plan_id"]), record)
     return record
 
 
-def require_approved_plan(plan_id: str, *, at: dt.datetime | None = None) -> dict:
-    plan = load_install_plan(plan_id)
-    path = approval_path(plan_id)
-    if not path.exists():
-        raise AgentError(
+def _validated_record(plan: dict, at: dt.datetime) -> dict:
+    plan_id = plan["plan_id"]
+
+    def invalid() -> AgentError:
+        return AgentError(
             APPROVAL_REQUIRED,
-            f"Plan {plan_id} is not approved. A human must run: gentoo-agent approve {plan_id}",
-            {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
+            f"The approval record for plan {plan_id} is invalid; approve the plan again.",
+            {"plan_id": plan_id},
         )
-    record = load_json(path)
-    if record.get("plan_hash") != plan["plan_hash"]:
+
+    try:
+        record = load_json(approval_path(plan_id))
+    except Exception:
+        raise invalid() from None
+    if not isinstance(record, dict) or set(record) != RECORD_KEYS:
+        raise invalid()
+    if record["plan_id"] != plan_id or not isinstance(record["channel"], str) or record["channel"] not in CHANNELS:
+        raise invalid()
+    moments = []
+    for key in ("approved_at", "expires_at"):
+        value = record[key]
+        if not isinstance(value, str):
+            raise invalid()
+        try:
+            moment = dt.datetime.fromisoformat(value)
+        except ValueError:
+            raise invalid() from None
+        if moment.tzinfo is None:
+            raise invalid()
+        moments.append(moment)
+    approved_at, expires_at = moments
+    if expires_at != approved_at + dt.timedelta(minutes=APPROVAL_TTL_MINUTES):
+        raise invalid()
+    if approved_at > at + CLOCK_SKEW:
+        raise invalid()
+    if record["plan_hash"] != plan["plan_hash"]:
         raise AgentError(PLAN_HASH_MISMATCH, f"The approval for plan {plan_id} is for a different plan hash.", {"plan_id": plan_id})
-    if dt.datetime.fromisoformat(record["expires_at"]) <= (at or _utcnow()):
+    if expires_at <= at:
         raise AgentError(
             APPROVAL_EXPIRED,
             f"The approval for plan {plan_id} expired at {record['expires_at']}; approve it again.",
             {"plan_id": plan_id, "expires_at": record["expires_at"]},
         )
-    return plan
+    return record
+
+
+def _check(plan_id: str, at: dt.datetime | None) -> tuple[dict, dict]:
+    plan = load_install_plan(plan_id)
+    if not approval_path(plan_id).exists():
+        raise AgentError(
+            APPROVAL_REQUIRED,
+            f"Plan {plan_id} is not approved. A human must run: gentoo-agent approve {plan_id}",
+            {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
+        )
+    return plan, _validated_record(plan, at or _utcnow())
+
+
+def require_approved_plan(plan_id: str, *, at: dt.datetime | None = None) -> dict:
+    return _check(plan_id, at)[0]
 
 
 def approval_status(plan_id: str, *, at: dt.datetime | None = None) -> dict:
     try:
-        require_approved_plan(plan_id, at=at)
+        _, record = _check(plan_id, at)
     except AgentError as error:
         return {"approved": False, "code": error.code, "message": error.message}
-    record = load_json(approval_path(plan_id))
     return {"approved": True, "channel": record["channel"], "expires_at": record["expires_at"]}
