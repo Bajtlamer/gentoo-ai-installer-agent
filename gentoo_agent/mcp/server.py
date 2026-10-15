@@ -15,10 +15,14 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel
 
+from gentoo_agent.core import paths
 from gentoo_agent.core.approval import approval_status, approval_summary
-from gentoo_agent.core.config import load_plan
-from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
-from gentoo_agent.core.install_plan import load_install_plan
+from gentoo_agent.core.config import load_json, load_plan, target_config
+from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentError
+from gentoo_agent.core.hardware import summarize_inventory
+from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
+from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
+from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runs import read_log
 
 
@@ -95,22 +99,49 @@ def get_run_log(run_id: str, offset: int = 0, limit: int = 50) -> CallToolResult
     return respond(read_log, run_id, offset, limit)
 
 
-# Placeholders, replaced in Tasks 6 to 8.
+def _resolved(overrides: dict | None, fallbacks: dict | None) -> tuple[dict, dict | None, dict]:
+    target = target_config()
+    defaults = load_json(paths.config_dir() / "install.default.json")
+    inventory = latest_inventory()
+    return target, inventory, resolve_install(target, overrides, fallbacks, defaults, inventory)
+
+
 @server.tool(annotations=LOCAL_WRITE)
 def detect_hardware(refresh: bool = False) -> CallToolResult:
-    return _not_implemented()
+    """Summarize the target: firmware boot mode and disks with serial/WWN. refresh=true runs the
+    read-only SSH inventory first; otherwise the latest saved inventory is used."""
+    def run() -> dict:
+        target = target_config()
+        if refresh:
+            inventory, path = collect_inventory(target)
+            record_inventory(target, path)
+        else:
+            inventory = latest_inventory()
+            if inventory is None:
+                raise AgentError(INVENTORY_MISSING, "No inventory exists; call detect_hardware with refresh=true.", {})
+        return summarize_inventory(inventory)
+    return respond(run)
 
 
 @server.tool(annotations=READ_ONLY)
 def resolve_config(overrides: dict | None = None, fallbacks: dict | None = None) -> CallToolResult:
-    return _not_implemented()
+    """Preview the merged install config (overrides > inferred > fallbacks > defaults) with the
+    source of every value. Writes nothing. Passwords only as {"env": "NAME"}."""
+    return respond(lambda: _resolved(overrides, fallbacks)[2])
 
 
 @server.tool(annotations=LOCAL_WRITE)
 def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) -> CallToolResult:
-    return _not_implemented()
+    """Freeze the resolved config, the disk identity, and every generated command into a plan.
+    Same inputs as resolve_config. Returns plan_id, plan_hash, and a summary for the human."""
+    def run() -> dict:
+        target, inventory, resolved = _resolved(overrides, fallbacks)
+        plan = save_install_plan(create_install_plan(target, resolved["install"], load_plan(), inventory))
+        return {**plan_view(plan), "sources": resolved["sources"], "warnings": resolved["warnings"]}
+    return respond(run)
 
 
+# Placeholders, replaced in Tasks 7 and 8.
 @server.tool(annotations=LOCAL_WRITE)
 async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
     return _not_implemented()

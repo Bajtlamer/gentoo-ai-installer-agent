@@ -19,3 +19,6 @@ ssh-known-hosts
 
 # Claude Code worktrees
 .claude/worktrees/
+
+gentoo_agent.egg-info/
+*.egg-info/
