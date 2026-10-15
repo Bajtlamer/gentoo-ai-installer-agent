@@ -250,13 +250,32 @@ def get_run_status(run_id: str) -> CallToolResult:
     def run() -> dict:
         record = run_status(run_id)
         waiting = credentials_path(run_id).exists()
-        result = {**record, "credentials_waiting": waiting}
+        applied = _credentials_applied(run_id) if waiting else None
+        result = {**record, "credentials_waiting": waiting, "credentials_applied": applied}
         if waiting:
-            result["credentials_hint"] = (
-                f"Generated passwords are waiting. Read them yourself in a terminal: gentoo-agent run status {run_id}"
-            )
+            command = f"gentoo-agent run status {run_id}"
+            if applied is False:
+                result["credentials_hint"] = (
+                    "Passwords were generated but the authentication phase did not run; they were not applied. "
+                    f"Read them yourself in a terminal: {command}"
+                )
+            else:
+                result["credentials_hint"] = f"Generated passwords are waiting. Read them yourself in a terminal: {command}"
         return result
     return respond(run)
+
+
+def _credentials_applied(run_id: str) -> bool | None:
+    """The 'applied' flag of a waiting credentials file: True, False, or None while pending.
+
+    Reads the file without taking or deleting it, and returns nothing else from it.
+    """
+    try:
+        data = load_json(credentials_path(run_id))
+    except (OSError, ValueError):
+        return None
+    applied = data.get("applied") if isinstance(data, dict) else None
+    return applied if isinstance(applied, bool) else None
 
 
 @server.tool(annotations=REMOTE_READ)
@@ -277,6 +296,9 @@ def verify_install(plan_id: str) -> CallToolResult:
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise AgentError(SSH_UNREACHABLE, f"Could not run the {phase['id']} check: {exc}",
                                  {"phase": phase["id"]}) from exc
+            if result["returncode"] == 255:  # ssh itself failed; the check did not run
+                raise AgentError(SSH_UNREACHABLE, f"Could not reach the target over SSH to run the {phase['id']} check.",
+                                 {"phase": phase["id"], "host": plan["target"].get("host")})
             phases.append({"id": phase["id"], "complete": result["returncode"] == 0,
                            "output_tail": output_tail(result["stdout"] + result["stderr"])})
         return {"plan_id": plan_id, "phases": phases}
@@ -317,3 +339,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO)  # stderr; stdout carries the protocol
     server.run()
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -38,10 +38,17 @@ dialog shows. The operator therefore edits `config/target.json` and runs
 `inspect` themselves, or uses `detect_hardware` through the MCP server, which
 runs outside the sandbox.
 
+The agent's shell cannot read `runs/` at all: it reads run status and logs
+through the `get_run_status` and `get_run_log` tools instead. The agent also
+cannot change `.mcp.json` or `.claude/`, so it cannot point the server entry at
+other code or loosen the project settings.
+
 ## What the barrier covers and what it does not
 
 The agent's shell and file tools cannot read the signing key or write
-approvals, plans, runs, or secrets, so it cannot create a valid approval.
+approvals, plans, runs, secrets, `config/`, `inventory/`, `.mcp.json`, or
+`.claude/`, so it cannot create a valid approval. The shell cannot read
+`runs/`, and the file tools cannot read generated credentials.
 Approvals require the human to accept the server's dialog or run
 `gentoo-agent approve` in their own terminal.
 
@@ -59,5 +66,15 @@ If the SSH key changes after a plan is created, `verify_install` refuses with
 
 ## Credentials
 
-Generated passwords are never sent to the model. Read them with
-`GENTOO_AGENT_HOME=<work dir> gentoo-agent run status <run_id>` in a terminal.
+Generated passwords are never sent to the model. Read them in your own
+terminal (not through the agent) with the absolute venv command:
+
+```bash
+GENTOO_AGENT_HOME=<work dir> <venv>/bin/gentoo-agent run status <run_id>
+```
+
+For example `<venv>` is `~/.local/share/gentoo-agent/venv`. The command shows
+the passwords once and deletes them. `get_run_status` reports only
+`credentials_waiting` and `credentials_applied`: `false` means the
+authentication phase did not run, so the passwords were not applied to the
+target.

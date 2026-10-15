@@ -13,12 +13,14 @@ class OperatorProfileTests(unittest.TestCase):
         self.assertTrue(sandbox["enabled"])
         self.assertTrue(sandbox["failIfUnavailable"])
         self.assertFalse(sandbox["allowUnsandboxedCommands"])
-        for path in ("./approvals", "./plans", "./runs", "./secrets", "./config", "./inventory"):
+        for path in ("./approvals", "./plans", "./runs", "./secrets", "./config", "./inventory",
+                     "./.mcp.json", "./.claude"):
             self.assertIn(path, sandbox["filesystem"]["denyWrite"])
-        self.assertIn("./secrets", sandbox["filesystem"]["denyRead"])
+        for path in ("./secrets", "./runs"):
+            self.assertIn(path, sandbox["filesystem"]["denyRead"])
         deny = profile["permissions"]["deny"]
         for rule in ("Read(/secrets/**)", "Edit(/approvals/**)", "Edit(/plans/**)", "Edit(/runs/**)",
-                     "Edit(/config/**)", "Edit(/inventory/**)"):
+                     "Edit(/config/**)", "Edit(/inventory/**)", "Edit(/.mcp.json)", "Edit(/.claude/**)"):
             self.assertIn(rule, deny)
         self.assertFalse(any(rule.startswith("Write(") for rule in deny))
         self.assertFalse(any(rule in deny for rule in ("Edit(plans/**)", "Edit(approvals/**)")))

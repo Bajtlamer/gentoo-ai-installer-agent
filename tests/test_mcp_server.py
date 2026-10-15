@@ -126,6 +126,27 @@ class SkeletonTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["code"], "SSH_UNREACHABLE")
 
+    def test_refresh_against_an_unreachable_target_is_structured(self):
+        from gentoo_agent.core import paths
+        from gentoo_agent.core.state import load_state
+        from tests.helpers import temp_home
+
+        def refused(target, label, command):
+            return {"label": label, "command": command, "returncode": 255, "stdout": "",
+                    "stderr": "ssh: Could not resolve hostname gentoo.invalid"}
+
+        with temp_home() as home, patch("gentoo_agent.core.inventory.run_ssh_readonly", refused):
+            write_home(home)
+            before = sorted(paths.inventory_dir().glob("inventory-*.json"))
+            result = call("detect_hardware", {"refresh": True})
+            after = sorted(paths.inventory_dir().glob("inventory-*.json"))
+            state = load_state()
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "SSH_UNREACHABLE")
+        self.assertEqual(result.structured_content["details"], {"host": "192.0.2.10"})
+        self.assertEqual(before, after)
+        self.assertNotIn("last_inventory", state)
+
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")
 class DiscoveryAndPlanningTests(unittest.TestCase):
@@ -324,6 +345,55 @@ class ExecutionTests(unittest.TestCase):
         self.assertIn(f"gentoo-agent run status {run_id}", status.structured_content["credentials_hint"])
         self.assertNotIn("s3cret", json.dumps(status.structured_content) + status.content[0].text)
         self.assertTrue(still_there)
+        self.assertIs(status.structured_content["credentials_applied"], True)
+
+    def test_status_reports_whether_credentials_were_applied(self):
+        from gentoo_agent.core import runs
+        from tests.helpers import temp_home
+        from tests.test_launcher import FakeProcess
+
+        cases = [(False, False), (None, None), ("missing", None)]
+        for applied, expected in cases:
+            with self.subTest(applied=applied), temp_home() as home, \
+                    patch("gentoo_agent.jobs.launcher.subprocess.Popen", return_value=FakeProcess()):
+                plan_id = self.create(home, password_source="generate")
+                self.approve(plan_id)
+                run_id = call("start_install", {"plan_id": plan_id}).structured_content["run_id"]
+                runs.update_run(run_id, status="failed")
+                runs.release_lock(run_id)
+                payload = {"credentials": {"root": "s3cret"}}
+                if applied != "missing":
+                    payload["applied"] = applied
+                runs.write_credentials(run_id, payload)
+                status = call("get_run_status", {"run_id": run_id})
+                still_there = runs.credentials_path(run_id).exists()
+            data = status.structured_content
+            self.assertFalse(status.is_error, status.content[0].text)
+            self.assertIs(data["credentials_applied"], expected)
+            self.assertTrue(still_there)
+            self.assertNotIn("s3cret", json.dumps(data) + status.content[0].text)
+            self.assertIn(f"gentoo-agent run status {run_id}", data["credentials_hint"])
+            if applied is False:
+                self.assertTrue(data["credentials_hint"].startswith(
+                    "Passwords were generated but the authentication phase did not run; they were not applied."))
+            else:
+                self.assertTrue(data["credentials_hint"].startswith("Generated passwords are waiting."))
+
+    def test_status_without_credentials_has_no_applied_value(self):
+        from gentoo_agent.core import runs
+        from tests.helpers import temp_home
+        from tests.test_launcher import FakeProcess
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen", return_value=FakeProcess()):
+            plan_id = self.create(home, password_source="generate")
+            self.approve(plan_id)
+            run_id = call("start_install", {"plan_id": plan_id}).structured_content["run_id"]
+            runs.update_run(run_id, status="failed")
+            runs.release_lock(run_id)
+            status = call("get_run_status", {"run_id": run_id})
+        self.assertFalse(status.structured_content["credentials_waiting"])
+        self.assertIsNone(status.structured_content["credentials_applied"])
+        self.assertNotIn("credentials_hint", status.structured_content)
 
     def test_run_phase_records_the_selection(self):
         from gentoo_agent.core import runs
@@ -368,6 +438,19 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(all(data is None for _, _, data in seen))
         self.assertTrue(all(item["complete"] for item in result.structured_content["phases"]))
 
+    def test_verify_install_reports_an_unreachable_target(self):
+        from tests.helpers import temp_home
+
+        def refused(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            return {"label": label, "command": command, "returncode": 255, "stdout": "",
+                    "stderr": "ssh: connect to host 192.0.2.10 port 22: Connection refused", "finished_at": "t"}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", refused), \
+                patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            plan_id = self.create(home)
+            result = call("verify_install", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "SSH_UNREACHABLE")
 
     def test_verify_install_refuses_a_tampered_check(self):
         import copy

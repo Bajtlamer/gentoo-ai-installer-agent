@@ -192,8 +192,11 @@ where the agent cannot approve its own plan, follow `docs/OPERATING.md`
 
 The tools are used in this order:
 
-1. `detect_hardware` inspects the live target and summarizes CPU, firmware,
-   disks, and network cards.
+1. `detect_hardware` summarizes the target's firmware boot mode (`uefi`,
+   `bios`, or `unknown`) and its disks with serial and WWN; CPU, GPU, and
+   network cards come in a later version. It uses the latest saved inventory
+   unless `refresh=true`, which first runs the read-only SSH inventory and
+   returns `SSH_UNREACHABLE` if the target cannot be reached.
 2. `resolve_config` merges the request into a validated install configuration
    and reports the source of every value (overrides, profile, inferred from
    hardware, fallbacks, defaults). It returns `DISK_AMBIGUOUS` or

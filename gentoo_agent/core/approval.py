@@ -1,7 +1,7 @@
 """Human approval of a stored plan, bound to its plan_hash.
 
-Only a human writes approval records: the TTY-only CLI command now, and MCP
-elicitation in plan 3. No function here prompts; front ends do that and then
+Only a human writes approval records: through the TTY-only CLI command or the
+MCP server's elicitation dialog. No function here prompts; front ends do that and then
 call record_approval(). require_approved_plan() is the single execution gate.
 Records are signed (HMAC-SHA256, key in secrets/approval.key); only processes
 that can read secrets/ can create valid ones.
