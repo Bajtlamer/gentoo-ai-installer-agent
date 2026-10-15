@@ -16,9 +16,15 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel
 
 from gentoo_agent.core import paths
-from gentoo_agent.core.approval import approval_status, approval_summary
+from gentoo_agent.core.approval import APPROVAL_TTL_MINUTES, approval_status, approval_summary, record_approval
 from gentoo_agent.core.config import load_json, load_plan, target_config
-from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentError
+from gentoo_agent.core.errors import (
+    APPROVAL_DECLINED,
+    APPROVAL_REQUIRED,
+    CONFIG_INVALID,
+    INVENTORY_MISSING,
+    AgentError,
+)
 from gentoo_agent.core.hardware import summarize_inventory
 from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
@@ -142,9 +148,46 @@ def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) ->
 
 
 # Placeholders, replaced in Tasks 7 and 8.
+class ApprovalAnswer(BaseModel):
+    approve: bool
+
+
 @server.tool(annotations=LOCAL_WRITE)
 async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
-    return _not_implemented()
+    """Ask the human, in a dialog built by this server, to approve a stored plan for 60 minutes.
+    The model cannot answer the dialog. Without dialog support, returns the terminal command."""
+    try:
+        plan = load_install_plan(plan_id)
+        summary = approval_summary(plan)
+    except AgentError as error:
+        return error_result(error)
+    fallback = AgentError(
+        APPROVAL_REQUIRED,
+        f"Approve this plan yourself in a terminal: gentoo-agent approve {plan_id}",
+        {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
+    )
+    capabilities = ctx.client_capabilities
+    if capabilities is None or capabilities.elicitation is None:
+        return error_result(fallback)
+    message = (
+        f"{summary}\n\nApprove this plan? The approval is valid for {APPROVAL_TTL_MINUTES} minutes "
+        "and covers exactly the commands and disk above. Check 'approve' and accept only if you, "
+        "the human operator, agree."
+    )
+    try:
+        answer = await ctx.elicit(message, ApprovalAnswer)
+    except Exception:  # unsupported transport, client error, or timeout: fail closed
+        logger.exception("elicitation failed for plan %s", plan_id)
+        return error_result(fallback)
+    data = getattr(answer, "data", None)
+    if answer.action != "accept" or data is None or data.approve is not True:
+        return error_result(AgentError(APPROVAL_DECLINED, "Approval not recorded.", {"plan_id": plan_id}))
+    try:
+        record = record_approval(plan, "elicitation")
+    except AgentError as error:
+        return error_result(error)
+    return ok_result({"approved": True, "plan_id": plan_id, "channel": "elicitation",
+                      "approved_until": record["expires_at"]})
 
 
 @server.tool(annotations=DESTRUCTIVE, meta=HUMAN_CONFIRMS)
