@@ -6,6 +6,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
+from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.paths import CONFIG, ROOT
 
 
@@ -30,7 +31,7 @@ def save_json(path: Path, value: dict) -> None:
 def target_config() -> dict:
     path = CONFIG / "target.json"
     if not path.exists():
-        raise SystemExit("Missing config/target.json; copy target.example.json first.")
+        raise AgentError(CONFIG_INVALID, "Missing config/target.json; copy target.example.json first.", {"path": str(path)})
     return load_json(path)
 
 
@@ -38,7 +39,7 @@ def install_config() -> dict:
     target = target_config()
     configured_path = ROOT / target.get("install_config", "config/install.json")
     if not configured_path.exists():
-        raise SystemExit(f"Missing installation configuration: {configured_path}")
+        raise AgentError(CONFIG_INVALID, f"Missing installation configuration: {configured_path}", {"path": str(configured_path)})
     return load_json(configured_path)
 
 
