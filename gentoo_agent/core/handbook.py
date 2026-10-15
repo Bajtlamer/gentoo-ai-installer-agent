@@ -7,7 +7,7 @@ import html.parser
 import urllib.request
 
 from gentoo_agent.core.config import now, save_json
-from gentoo_agent.core.paths import INVENTORY_DIR, ROOT
+from gentoo_agent.core import paths
 
 
 class TitleParser(html.parser.HTMLParser):
@@ -37,8 +37,9 @@ def fetch_handbook(target: dict) -> dict:
         content_type = response.headers.get("Content-Type", "")
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    INVENTORY_DIR.mkdir(parents=True, exist_ok=True)
-    html_path = INVENTORY_DIR / f"handbook-{stamp}.html"
+    inventory_dir = paths.inventory_dir()
+    inventory_dir.mkdir(parents=True, exist_ok=True)
+    html_path = inventory_dir / f"handbook-{stamp}.html"
     html_path.write_bytes(raw)
     parser = TitleParser()
     parser.feed(raw.decode("utf-8", errors="replace"))
@@ -48,7 +49,7 @@ def fetch_handbook(target: dict) -> dict:
         "content_type": content_type,
         "bytes": len(raw),
         "title": "".join(parser.title_parts).strip(),
-        "saved_html": str(html_path.relative_to(ROOT)),
+        "saved_html": str(html_path.relative_to(paths.root())),
     }
-    save_json(INVENTORY_DIR / f"handbook-{stamp}.json", metadata)
+    save_json(inventory_dir /f"handbook-{stamp}.json", metadata)
     return metadata

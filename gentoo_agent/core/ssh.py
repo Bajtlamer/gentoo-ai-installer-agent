@@ -11,7 +11,7 @@ import time
 from typing import Callable
 
 from gentoo_agent.core.config import now
-from gentoo_agent.core.paths import ROOT
+from gentoo_agent.core import paths
 
 
 def ssh_base(target: dict) -> list[str]:
@@ -46,7 +46,7 @@ def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
     remote_command = "sh -c " + shlex.quote(command)
     completed = subprocess.run(
         ssh_base(target) + ["--", remote_command],
-        cwd=ROOT,
+        cwd=paths.root(),
         capture_output=True,
         text=True,
         timeout=45,
@@ -75,7 +75,7 @@ def remote_shell(
     if stream:
         process = subprocess.Popen(
             ssh_base(target) + ["--", remote_command],
-            cwd=ROOT,
+            cwd=paths.root(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if input_data is not None else None,
@@ -127,7 +127,7 @@ def remote_shell(
         }
     completed = subprocess.run(
         ssh_base(target) + ["--", remote_command],
-        cwd=ROOT,
+        cwd=paths.root(),
         capture_output=True,
         text=True,
         input=input_data,

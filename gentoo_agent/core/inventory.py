@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from gentoo_agent.core.config import load_json, now, save_json
-from gentoo_agent.core.paths import INVENTORY_DIR, ROOT
+from gentoo_agent.core import paths
 from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
 from gentoo_agent.core.state import load_state, save_state
 
@@ -30,17 +30,17 @@ def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = 
         "read_only": True,
         "results": results,
     }
-    path = INVENTORY_DIR / f"inventory-{stamp}.json"
+    path = paths.inventory_dir() / f"inventory-{stamp}.json"
     save_json(path, data)
     return data, path
 
 
 def record_inventory(target: dict, path: Path) -> None:
     state = load_state()
-    state.update({"target": target["name"], "last_inventory": str(path.relative_to(ROOT))})
+    state.update({"target": target["name"], "last_inventory": str(path.relative_to(paths.root()))})
     save_state(state)
 
 
 def latest_inventory() -> dict | None:
-    paths = sorted(INVENTORY_DIR.glob("inventory-*.json"), key=lambda item: item.stat().st_mtime)
-    return load_json(paths[-1]) if paths else None
+    files = sorted(paths.inventory_dir().glob("inventory-*.json"), key=lambda item: item.stat().st_mtime)
+    return load_json(files[-1]) if files else None

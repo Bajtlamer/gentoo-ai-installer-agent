@@ -16,7 +16,7 @@ import shutil
 from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
-from gentoo_agent.core.paths import CONFIG, ROOT
+from gentoo_agent.core import paths
 from gentoo_agent.core.state import load_state, save_state
 from gentoo_agent.core.validate import validate_installation
 
@@ -58,9 +58,9 @@ def ask_int(prompt: str, default: int) -> int:
 
 
 def ensure_target_config() -> dict:
-    path = CONFIG / "target.json"
+    path = paths.config_dir() / "target.json"
     if not path.exists():
-        default_path = CONFIG / "target.default.json"
+        default_path = paths.config_dir() / "target.default.json"
         if not default_path.exists():
             raise SystemExit("Missing config/target.json and config/target.default.json")
         shutil.copyfile(default_path, path)
@@ -135,12 +135,12 @@ def snapshot_handbook(target: dict) -> str | None:
         print(f"Handbook snapshot warning: {exc}")
         print(f"The agent must still use the configured Handbook URL: {target['handbook_url']}")
         return None
-    print(f"Saved Handbook snapshot: {ROOT / metadata['saved_html']}")
+    print(f"Saved Handbook snapshot: {paths.root() / metadata['saved_html']}")
     return metadata["saved_html"]
 
 
 def build_install_config(target: dict, inventory: dict) -> dict:
-    defaults = load_json(CONFIG / "install.default.json")
+    defaults = load_json(paths.config_dir() / "install.default.json")
     results = result_map(inventory)
     detected_boot = results.get("boot_mode", {}).get("stdout", "").strip()
     disk = choose_disk(inventory)
@@ -261,16 +261,16 @@ def main() -> int:
     inventory, inventory_path = collect_inventory_interactive(target)
     handbook_path = snapshot_handbook(target)
     install = build_install_config(target, inventory)
-    install["inventory_source"] = str(inventory_path.relative_to(ROOT))
+    install["inventory_source"] = str(inventory_path.relative_to(paths.root()))
     install["handbook_snapshot"] = handbook_path
-    save_json(CONFIG / "install.json", install)
+    save_json(paths.config_dir() / "install.json", install)
 
     state = load_state()
     state.update({
         "target": target["name"],
         "status": "review_required",
         "current_phase": "discovery",
-        "last_inventory": str(inventory_path.relative_to(ROOT)),
+        "last_inventory": str(inventory_path.relative_to(paths.root())),
         "last_handbook_fetch": handbook_path,
     })
     save_state(state)
@@ -278,7 +278,7 @@ def main() -> int:
     print("\n===== COMPLETE INSTALLATION CONFIGURATION =====")
     print(json.dumps(install, indent=2, ensure_ascii=False))
     print("================================================")
-    print(f"Saved: {CONFIG / 'install.json'}")
+    print(f"Saved: {paths.config_dir() / 'install.json'}")
     print("\nLocal validation:")
     result = validate_installation(target, install, load_plan(), latest_inventory())
     print(json.dumps(result, indent=2))
