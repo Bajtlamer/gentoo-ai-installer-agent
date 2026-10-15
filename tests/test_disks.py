@@ -23,6 +23,65 @@ class DiskIdentityTests(unittest.TestCase):
     def test_inventory_has_a_disk_identity_command(self):
         self.assertIn("SERIAL", READ_ONLY_COMMANDS["disk_identity"])
         self.assertIn("WWN", READ_ONLY_COMMANDS["disk_identity"])
+        self.assertEqual(READ_ONLY_COMMANDS["disk_identity"],
+                         "lsblk -J -b -d -e7 -o PATH,TYPE,SIZE,MODEL,SERIAL,WWN,RM,TRAN,RO")
+
+    def test_parse_ignores_eligibility_fields(self):
+        extended = json.dumps({"blockdevices": [
+            {"path": "/dev/sda", "type": "disk", "size": 100, "model": "M", "serial": "S1", "wwn": None,
+             "rm": True, "tran": "usb", "ro": False},
+        ]})
+        self.assertEqual(disks.parse_disk_identities(extended), [
+            {"path": "/dev/sda", "size_bytes": 100, "model": "M", "serial": "S1", "wwn": ""},
+        ])
+
+    def test_disk_candidates_excludes_removable_usb_readonly_and_mounted(self):
+        identity = json.dumps({"blockdevices": [
+            {"path": "/dev/sda", "type": "disk", "size": 100, "model": "M", "serial": "S1", "wwn": None},
+            {"path": "/dev/sdb", "type": "disk", "size": 100, "model": "M", "serial": "S2", "wwn": None,
+             "rm": "1", "tran": "sata", "ro": "0"},
+            {"path": "/dev/sdc", "type": "disk", "size": 100, "model": "M", "serial": "S3", "wwn": None,
+             "rm": False, "tran": "usb", "ro": False},
+            {"path": "/dev/sdd", "type": "disk", "size": 100, "model": "M", "serial": "S4", "wwn": None, "ro": 1},
+            {"path": "/dev/sde", "type": "disk", "size": 100, "model": "M", "serial": "S5", "wwn": None,
+             "rm": 0, "tran": "nvme", "ro": "0"},
+            {"path": "/dev/sr0", "type": "rom", "size": 100, "model": "DVD", "serial": "S6", "wwn": None},
+        ]})
+        storage = json.dumps({"blockdevices": [
+            {"name": "sda", "path": "/dev/sda", "type": "disk", "mountpoints": [None]},
+            {"name": "sde", "path": "/dev/sde", "type": "disk", "mountpoints": [None], "children": [
+                {"name": "sde1", "path": "/dev/sde1", "type": "part", "mountpoints": [None]},
+                {"name": "sde2", "path": "/dev/sde2", "type": "part", "mountpoints": ["/run/media/live"]},
+            ]},
+        ]})
+        inventory = {"results": [
+            {"label": "disk_identity", "returncode": 0, "stdout": identity},
+            {"label": "storage_json", "returncode": 0, "stdout": storage},
+        ]}
+        eligible, excluded = disks.disk_candidates(inventory)
+        self.assertEqual(eligible, [{"path": "/dev/sda", "size_bytes": 100, "model": "M", "serial": "S1", "wwn": ""}])
+        reasons = {item["path"]: item["reason"] for item in excluded}
+        self.assertEqual(sorted(reasons), ["/dev/sdb", "/dev/sdc", "/dev/sdd", "/dev/sde"])
+        self.assertIn("removable", reasons["/dev/sdb"])
+        self.assertIn("usb", reasons["/dev/sdc"])
+        self.assertIn("read-only", reasons["/dev/sdd"])
+        self.assertIn("/run/media/live", reasons["/dev/sde"])
+
+    def test_disk_candidates_without_storage_json_treats_disks_as_unmounted(self):
+        eligible, excluded = disks.disk_candidates(inventory_with(LSBLK))
+        self.assertEqual([disk["path"] for disk in eligible], ["/dev/sda", "/dev/vda"])
+        self.assertEqual(excluded, [])
+
+    def test_disk_candidates_rejects_unreadable_mount_state(self):
+        for item in ({"label": "storage_json", "returncode": 1, "stdout": ""},
+                     {"label": "storage_json", "returncode": 0, "stdout": "not json"},
+                     {"label": "storage_json", "returncode": 0, "stdout": "[]"}):
+            with self.subTest(item=item):
+                inventory = inventory_with(LSBLK)
+                inventory["results"].append(item)
+                with self.assertRaises(AgentError) as caught:
+                    disks.disk_candidates(inventory)
+                self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
     def test_parse_keeps_disks_only_and_normalizes(self):
         parsed = disks.parse_disk_identities(LSBLK)

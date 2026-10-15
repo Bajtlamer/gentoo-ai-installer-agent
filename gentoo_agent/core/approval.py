@@ -68,6 +68,32 @@ def approval_summary(plan: dict) -> str:
             f"hostname={install.get('hostname')} user={user} init={install.get('init_system')}"
         ),
     ]
+    if install.get("network_method", "dhcp") == "static":
+        static = install.get("network_static") or {}
+        lines.append(
+            f"Network: static address={static.get('address')} gateway={static.get('gateway')} "
+            f"dns={','.join(str(item) for item in static.get('dns') or [])}"
+        )
+    else:
+        lines.append(f"Network: {install.get('network_method', 'dhcp')}")
+    password_source = install.get("password_source", "environment")
+    passwords = f"Passwords: source={password_source}"
+    if password_source == "environment":
+        # Variable names only; values are never read here.
+        passwords += (
+            f" root_password_env={install.get('root_password_env')}"
+            f" user_password_env={install.get('user_password_env')}"
+        )
+    lines.append(passwords)
+
+    def yes_no(value: object) -> str:
+        return "yes" if value else "no"
+
+    groups = ",".join(str(group) for group in install.get("user_groups", ["wheel"])) if install.get("create_user") else "none"
+    lines.append(
+        f"Access: allow_root_password_ssh={yes_no(install.get('allow_root_password_ssh', False))} "
+        f"configure_sudo={yes_no(install.get('configure_sudo', True))} user_groups={groups}"
+    )
     for disk in plan["disks"]:
         lines.append(
             f"Disk: {disk['path']}  size={disk['size_bytes']} bytes  model={disk['model'] or 'unknown'}  "

@@ -14,6 +14,30 @@ MAX_SWAP_MB = 131072
 IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
 
 
+ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
+RESERVED_ENV_NAMES = {
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "LANG", "TMPDIR", "EDITOR",
+    "GENTOO_AGENT_HOME",
+}
+RESERVED_ENV_PREFIXES = ("SSH_", "LD_", "DYLD_", "PYTHON", "GIT_")
+RESERVED_ENV_PARTS = ("TOKEN", "SECRET", "API_KEY", "PRIVATE", "AWS_", "ANTHROPIC", "OPENAI")
+
+
+def password_env_name_ok(name: object) -> bool:
+    """True for an uppercase variable name that is not a system or credential variable.
+
+    Password variables are read from the agent's environment, so a name such
+    as PATH or OPENAI_API_KEY would install that value as a password.
+    """
+    return (
+        isinstance(name, str)
+        and ENV_NAME.fullmatch(name) is not None
+        and name not in RESERVED_ENV_NAMES
+        and not name.startswith(RESERVED_ENV_PREFIXES)
+        and not any(part in name for part in RESERVED_ENV_PARTS)
+    )
+
+
 def _invalid(field: str, message: str) -> AgentError:
     return AgentError(CONFIG_INVALID, message, {"field": field})
 
@@ -114,11 +138,13 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
     password_source = install.get("password_source", "environment")
     if password_source not in {"prompt", "environment", "generate"}:
         raise AgentError(CONFIG_INVALID, "password_source must be 'prompt', 'environment', or 'generate'", {"field": "password_source"})
-    if password_source == "environment":
-        for field in ("root_password_env", "user_password_env"):
-            env_name = str(install.get(field, ""))
-            if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", env_name):
-                raise AgentError(CONFIG_INVALID, f"{field} must contain a valid uppercase environment-variable name", {"field": field})
+    for field in ("root_password_env", "user_password_env"):
+        if (password_source == "environment" or field in install) and not password_env_name_ok(install.get(field)):
+            raise AgentError(
+                CONFIG_INVALID,
+                f"{field} must name an uppercase environment variable that is not a system or credential variable",
+                {"field": field},
+            )
     if not create_user and not set_root_password:
         raise AgentError(CONFIG_INVALID, "at least one installed password must be configured", {"fields": ["create_user", "set_root_password"]})
     if create_user:
@@ -182,11 +208,9 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
     password_source = install.get("password_source", "environment")
     if password_source not in {"prompt", "environment", "generate"}:
         errors.append("password_source must be 'prompt', 'environment', or 'generate'")
-    if password_source == "environment":
-        for field in ("root_password_env", "user_password_env"):
-            env_name = str(install.get(field, ""))
-            if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", env_name):
-                errors.append(f"{field} must contain a valid uppercase environment-variable name")
+    for field in ("root_password_env", "user_password_env"):
+        if (password_source == "environment" or field in install) and not password_env_name_ok(install.get(field)):
+            errors.append(f"{field} must name an uppercase environment variable that is not a system or credential variable")
     if not isinstance(install.get("generate_missing_passwords", True), bool):
         errors.append("generate_missing_passwords must be boolean")
     if create_user:

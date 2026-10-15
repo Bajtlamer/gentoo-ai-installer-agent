@@ -32,9 +32,10 @@ def save_signed(plan_id: str, record: dict) -> None:
               {**unsigned, "signature": signing.sign(unsigned, signing.load_or_create_key())})
 
 
-def make_plan(serial: str = "QM00001") -> dict:
+def make_plan(serial: str = "QM00001", changes: dict | None = None) -> dict:
     install = json.loads((REPO / "tests" / "golden" / "configs" / "bios_mbr_user_sudo.json").read_text(encoding="utf-8"))
     install.update({"disk_must_be_erased": True, "target_is_disposable": True, "disk_erase_authorized": True})
+    install.update(changes or {})
     project = json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8"))
     stdout = json.dumps({"blockdevices": [
         {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": "QEMU HARDDISK", "serial": serial, "wwn": None},
@@ -199,6 +200,20 @@ class ApprovalTests(unittest.TestCase):
         self.assertIn("Install: boot=bios", summary)
         self.assertIn("hostname=gentoo", summary)
         self.assertIn("Created: ", summary)
+        self.assertIn("Network: dhcp", summary)
+        self.assertIn(
+            "Passwords: source=environment root_password_env=GENTOO_ROOT_PASSWORD "
+            "user_password_env=GENTOO_USER_PASSWORD",
+            summary,
+        )
+        self.assertIn("Access: allow_root_password_ssh=no configure_sudo=yes user_groups=wheel", summary)
+
+    def test_summary_shows_static_network(self):
+        static = {"network_method": "static",
+                  "network_static": {"address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1", "9.9.9.9"]}}
+        with temp_home():
+            summary = approval.approval_summary(make_plan(changes=static))
+        self.assertIn("Network: static address=10.0.0.2/24 gateway=10.0.0.1 dns=1.1.1.1,9.9.9.9", summary)
 
 
 if __name__ == "__main__":

@@ -4,14 +4,16 @@ Priority, highest first: overrides (from the user's request), profile,
 values inferred from the inventory, fallbacks, and defaults. The result
 records the source of every value. Passwords are accepted only as
 environment-variable references, never as text.
+
+Overrides and profiles may come from a model, so every value is
+type-checked before merging and any malformed input raises AgentError.
 """
 
 from __future__ import annotations
 
 import copy
-import re
 
-from gentoo_agent.core.disks import parse_disk_identities
+from gentoo_agent.core.disks import disk_candidates, inventory_results
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
     CONFIG_INVALID,
@@ -20,7 +22,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.layout import build_layout
-from gentoo_agent.core.validate import validated_settings
+from gentoo_agent.core.validate import password_env_name_ok, validated_settings
 
 
 SETTABLE = {
@@ -28,13 +30,34 @@ SETTABLE = {
     "network_method", "network_static", "create_user", "configure_sudo", "set_root_password",
     "allow_root_password_ssh", "install_user_ssh_key", "bootloader", "user_groups",
 }
+TYPES = {
+    "username": str, "hostname": str, "timezone": str, "boot_mode": str, "init_system": str,
+    "network_method": str, "disk": str, "bootloader": str,
+    "swap_mb": int,
+    "create_user": bool, "configure_sudo": bool, "set_root_password": bool,
+    "allow_root_password_ssh": bool, "install_user_ssh_key": bool,
+    "user_groups": list,
+    "network_static": dict,
+}
 PASSWORD_FIELDS = {"user_password": "user_password_env", "root_password": "root_password_env"}
 DERIVED = {
     "disk", "partition_layout", "partition_table", "disk_must_be_erased", "target_is_disposable",
     "disk_erase_authorized", "expected_disk_model", "expected_disk_size_gib",
 }
-ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{1,63}")
+# Fallbacks fill gaps the user left open; the disk to erase and the boot
+# mode must come from the user, the profile, or the hardware.
+NOT_FALLBACK = ("boot_mode", "disk")
 SUPPORTED_BOOTLOADERS = {"grub"}
+LIVE_BOOT_MODES = {"uefi": "uefi", "bios-or-unknown": "bios"}
+
+
+def _type_ok(key: str, value: object) -> bool:
+    expected = TYPES[key]
+    if expected is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected is list:
+        return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    return isinstance(value, expected)
 
 
 def _check_layer(name: str, layer: object, allow_passwords: bool) -> dict:
@@ -43,26 +66,37 @@ def _check_layer(name: str, layer: object, allow_passwords: bool) -> dict:
     if not isinstance(layer, dict):
         raise AgentError(CONFIG_INVALID, f"{name} must be an object", {"layer": name})
     allowed = SETTABLE | (set(PASSWORD_FIELDS) if allow_passwords else set())
-    unknown = sorted(set(layer) - allowed)
+    unknown = sorted(str(key) for key in set(layer) - allowed)
     if unknown:
         raise AgentError(CONFIG_INVALID, f"{name} contains settings that cannot be set: {', '.join(unknown)}",
                          {"layer": name, "keys": unknown})
+    for key in sorted(set(layer) & SETTABLE):
+        if not _type_ok(key, layer[key]):
+            expected = "list of strings" if TYPES[key] is list else TYPES[key].__name__
+            raise AgentError(CONFIG_INVALID, f"{name}.{key} must be of type {expected}", {"layer": name, "field": key})
     for field in PASSWORD_FIELDS:
         if field in layer:
             value = layer[field]
-            if not (isinstance(value, dict) and set(value) == {"env"} and isinstance(value["env"], str)
-                    and ENV_NAME.fullmatch(value["env"])):
+            if not (isinstance(value, dict) and set(value) == {"env"} and password_env_name_ok(value["env"])):
                 raise AgentError(
                     CONFIG_INVALID,
-                    'Passwords are passed by environment-variable name, never as text: {"env": "NAME"}',
+                    'Passwords are passed by environment-variable name, never as text: {"env": "NAME"}. '
+                    "System and credential variables such as PATH or *_TOKEN are not allowed.",
                     {"field": field},
                 )
     return layer
 
 
 def _live_boot_mode(results: dict) -> str:
-    stdout = str(results.get("boot_mode", {}).get("stdout", "")).strip()
-    return "uefi" if stdout == "uefi" else "bios"
+    item = results.get("boot_mode")
+    stdout = item.get("stdout") if isinstance(item, dict) and item.get("returncode") == 0 else None
+    if not isinstance(stdout, str) or stdout not in LIVE_BOOT_MODES:
+        raise AgentError(INVENTORY_MISSING, "Boot mode is unknown; refresh the inventory.", {"label": "boot_mode"})
+    return LIVE_BOOT_MODES[stdout]
+
+
+def _excluded_text(excluded: list[dict]) -> str:
+    return ", ".join(f"{item['path']} ({item['reason']})" for item in excluded) or "none"
 
 
 def resolve_config(
@@ -77,18 +111,19 @@ def resolve_config(
     overrides = _check_layer("overrides", overrides, allow_passwords=True)
     profile = _check_layer("profile", profile, allow_passwords=True)
     fallbacks = _check_layer("fallbacks", fallbacks, allow_passwords=False)
+    for key in NOT_FALLBACK:
+        if key in fallbacks:
+            raise AgentError(CONFIG_INVALID, f"fallbacks cannot set {key}; choose it explicitly or let the hardware decide.",
+                             {"layer": "fallbacks", "field": key})
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No inventory exists; run detect_hardware with refresh first.", {})
-    results = {item.get("label"): item for item in inventory.get("results", [])}
-    identity = results.get("disk_identity")
-    if identity is None or identity.get("returncode") != 0:
-        raise AgentError(INVENTORY_MISSING, "The latest inventory has no disk identity; refresh it.", {})
-    disks = [disk["path"] for disk in parse_disk_identities(identity.get("stdout", ""))]
+    results = inventory_results(inventory)
+    eligible, excluded = disk_candidates(inventory)
     live_boot = _live_boot_mode(results)
 
     inferred: dict = {"boot_mode": live_boot}
-    if len(disks) == 1:
-        inferred["disk"] = disks[0]
+    if len(eligible) == 1:
+        inferred["disk"] = eligible[0]["path"]
 
     base = {key: value for key, value in copy.deepcopy(defaults).items() if key not in DERIVED}
     layers = [("override", overrides), ("profile", profile), ("inferred", inferred),
@@ -109,11 +144,27 @@ def resolve_config(
             f"boot_mode {install['boot_mode']} was requested but the live system booted in {live_boot} mode.",
             {"requested": install["boot_mode"], "live": live_boot},
         )
+
+    excluded_details = [{"path": item["path"], "reason": item["reason"]} for item in excluded]
     if "disk" not in install:
-        if not disks:
+        if not eligible and not excluded:
             raise AgentError(INVENTORY_MISSING, "The inventory lists no disks.", {})
-        raise AgentError(DISK_AMBIGUOUS, "Several disks are present; choose one with the disk setting.",
-                         {"candidates": disks})
+        raise AgentError(
+            DISK_AMBIGUOUS,
+            "No single eligible disk was found; choose one with the disk setting.",
+            {"candidates": [disk["path"] for disk in eligible], "excluded": excluded_details},
+        )
+    chosen = next((disk for disk in eligible if disk["path"] == install["disk"]), None)
+    if chosen is None:
+        rejected = next((disk for disk in excluded if disk["path"] == install["disk"]), None)
+        if rejected is None:
+            raise AgentError(CONFIG_INVALID, f"Disk {install['disk']} is not in the latest inventory.",
+                             {"field": "disk", "disk": install["disk"]})
+        raise AgentError(CONFIG_CONFLICT, f"Disk {install['disk']} cannot be installed to: {rejected['reason']}.",
+                         {"field": "disk", "disk": install["disk"], "reason": rejected["reason"]})
+    if sources["disk"] == "inferred":
+        warnings.append(f"disk {install['disk']} was inferred as the only eligible disk; "
+                        f"excluded: {_excluded_text(excluded_details)}")
 
     username = install.get("username")
     if isinstance(username, str) and username != username.lower():
@@ -129,8 +180,12 @@ def resolve_config(
             install["generate_missing_passwords"] = True
             sources[env_field] = source
 
+    swap_mb = install.get("swap_mb", 2048)
+    if isinstance(swap_mb, int) and not isinstance(swap_mb, bool) and swap_mb * 1048576 >= chosen["size_bytes"] / 2:
+        raise AgentError(CONFIG_INVALID, f"swap_mb {swap_mb} must be less than half of disk {install['disk']}.",
+                         {"field": "swap_mb", "disk_size_bytes": chosen["size_bytes"]})
     install["partition_table"], install["partition_layout"] = build_layout(
-        install["disk"], install["boot_mode"], install.get("swap_mb", 2048), install.get("root_filesystem", "ext4")
+        install["disk"], install["boot_mode"], swap_mb, install.get("root_filesystem", "ext4")
     )
     install["disk_must_be_erased"] = True
     install["target_is_disposable"] = target.get("target_is_disposable") is True
