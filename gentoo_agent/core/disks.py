@@ -7,6 +7,7 @@ import subprocess
 
 from gentoo_agent.core.errors import (
     CONFIG_INVALID,
+    DISK_AMBIGUOUS,
     INVENTORY_MISSING,
     SSH_UNREACHABLE,
     TARGET_DRIFT,
@@ -50,8 +51,23 @@ def disk_from_inventory(inventory: dict | None, path: str) -> dict:
     item = results.get(IDENTITY_LABEL)
     if item is None or item.get("returncode") != 0:
         raise AgentError(INVENTORY_MISSING, "The latest inventory has no disk identity; run inspect again.", {"label": IDENTITY_LABEL})
-    for disk in parse_disk_identities(item.get("stdout", "")):
+    parsed = parse_disk_identities(item.get("stdout", ""))
+    for disk in parsed:
         if disk["path"] == path:
+            if identity_strength(disk) == "weak":
+                twins = [
+                    other["path"]
+                    for other in parsed
+                    if other["path"] != path
+                    and other["size_bytes"] == disk["size_bytes"]
+                    and other["model"] == disk["model"]
+                ]
+                if twins:
+                    raise AgentError(
+                        DISK_AMBIGUOUS,
+                        f"Disk {path} has no serial number or WWN and another disk has the same size and model; it cannot be identified reliably.",
+                        {"disk": path, "twins": twins},
+                    )
             return disk
     raise AgentError(CONFIG_INVALID, f"Configured disk {path} is not in the latest inventory.", {"disk": path})
 
@@ -61,6 +77,8 @@ def read_live_identity(target: dict, path: str) -> dict:
         result = run_ssh_readonly(target, IDENTITY_LABEL, READ_ONLY_COMMANDS[IDENTITY_LABEL])
     except subprocess.TimeoutExpired as exc:
         raise AgentError(SSH_UNREACHABLE, f"Timed out reading disk identity from {target['host']}", {"host": target["host"]}) from exc
+    except OSError as exc:
+        raise AgentError(SSH_UNREACHABLE, f"Could not run ssh to read disk identity from {target['host']}: {exc}", {"host": target["host"]}) from exc
     if result["returncode"] != 0:
         raise AgentError(
             SSH_UNREACHABLE,
