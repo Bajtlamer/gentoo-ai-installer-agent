@@ -166,6 +166,20 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(record["resumed_from"], first)
         self.assertEqual(record["plan_id"], plan["plan_id"])
 
+    def test_phase_subset_is_validated_and_recorded(self):
+        from gentoo_agent.core.errors import CONFIG_INVALID
+
+        with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=FakeProcess()) as popen:
+            plan = approved_plan()
+            with self.assertRaises(AgentError) as caught:
+                launcher.start_run(plan["plan_id"], phase_ids=["reboot"])
+            popen.assert_not_called()
+            run_id = launcher.start_run(plan["plan_id"], phase_ids=["kernel"])
+            record = runs.read_run(run_id)
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertEqual(record["phase_ids"], ["kernel"])
+        self.assertEqual(record["phase_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

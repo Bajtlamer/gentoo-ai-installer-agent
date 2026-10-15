@@ -52,10 +52,10 @@ def execute_plan(
     *,
     on_event: EventSink | None = None,
     on_output: EventSink | None = None,
+    phase_ids: list[str] | None = None,
 ) -> dict:
     emit = on_event or (lambda message: None)
     target = plan["target"]
-    phases = plan["phases"]
     completed: list[str] = []
     authentication_applied = False
     current: str | None = None
@@ -101,6 +101,15 @@ def execute_plan(
             f"Run {run_id} must be claimed before execution (status {record.get('status')}).",
             {"run_id": run_id},
         )
+    phases = plan["phases"]
+    if phase_ids is not None:
+        known = {phase["id"] for phase in phases}
+        unknown = sorted(set(phase_ids) - known)
+        if unknown or not phase_ids:
+            raise AgentError(CONFIG_INVALID, f"Unknown or empty phase selection: {unknown or list(phase_ids)}",
+                             {"phase_ids": list(phase_ids)})
+        selected = set(phase_ids)
+        phases = [phase for phase in phases if phase["id"] in selected]
     update_run(run_id, phase_count=len(phases), phase_index=0)
     try:
         if not isinstance(plan.get("disks"), list) or not plan["disks"]:

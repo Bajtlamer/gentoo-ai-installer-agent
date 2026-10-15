@@ -173,6 +173,28 @@ class ExecutePlanTests(unittest.TestCase):
                     runner.execute_plan(PLAN, run_id, RECORDS)
             self.assertEqual(runs.read_run(run_id)["status"], "running")
 
+    def test_phase_subset_runs_only_selected_phases_in_plan_order(self):
+        with temp_home():
+            shell = FakeShell({"kernel-check": 1, "preflight-check": 1})
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
+                                    "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
+                result = runner.execute_plan(PLAN, run_id, RECORDS, phase_ids=["kernel", "preflight"])
+        self.assertEqual(result["completed_phases"], ["preflight", "kernel"])
+        self.assertNotIn("authentication-check", [call[0] for call in shell.calls])
+
+    def test_unknown_phase_id_is_rejected_before_any_command(self):
+        with temp_home():
+            shell = FakeShell()
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "status": "running", "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
+                with self.assertRaises(AgentError) as caught:
+                    runner.execute_plan(PLAN, run_id, RECORDS, phase_ids=["reboot"])
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertEqual(shell.calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

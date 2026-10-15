@@ -92,7 +92,7 @@ def run(run_id: str, payload: dict) -> dict:
             return fail(error)
         save_credentials(None)
         try:
-            result = execute_plan(plan, run_id, password_records)
+            result = execute_plan(plan, run_id, password_records, phase_ids=record.get("phase_ids"))
         except AgentError as error:
             return fail(error)  # credentials stay pending
         save_credentials(bool(result.get("authentication_applied")))
