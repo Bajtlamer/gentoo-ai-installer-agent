@@ -1,0 +1,26 @@
+{
+  "disk": "/dev/sdb",
+  "boot_mode": "bios",
+  "partition_table": "mbr",
+  "root_filesystem": "ext4",
+  "partition_layout": [
+    {"device": "/dev/sdb1", "size_mib": 1024, "type": "linux-swap", "mount": null},
+    {"device": "/dev/sdb2", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"}
+  ],
+  "init_system": "openrc",
+  "hostname": "lab",
+  "timezone": "Europe/Prague",
+  "network_method": "dhcp",
+  "create_user": true,
+  "username": "alex",
+  "install_user_ssh_key": false,
+  "user_groups": ["wheel", "audio"],
+  "configure_sudo": false,
+  "user_shell": "/bin/bash",
+  "set_root_password": false,
+  "allow_root_password_ssh": false,
+  "password_source": "environment",
+  "generate_missing_passwords": true,
+  "root_password_env": "GENTOO_ROOT_PASSWORD",
+  "user_password_env": "GENTOO_USER_PASSWORD"
+}
