@@ -43,15 +43,15 @@ def render(install: dict) -> str:
 class GoldenCommandTests(unittest.TestCase):
     def test_generated_commands_match_golden_files(self):
         configs = sorted((GOLDEN / "configs").glob("*.json"))
-        self.assertEqual(len(configs), 4)
+        self.assertEqual(len(configs), 5)
         for config_path in configs:
             with self.subTest(config=config_path.stem):
                 install = json.loads(config_path.read_text(encoding="utf-8"))
                 rendered = render(install)
                 golden_path = GOLDEN / f"{config_path.stem}.txt"
                 if os.environ.get("GOLDEN_UPDATE") == "1":
-                    golden_path.write_text(rendered, encoding="utf-8", newline="\n")
-                self.assertEqual(golden_path.read_text(encoding="utf-8"), rendered)
+                    golden_path.write_bytes(rendered.encode("utf-8"))
+                self.assertEqual(golden_path.read_bytes().decode("utf-8"), rendered)
 
 
 if __name__ == "__main__":
