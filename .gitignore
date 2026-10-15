@@ -13,3 +13,6 @@ approvals/*.json
 ssh-known-hosts
 *.key
 *.pem
+
+# Claude Code worktrees
+.claude/worktrees/
