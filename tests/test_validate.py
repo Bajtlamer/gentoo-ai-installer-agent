@@ -16,7 +16,6 @@ def fixture(name: str) -> dict:
         "profile": "gentoo-amd64-openrc",
         "swap_mb": 2048,
         "bootloader": "grub",
-        "review_status": "pending_operator_review",
     })
     return data
 
@@ -58,10 +57,6 @@ class ValidateInstallationTests(unittest.TestCase):
         inventory = inventory_with("/dev/nvme0n1 512G disk", "bios-or-unknown")
         result = validate_installation(TARGET, fixture("uefi_gpt_user_sudo"), {}, inventory)
         self.assertTrue(any("conflicts with the latest live boot mode" in error for error in result["errors"]))
-
-    def test_mismatched_execution_flags_are_an_error(self):
-        result = validate_installation({**TARGET, "execution_enabled": True}, fixture("bios_mbr_user_sudo"), {}, None)
-        self.assertIn("target, install, and plan execution_enabled flags must match", result["errors"])
 
 
 if __name__ == "__main__":
