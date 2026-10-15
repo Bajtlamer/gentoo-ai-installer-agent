@@ -9,18 +9,17 @@ enables execution.
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-import urllib.request
 
-from gentoo_agent.core.config import load_json, now, save_json
-from gentoo_agent.core.paths import CONFIG, INVENTORY_DIR, ROOT
-from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
+from gentoo_agent.core.config import load_json, save_json
+from gentoo_agent.core.handbook import fetch_handbook
+from gentoo_agent.core.inventory import collect_inventory
+from gentoo_agent.core.paths import CONFIG, ROOT
+from gentoo_agent.core.state import load_state, save_state
 
 
 def partition_device(disk: str, number: int) -> str:
@@ -79,30 +78,14 @@ def ensure_target_config() -> dict:
     return target
 
 
-def collect_inventory(target: dict) -> tuple[dict, Path]:
-    results = []
-    for label, command in READ_ONLY_COMMANDS.items():
-        print(f"  Read-only check: {label}")
-        try:
-            result = run_ssh_readonly(target, label, command)
-        except FileNotFoundError:
-            raise SystemExit("OpenSSH client was not found. Install ssh and retry.")
-        except subprocess.TimeoutExpired:
-            result = {"label": label, "command": command, "returncode": None, "error": "timeout"}
-        results.append(result)
+def collect_inventory_interactive(target: dict) -> tuple[dict, object]:
+    try:
+        inventory, path = collect_inventory(target, on_progress=lambda label: print(f"  Read-only check: {label}"))
+    except FileNotFoundError:
+        raise SystemExit("OpenSSH client was not found. Install ssh and retry.")
+    for result in inventory.get("results", []):
         if result.get("returncode") not in (0, None):
-            print(f"    warning: command returned {result.get('returncode')}")
-
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    inventory = {
-        "target": target["name"],
-        "target_address": f"{target['user']}@{target['host']}:{target.get('port', 22)}",
-        "collected_at": now(),
-        "read_only": True,
-        "results": results,
-    }
-    path = INVENTORY_DIR / f"inventory-{stamp}.json"
-    save_json(path, inventory)
+            print(f"    warning: {result['label']} returned {result.get('returncode')}")
     return inventory, path
 
 
@@ -148,24 +131,15 @@ def choose_disk(inventory: dict) -> dict:
     return {"path": selected, "size": None, "model": None}
 
 
-def fetch_handbook(target: dict) -> str | None:
-    url = target["handbook_url"]
-    request = urllib.request.Request(url, headers={"User-Agent": "gentoo-agent/0.1"})
+def snapshot_handbook(target: dict) -> str | None:
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
+        metadata = fetch_handbook(target)
     except Exception as exc:
         print(f"Handbook snapshot warning: {exc}")
-        print(f"The agent must still use the configured Handbook URL: {url}")
+        print(f"The agent must still use the configured Handbook URL: {target['handbook_url']}")
         return None
-
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = INVENTORY_DIR / f"handbook-{stamp}.html"
-    path.write_bytes(raw)
-    metadata = {"url": url, "retrieved_at": now(), "bytes": len(raw), "saved_html": str(path.relative_to(ROOT))}
-    save_json(INVENTORY_DIR / f"handbook-{stamp}.json", metadata)
-    print(f"Saved Handbook snapshot: {path}")
-    return str(path.relative_to(ROOT))
+    print(f"Saved Handbook snapshot: {ROOT / metadata['saved_html']}")
+    return metadata["saved_html"]
 
 
 def build_install_config(target: dict, inventory: dict) -> dict:
@@ -289,37 +263,35 @@ def main() -> int:
 
     target = ensure_target_config()
     print(f"Connecting read-only to {target['user']}@{target['host']}...")
-    inventory, inventory_path = collect_inventory(target)
-    handbook_path = fetch_handbook(target)
+    inventory, inventory_path = collect_inventory_interactive(target)
+    handbook_path = snapshot_handbook(target)
     install = build_install_config(target, inventory)
     install["inventory_source"] = str(inventory_path.relative_to(ROOT))
     install["handbook_snapshot"] = handbook_path
     save_json(CONFIG / "install.json", install)
 
-    state_path = ROOT / "state" / "state.json"
-    state = load_json(state_path) if state_path.exists() else {}
+    state = load_state()
     state.update({
         "target": target["name"],
         "status": "review_required",
         "current_phase": "discovery",
         "last_inventory": str(inventory_path.relative_to(ROOT)),
         "last_handbook_fetch": handbook_path,
-        "updated_at": now(),
     })
-    save_json(state_path, state)
+    save_state(state)
 
     print("\n===== COMPLETE INSTALLATION CONFIGURATION =====")
     print(json.dumps(install, indent=2, ensure_ascii=False))
     print("================================================")
     print(f"Saved: {CONFIG / 'install.json'}")
     print("\nLocal validation:")
-    subprocess.run([sys.executable, str(ROOT / "tools" / "gentoo_agent.py"), "validate"], cwd=ROOT, check=False)
+    subprocess.run([sys.executable, "-m", "gentoo_agent", "validate"], cwd=ROOT, check=False)
     print("\nReview the printed configuration and config/install.json.")
     if input("Type REVIEWED to record that you reviewed it, or press Enter to leave it pending: ").strip() == "REVIEWED":
         install["review_status"] = "reviewed_execution_disabled"
         save_json(CONFIG / "install.json", install)
         state["status"] = "reviewed_execution_disabled"
-        save_json(state_path, state)
+        save_state(state)
         print("Review recorded. Execution is still disabled.")
     else:
         print("Review remains pending. Execution is still disabled.")
