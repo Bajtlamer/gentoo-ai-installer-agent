@@ -28,6 +28,8 @@ def ssh_base(target: dict) -> list[str]:
     return command
 
 
+SECURE_BOOT_VARIABLE = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+
 READ_ONLY_COMMANDS = {
     "identity": "printf 'hostname='; hostname; printf '\\narch='; uname -m; printf '\\nkernel='; uname -r",
     "boot_mode": "if [ -d /sys/firmware/efi ]; then printf 'uefi'; else printf 'bios-or-unknown'; fi",
@@ -38,6 +40,13 @@ READ_ONLY_COMMANDS = {
     "mounts": "findmnt -D || mount",
     "network": "ip -brief address; printf '\\n'; ip route",
     "errors": "dmesg --level=err,warn 2>/dev/null | tail -n 200 || true",
+    # Partition type GUIDs and filesystems, read by core/foreign_os.py to find Windows.
+    "partitions": "lsblk -J -b -e7 -o PATH,TYPE,PKNAME,PARTTYPE,PARTTYPENAME,FSTYPE,UUID,PARTUUID,SIZE,LABEL",
+    # The last byte of the SecureBoot EFI variable (4 attribute bytes, then 1 data byte).
+    "secure_boot": (
+        f"f={SECURE_BOOT_VARIABLE}; "
+        "if [ -r \"$f\" ]; then od -An -t u1 -j 4 -N 1 \"$f\" | tr -d ' \\n'; else printf unknown; fi"
+    ),
 }
 
 HOST_KEY_FAILURE = "Host key verification failed"

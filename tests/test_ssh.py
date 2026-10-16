@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import uuid
@@ -208,6 +209,35 @@ class HolderProcessTests(unittest.TestCase):
             self.addCleanup(lambda process=process: process.poll() is None and process.kill())
         self.assertEqual(len(started), 1)
         self.assertIsNotNone(started[0].poll())
+
+
+class DualBootInventoryCommandTests(unittest.TestCase):
+    def test_partitions_command_lists_type_guids_filesystems_and_uuids(self):
+        self.assertEqual(
+            ssh.READ_ONLY_COMMANDS["partitions"],
+            "lsblk -J -b -e7 -o PATH,TYPE,PKNAME,PARTTYPE,PARTTYPENAME,FSTYPE,UUID,PARTUUID,SIZE,LABEL",
+        )
+
+    def test_secure_boot_command_reads_only_the_efi_variable(self):
+        command = ssh.READ_ONLY_COMMANDS["secure_boot"]
+        self.assertIn(ssh.SECURE_BOOT_VARIABLE, command)
+        self.assertNotIn(">", command)
+        for word in ("rm ", "dd ", "mount", "efibootmgr", "chattr"):
+            self.assertNotIn(word, command)
+
+    def run_secure_boot(self, content: bytes | None) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            variable = os.path.join(tmp, "SecureBoot")
+            if content is not None:
+                with open(variable, "wb") as handle:
+                    handle.write(content)
+            command = ssh.READ_ONLY_COMMANDS["secure_boot"].replace(ssh.SECURE_BOOT_VARIABLE, variable)
+            return subprocess.run(["/bin/sh", "-c", command], capture_output=True, text=True, check=True).stdout
+
+    def test_secure_boot_command_prints_the_data_byte_or_unknown(self):
+        self.assertEqual(self.run_secure_boot(b"\x06\x00\x00\x00\x01"), "1")
+        self.assertEqual(self.run_secure_boot(b"\x06\x00\x00\x00\x00"), "0")
+        self.assertEqual(self.run_secure_boot(None), "unknown")
 
 
 if __name__ == "__main__":
