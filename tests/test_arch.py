@@ -39,5 +39,5 @@ class ArchitectureTests(unittest.TestCase):
     def test_every_architecture_has_the_fields_the_generators_use(self):
         for name, spec in arch.ARCHITECTURES.items():
             with self.subTest(name=name):
-                self.assertEqual(set(spec), {"machine", "grub_efi_target", "grub_efi_binary", "bios"})
+                self.assertEqual(set(spec), {"machine", "grub_efi_target", "grub_efi_binary", "grub_efi_fallback", "bios"})
         self.assertFalse(arch.ARCHITECTURES["arm64"]["bios"])
