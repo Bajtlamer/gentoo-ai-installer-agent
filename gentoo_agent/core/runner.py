@@ -1,7 +1,8 @@
 """Phase selection, dry-run rendering, and execution of an approved plan.
 
 execute_plan runs the commands stored in the plan (never regenerated ones),
-after confirming the live disk still matches the plan. The target is never
+after confirming the live disk still matches the plan, and again before every
+destructive apply. The target is never
 rebooted. Every outcome, including exceptions and interrupts, is recorded in
 the run record.
 """
@@ -129,6 +130,9 @@ def execute_plan(
                 emit(f"{current}: already complete; skipped")
                 completed.append(current)
                 continue
+            if phase.get("destructive", True):
+                emit(f"{current}: re-checking that the target disk still matches the plan")
+                check_drift(target, plan["disks"])
             emit(f"===== applying {current} =====")
             input_data = None
             if current == "authentication":

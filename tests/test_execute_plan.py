@@ -195,6 +195,38 @@ class ExecutePlanTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
         self.assertEqual(shell.calls, [])
 
+    def test_drift_is_rechecked_before_each_destructive_apply(self):
+        with temp_home():
+            shell = FakeShell({"preflight-check": 1, "authentication-check": 1, "kernel-check": 1})
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
+                                    "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift") as drift:
+                result = runner.execute_plan(PLAN, run_id, RECORDS)
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        # once at the start, then before authentication and kernel (preflight is not destructive)
+        self.assertEqual(drift.call_count, 3)
+
+    def test_skipped_phases_need_no_drift_check(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
+                                    "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", FakeShell()), patch.object(runner, "check_drift") as drift:
+                runner.execute_plan(PLAN, run_id, RECORDS)
+        self.assertEqual(drift.call_count, 1)
+
+    def test_drift_before_a_later_phase_stops_without_applying_it(self):
+        drift = [None, None, AgentError(TARGET_DRIFT, "Disk /dev/sda does not match the approved plan.")]
+        with temp_home():
+            shell = FakeShell({"authentication-check": 1, "kernel-check": 1})
+            _, result, record = self.run_plan(shell, drift=drift)
+        labels = [call[0] for call in shell.calls]
+        self.assertIn("authentication", labels)
+        self.assertNotIn("kernel", labels)
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertEqual(record["completed_phases"], ["preflight", "authentication"])
+
 
 if __name__ == "__main__":
     unittest.main()
