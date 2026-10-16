@@ -5,8 +5,9 @@ payload from stdin, claims the run, re-checks the approval, writes generated
 credentials for one-time pickup (pending until the plan returns), runs the
 plan, and always releases the run lock. It holds runs/<run_id>/worker.lock
 from before the claim until after the run lock is released, and hands its
-descriptor to the ssh process of every phase, so the lock outlives a killed
-worker until that remote program exits. A missing or malformed payload fails
+descriptor to remote_shell for every phase, whose holder process keeps it
+until ssh exits, so the lock outlives a killed worker until that remote
+program exits. A missing or malformed payload fails
 the run without executing anything.
 """
 
@@ -101,10 +102,11 @@ def run(run_id: str, payload: dict) -> dict:
             return fail(error)
         save_credentials(None)
         try:
-            # The ssh child of each phase inherits the lock descriptor, so a killed
-            # worker's lock stays held until that remote program has finished.
+            # remote_shell runs each phase's ssh under a holder process that keeps the
+            # lock descriptor until ssh exits, so a killed worker's lock stays held
+            # until that remote program has finished.
             result = execute_plan(plan, run_id, password_records, phase_ids=record.get("phase_ids"),
-                                  keep_fds=(worker_lock.fileno(),))
+                                  keep_fds=(worker_lock.fileno(),), holder_python=sys.executable)
         except AgentError as error:
             return fail(error)  # credentials stay pending
         save_credentials(bool(result.get("authentication_applied")))

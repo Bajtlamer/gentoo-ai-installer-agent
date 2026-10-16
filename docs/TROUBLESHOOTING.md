@@ -176,9 +176,10 @@ still alive:
   the run started more than 60 seconds ago, the run is marked `interrupted` with "The worker process ended without recording
   a result." and the run lock is released. While some process holds the
   worker lock, the run stays active whatever the recorded process id says.
-- A worker killed during a phase leaves its ssh process running the remote
-  program. That process holds the worker lock too, so the run stays `running`
-  until the remote program ends; only then can you resume.
+- A worker killed during a phase leaves its ssh running the remote program,
+  under a small holder process (a `python -I -c ...` process whose child is
+  ssh). The holder keeps the worker lock until ssh exits, so the run stays
+  `running` until the remote program ends; only then can you resume.
 - A run is also `interrupted` when the worker itself was interrupted during a
   phase ("Installation was interrupted.").
 

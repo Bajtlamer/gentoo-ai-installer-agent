@@ -1,6 +1,7 @@
 import io
 import os
 import shutil
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -49,7 +50,7 @@ class WorkerTests(unittest.TestCase):
     def test_credentials_are_pending_while_the_plan_executes(self):
         seen = {}
 
-        def execute(plan, run_id, records, phase_ids=None, keep_fds=()):
+        def execute(plan, run_id, records, phase_ids=None, keep_fds=(), holder_python=None):
             seen["credentials"] = load_json(runs.credentials_path(run_id))
             return {"status": "installed_pending_reboot", "authentication_applied": True}
 
@@ -168,7 +169,7 @@ class WorkerTests(unittest.TestCase):
     def test_worker_holds_its_lock_while_executing(self):
         seen = {}
 
-        def fake_execute(plan, run_id, records, phase_ids=None, keep_fds=()):
+        def fake_execute(plan, run_id, records, phase_ids=None, keep_fds=(), holder_python=None):
             seen["held"] = runs.worker_lock_held(run_id)
             return {"status": "installed_pending_reboot", "authentication_applied": True}
 
@@ -184,8 +185,9 @@ class WorkerTests(unittest.TestCase):
     def test_worker_hands_its_lock_descriptor_to_execute_plan(self):
         seen = {}
 
-        def fake_execute(plan, run_id, records, phase_ids=None, keep_fds=()):
+        def fake_execute(plan, run_id, records, phase_ids=None, keep_fds=(), holder_python=None):
             seen["keep_fds"] = keep_fds
+            seen["holder_python"] = holder_python
             for fd in keep_fds:
                 os.fstat(fd)  # raises if the descriptor is not open
             return {"status": "installed_pending_reboot", "authentication_applied": True}
@@ -196,6 +198,7 @@ class WorkerTests(unittest.TestCase):
             with patch.object(worker, "execute_plan", side_effect=fake_execute):
                 worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {}})
         self.assertEqual(len(seen["keep_fds"]), 1)
+        self.assertEqual(seen["holder_python"], sys.executable)
 
     def test_a_second_worker_for_a_held_run_leaves_the_run_lock_alone(self):
         with temp_home():
