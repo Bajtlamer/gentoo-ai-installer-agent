@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gentoo_agent import prepare
+from gentoo_agent.core.config import load_json, save_json
+from tests.helpers import temp_home
 
 
 class PrepareInventoryTests(unittest.TestCase):
@@ -49,6 +51,42 @@ class PrepareInventoryTests(unittest.TestCase):
                 prepare.collect_inventory_interactive({"name": "gentoo"})
         self.assertEqual(str(caught.exception), "SSH_UNREACHABLE: Could not reach the target over SSH; "
                                                 "check the address, key, and host key.")
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+class EraseAuthorizationTests(unittest.TestCase):
+    def build(self, erase_answer: str) -> tuple[dict, dict]:
+        target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test"}
+
+        def fake_ask(prompt, default=None):
+            if prompt.startswith("Type ERASE"):
+                return erase_answer
+            return default if default is not None else ""
+
+        with temp_home() as home:
+            save_json(home / "config" / "install.default.json", load_json(REPO / "config" / "install.default.json"))
+            with patch.object(prepare, "choose_disk", return_value={"path": "/dev/sda", "model": "QEMU HARDDISK", "size": None}), \
+                    patch.object(prepare, "ask", fake_ask), \
+                    patch.object(prepare, "ask_choice", lambda prompt, choices, default: default), \
+                    patch.object(prepare, "ask_int", lambda prompt, default: default), \
+                    redirect_stdout(io.StringIO()):
+                install = prepare.build_install_config(target, {"results": []})
+        return target, install
+
+    def test_typed_erase_confirmation_authorizes_both_files(self):
+        target, install = self.build("ERASE /dev/sda")
+        self.assertIs(target["target_is_disposable"], True)
+        self.assertIs(target["disk_erase_authorized"], True)
+        for field in ("disk_must_be_erased", "target_is_disposable", "disk_erase_authorized"):
+            self.assertIs(install[field], True, field)
+
+    def test_declined_confirmation_authorizes_nothing(self):
+        target, install = self.build("CANCEL")
+        self.assertNotIn("target_is_disposable", target)
+        self.assertIs(install["disk_must_be_erased"], False)
+        self.assertIs(install["disk_erase_authorized"], False)
 
 
 if __name__ == "__main__":
