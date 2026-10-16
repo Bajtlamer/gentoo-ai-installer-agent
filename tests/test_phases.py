@@ -180,10 +180,6 @@ class ArchitectureProgramTests(unittest.TestCase):
         self.assertIn("grubx64.efi", self.render("uefi_gpt_user_sudo", "bootloader", check=True))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class InitSystemTests(unittest.TestCase):
     def test_base_system_always_uses_the_openrc_stage(self):
         program = phases.base_system_command(fixture("uefi_gpt_user_sudo"))
@@ -196,3 +192,7 @@ class InitSystemTests(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             phases.validated_settings(TARGET, install)
         self.assertEqual(caught.exception.details, {"field": "init_system"})
+
+
+if __name__ == "__main__":
+    unittest.main()
