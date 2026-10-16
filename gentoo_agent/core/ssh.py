@@ -78,7 +78,11 @@ def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
 # subprocess.call closes them for ssh (close_fds) and passes stdin, stdout,
 # and stderr through unchanged. If ssh cannot be started, it writes one line
 # to stderr and exits 255, the code ssh itself uses for its own errors.
+# The first line is a fixed marker so an operator can find a hanging holder
+# with `pgrep -f gentoo-agent-ssh-holder` (docs/TROUBLESHOOTING.md).
+HOLDER_MARKER = "gentoo-agent-ssh-holder"
 HOLDER = (
+    f"# {HOLDER_MARKER}\n"
     "import os, signal, subprocess, sys\n"
     "try:\n"
     "    code = subprocess.call(sys.argv[1:])\n"

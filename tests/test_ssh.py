@@ -95,6 +95,31 @@ class HolderProcessTests(unittest.TestCase):
                 self.assertTrue(lines[0].startswith("gentoo-agent holder: cannot run ssh: "), text)
                 self.assertIn("/nonexistent/gentoo-agent-test/ssh", lines[0])
 
+    @unittest.skipUnless(shutil.which("pgrep"), "needs pgrep")
+    def test_holder_is_found_by_its_marker_and_leads_its_own_group(self):
+        # The operator finds a hanging holder with pgrep -f and kills its group (see TROUBLESHOOTING.md).
+        self.assertTrue(ssh.HOLDER.startswith(f"# {ssh.HOLDER_MARKER}\n"))
+        started = []
+        real_popen = subprocess.Popen
+
+        def recording_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            started.append(process)
+            return process
+
+        def check(line):
+            holder = started[0]
+            found = subprocess.run(["pgrep", "-f", ssh.HOLDER_MARKER], capture_output=True, text=True).stdout.split()
+            seen["found"] = str(holder.pid) in found
+            seen["leader"] = os.getpgid(holder.pid) == holder.pid
+
+        seen = {}
+        with temp_home(), patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "echo start; exec sleep 1", "x"]), \
+                patch.object(subprocess, "Popen", side_effect=recording_popen):
+            ssh.remote_shell(TARGET, "label", "true", stream=True, on_output=check,
+                             keep_fds=(self.lock.fileno(),), holder_python=sys.executable)
+        self.assertEqual(seen, {"found": True, "leader": True})
+
     def test_signal_death_of_ssh_passes_through_the_holder(self):
         with temp_home(), patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "kill -TERM $$", "x"]):
             result = ssh.remote_shell(TARGET, "label", "true", stream=True, keep_fds=(self.lock.fileno(),), holder_python=sys.executable)
