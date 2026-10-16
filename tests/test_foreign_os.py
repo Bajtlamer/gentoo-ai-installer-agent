@@ -23,7 +23,6 @@ class DetectForeignOsTests(unittest.TestCase):
         records = detect_foreign_os(inventory(partitions_result("/dev/nvme0n1", windows_disk("/dev/sda"))))
         self.assertEqual(records, [{
             "disk": "/dev/sda", "os": "windows", "esp_uuid": "ABCD-1234",
-            "esp_partuuid": "6b8c1a2e-0d4f-4b6a-9c3e-1f2a3b4c5d6e",
             "evidence": ["esp vfat /dev/sda1", "msr /dev/sda2", "ntfs /dev/sda3"],
         }])
 
@@ -39,6 +38,15 @@ class DetectForeignOsTests(unittest.TestCase):
         disk = {"path": "/dev/sda", "type": "disk", "children": [
             partition("/dev/sda", 1, ESP_TYPE, "vfat", "ABCD-1234", "6b8c1a2e-0d4f-4b6a-9c3e-1f2a3b4c5d6e")]}
         self.assertEqual(detect_foreign_os(inventory(partitions_result(disk))), [])
+
+    def test_esp_partuuid_is_not_needed(self):
+        for partuuid in (None, "x", "not-a-guid\n"):
+            with self.subTest(partuuid=partuuid):
+                disk = windows_disk("/dev/sda")
+                disk["children"][0]["partuuid"] = partuuid
+                records = detect_foreign_os(inventory(partitions_result(disk)))
+                self.assertEqual([record["esp_uuid"] for record in records], ["ABCD-1234"])
+                self.assertNotIn("esp_partuuid", records[0])
 
     def test_missing_or_failed_partitions_result_is_refused(self):
         for results in ([], [{**partitions_result("/dev/sda"), "returncode": 1}],
@@ -61,7 +69,6 @@ class DetectForeignOsTests(unittest.TestCase):
             "lowercase uuid": lambda d: d["children"][0].update(uuid="abcd-1234"),
             "uuid with a newline": lambda d: d["children"][0].update(uuid="ABCD-1234\n"),
             "missing uuid": lambda d: d["children"][0].update(uuid=None),
-            "bad partuuid": lambda d: d["children"][0].update(partuuid="x"),
             "disk path with a control character": lambda d: d.update(path="/dev/sda\x1b[2K"),
             "partition path with a newline": lambda d: d["children"][2].update(path="/dev/sda3\nDisk erase: no"),
             "non-text fstype": lambda d: d["children"][2].update(fstype=["ntfs"]),

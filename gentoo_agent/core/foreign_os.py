@@ -23,7 +23,6 @@ BASIC_DATA_TYPE = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
 # MBR partition types are printed as hex bytes (0x7 for NTFS, 0xef for an EFI system partition).
 MBR_TYPE = re.compile(r"0x[0-9a-f]{1,2}")
 MBR_ESP_TYPE = "0xef"
-PARTUUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SECURE_BOOT_STATES = {"1": "on", "0": "off"}
 
 
@@ -84,12 +83,9 @@ def _windows_record(disk_path: str, partitions: list[dict]) -> dict | None:
             bios_ntfs.append(f"ntfs {path}")
     if esp is not None and windows:
         esp_uuid = _text(esp, "uuid")
-        esp_partuuid = _text(esp, "partuuid").lower()
         if not ESP_UUID.fullmatch(esp_uuid):
             raise _unusable(f"The EFI system partition {esp_path} has an unexpected UUID")
-        if not PARTUUID.fullmatch(esp_partuuid):
-            raise _unusable(f"The EFI system partition {esp_path} has an unexpected PARTUUID")
-        return _checked({"disk": disk_path, "os": "windows", "esp_uuid": esp_uuid, "esp_partuuid": esp_partuuid,
+        return _checked({"disk": disk_path, "os": "windows", "esp_uuid": esp_uuid,
                          "evidence": [f"esp vfat {esp_path}", *windows]})
     if bios_ntfs and not any_esp:
         return _checked({"disk": disk_path, "os": "windows-bios", "evidence": bios_ntfs})

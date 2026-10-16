@@ -53,7 +53,7 @@ returns one record per disk that holds Windows:
 
 ```json
 {"disk": "/dev/sdb", "os": "windows", "esp_uuid": "ABCD-1234",
- "esp_partuuid": "...", "evidence": ["esp vfat /dev/sdb1", "msr /dev/sdb2", "ntfs /dev/sdb3"]}
+ "evidence": ["esp vfat /dev/sdb1", "msr /dev/sdb2", "ntfs /dev/sdb3"]}
 ```
 
 Windows (UEFI) means one disk with:
