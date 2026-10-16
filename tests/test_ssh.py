@@ -64,6 +64,20 @@ FAKE_SSH = ["sh", "-c", "cat; echo done; exit 7", "fake-ssh"]
 
 
 @unittest.skipUnless(os.name == "posix", "process groups are POSIX only")
+class KillTests(unittest.TestCase):
+    def test_group_kill_tolerates_a_group_that_is_already_dead(self):
+        # macOS killpg returns EPERM, not ESRCH, when every member of the group
+        # has exited but the leader is not reaped yet (the second kill after a timeout).
+        process = subprocess.Popen(["true"])
+        try:
+            for error in (ProcessLookupError(), PermissionError()):
+                with self.subTest(error=type(error).__name__):
+                    with patch.object(ssh.os, "killpg", side_effect=error):
+                        ssh._kill(process, group=True)
+        finally:
+            process.wait()
+
+
 class HolderProcessTests(unittest.TestCase):
     def setUp(self):
         self.lock = open(os.devnull, "rb")

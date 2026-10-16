@@ -103,7 +103,10 @@ def _kill(process: subprocess.Popen, group: bool) -> None:
         return
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
+        # The group is already gone. macOS reports EPERM instead of ESRCH when every
+        # member has exited but the leader is not reaped yet; the leader is our
+        # unreaped child, so its group id cannot belong to anyone else.
         pass
 
 
