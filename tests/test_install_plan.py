@@ -289,6 +289,15 @@ class DualBootPlanTests(unittest.TestCase):
         self.assertEqual(plan["install"]["dual_boot_entries"], [])
         self.assertEqual(plan["warnings"], ["Windows in BIOS mode on /dev/sda will not be in the GRUB menu."])
 
+    def test_windows_with_dual_boot_off_warns(self):
+        plan = self.create({**uefi_install(), "dual_boot": "off"}, sda=windows_disk("/dev/sda"))
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+        self.assertEqual(plan["warnings"], ["Windows on /dev/sda will not be added to the GRUB menu (dual_boot is off)."])
+
+    def test_windows_on_the_install_disk_with_dual_boot_off_does_not_warn(self):
+        plan = self.create({**uefi_install(), "dual_boot": "off"}, nvme=windows_disk("/dev/nvme0n1"))
+        self.assertEqual(plan["warnings"], [])
+
     def test_windows_on_the_install_disk_is_recorded_as_erased(self):
         plan = self.create(nvme=windows_disk("/dev/nvme0n1"))
         self.assertEqual(plan["erases_existing_os"], {

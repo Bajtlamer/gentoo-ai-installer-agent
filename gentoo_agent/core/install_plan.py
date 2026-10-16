@@ -129,8 +129,13 @@ def _check_secure_boot(install: dict, secure_boot: str) -> list[str]:
 
 
 def _foreign_os_warnings(install: dict, records: list[dict]) -> list[str]:
-    return [f"Windows in BIOS mode on {record['disk']} will not be in the GRUB menu."
-            for record in records if record["os"] == "windows-bios" and record["disk"] != install["disk"]]
+    others = [record for record in records if record["disk"] != install["disk"]]
+    warnings = [f"Windows in BIOS mode on {record['disk']} will not be in the GRUB menu."
+                for record in others if record["os"] == "windows-bios"]
+    if install.get("dual_boot") == "off":
+        warnings += [f"Windows on {record['disk']} will not be added to the GRUB menu (dual_boot is off)."
+                     for record in others if record["os"] in ("windows", "windows-bios")]
+    return warnings
 
 
 def _erases_existing_os(install: dict, records: list[dict]) -> dict | None:
