@@ -11,8 +11,10 @@ from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentErr
 
 
 ARCHITECTURES = {
-    "amd64": {"machine": "x86_64", "grub_efi_target": "x86_64-efi", "grub_efi_binary": "grubx64.efi", "bios": True},
-    "arm64": {"machine": "aarch64", "grub_efi_target": "arm64-efi", "grub_efi_binary": "grubaa64.efi", "bios": False},
+    "amd64": {"machine": "x86_64", "grub_efi_target": "x86_64-efi", "grub_efi_binary": "grubx64.efi",
+              "grub_efi_fallback": "BOOTX64.EFI", "bios": True},
+    "arm64": {"machine": "aarch64", "grub_efi_target": "arm64-efi", "grub_efi_binary": "grubaa64.efi",
+              "grub_efi_fallback": "BOOTAA64.EFI", "bios": False},
 }
 MACHINES = {spec["machine"]: name for name, spec in ARCHITECTURES.items()}
 STAGE_BASE = "https://distfiles.gentoo.org/releases/{arch}/autobuilds/"

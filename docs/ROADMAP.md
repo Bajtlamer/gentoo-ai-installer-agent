@@ -45,9 +45,7 @@ These are out of scope for version 1. Each needs a design decision first.
 - Only OpenRC, ext4, GRUB, and one disk are supported, on amd64 and arm64.
   `validated_settings()`, the resolver, and the front ends refuse
   `init_system` values other than `openrc`.
-- arm64 is UEFI only and untested on real hardware. Firmware that boots only
-  `/EFI/BOOT/BOOTAA64.EFI` needs `grub-install --removable`, which is not
-  generated yet. Known risk for the first arm64 installation.
+- arm64 is UEFI only and untested on real hardware.
 - Cancel cannot interrupt a phase that is running, or the drift read; it takes
   effect between phases.
 - `PHASE_PRECONDITION_FAILED` is reserved and never raised.

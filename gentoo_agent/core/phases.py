@@ -18,6 +18,7 @@ MOUNT_ROOT = "/mnt/gentoo"
 DHCPCD_CONF = "/etc/dhcpcd.conf"
 DHCPCD_BEGIN = "# gentoo-agent static network begin"
 DHCPCD_END = "# gentoo-agent static network end"
+RC_AUTOSTART_USER = 'rc_autostart_user="NO"'
 PHASES = [
     "preflight",
     "storage",
@@ -166,7 +167,7 @@ def filesystem_command(target: dict, install: dict) -> str:
             f"efi_device={q(efi)}",
             "mkdir -p \"$mount_root/boot\"",
             "if ! blkid -o value -s TYPE \"$efi_device\" 2>/dev/null | grep -Eq 'vfat|fat32'; then mkfs.vfat -F 32 \"$efi_device\"; fi",
-            "if ! findmnt -rn -T \"$mount_root/boot\" >/dev/null; then mount \"$efi_device\" \"$mount_root/boot\"; fi",
+            "if ! findmnt -rn -M \"$mount_root/boot\" >/dev/null; then mount \"$efi_device\" \"$mount_root/boot\"; fi",
         ]
     lines += ["findmnt -D \"$mount_root\"", "blkid"]
     return "\n".join(lines)
@@ -267,6 +268,10 @@ def configuration_command(target: dict, install: dict) -> str:
         "if [ -n \"$swap_uuid\" ]; then printf '%s\\n' \"UUID=$swap_uuid none swap sw 0 0\" >> /etc/fstab; fi",
         network_setup,
         ssh_setup,
+        # pam_openrc starts user.<name> on login, which needs XDG_RUNTIME_DIR
+        # from elogind; the openrc stage3 has no elogind, so turn it off.
+        f"{{ grep -v '^rc_autostart_user=' /etc/rc.conf || true; printf '%s\\n' {q(RC_AUTOSTART_USER)}; }} > /etc/rc.conf.new",
+        "mv /etc/rc.conf.new /etc/rc.conf",
         "env-update",
         "source /etc/profile || true",
     ])
@@ -382,9 +387,12 @@ def bootloader_command(target: dict, install: dict) -> str:
         ])
     else:
         spec = architecture_spec(install.get("architecture"))
+        # grub-install calls efibootmgr for the boot entry; the --removable copy
+        # in /EFI/BOOT is for firmware that ignores boot entries.
         inside = "\n".join([
-            "emerge --noreplace --verbose sys-boot/grub",
+            "emerge --noreplace --verbose sys-boot/grub sys-boot/efibootmgr",
             f"grub-install --target={q(spec['grub_efi_target'])} --efi-directory=/boot --bootloader-id=Gentoo",
+            f"grub-install --target={q(spec['grub_efi_target'])} --efi-directory=/boot --removable",
             "grub-mkconfig -o /boot/grub/grub.cfg",
         ])
     return "\n".join(["set -eu", chroot(inside)])
@@ -476,6 +484,7 @@ def configuration_check_command(target: dict, install: dict) -> str:
         f"grep -Fqx 'UsePAM yes' {q(MOUNT_ROOT + '/etc/ssh/sshd_config.d/gentoo-agent.conf')}",
         f"test -e {q(MOUNT_ROOT + '/etc/runlevels/default/sshd')}",
         f"test -e {q(MOUNT_ROOT + '/etc/runlevels/default/dhcpcd')}",
+        f"grep -Fqx {q(RC_AUTOSTART_USER)} {q(MOUNT_ROOT + '/etc/rc.conf')}",
     ]
     if install.get("network_method", "dhcp") == "static":
         static = install.get("network_static") or {}
@@ -501,8 +510,9 @@ def bootloader_check_command(install: dict) -> str:
     if install["boot_mode"] == "bios":
         lines.append(f"test -e {q(MOUNT_ROOT + '/boot/grub/i386-pc/core.img')}")
     else:
-        binary = architecture_spec(install.get("architecture"))["grub_efi_binary"]
-        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/' + binary)}")
+        spec = architecture_spec(install.get("architecture"))
+        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/' + spec['grub_efi_binary'])}")
+        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/BOOT/' + spec['grub_efi_fallback'])}")
     lines.append("printf 'bootloader-ok\\n'")
     return "\n".join(lines)
 
