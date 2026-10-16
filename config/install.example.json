@@ -35,6 +35,7 @@
   "root_filesystem": "ext4",
   "swap_mb": 2048,
   "bootloader": "grub",
+  "dual_boot": "auto",
   "init_system": "openrc",
   "hostname": "gentoo",
   "timezone": "Europe/Prague",

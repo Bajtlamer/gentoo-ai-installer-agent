@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--password-source", choices=("prompt", "environment"), default="environment")
     parser.add_argument("--root-password-env", default="GENTOO_ROOT_PASSWORD")
     parser.add_argument("--user-password-env", default="GENTOO_USER_PASSWORD")
+    parser.add_argument("--no-dual-boot", action="store_true",
+                        help="Do not add Windows found on other disks to the GRUB menu")
     parser.add_argument("--allow-disk-erase", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -117,6 +119,7 @@ def main() -> int:
         "generate_missing_passwords": True,
         "root_password_env": args.root_password_env,
         "user_password_env": args.user_password_env,
+        "dual_boot": "off" if args.no_dual_boot else "auto",
     })
 
     write_json(paths.config_dir() / "target.json", target, args.overwrite)

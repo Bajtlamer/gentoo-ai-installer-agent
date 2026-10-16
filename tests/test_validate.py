@@ -161,6 +161,73 @@ REJECTED_ENV_NAMES = (
 VALID_ENV_NAMES = ("ALEX_PW", "GENTOO_ROOT_PASSWORD", "GENTOO_USER_PASSWORD", "ROOT_PW", "TEST_GENTOO_USER_PASSWORD")
 
 
+WINDOWS_ENTRY = {"os": "windows", "disk": "/dev/sda", "esp_uuid": "ABCD-1234",
+                 "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"}
+
+
+def entry(**changes) -> list[dict]:
+    item = dict(WINDOWS_ENTRY)
+    for key, value in changes.items():
+        if value is DROP:
+            item.pop(key)
+        else:
+            item[key] = value
+    return [item]
+
+
+INVALID_DUAL_BOOT = [
+    ("dual_boot unknown", changed("uefi_gpt_user_sudo", dual_boot="on"), "dual_boot"),
+    ("dual_boot bool", changed("uefi_gpt_user_sudo", dual_boot=True), "dual_boot"),
+    ("entries not a list", changed("uefi_gpt_user_sudo", dual_boot_entries=WINDOWS_ENTRY), "dual_boot_entries"),
+    ("entry not an object", changed("uefi_gpt_user_sudo", dual_boot_entries=["/dev/sda"]), "dual_boot_entries"),
+    ("entry extra key", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(title="x")), "dual_boot_entries"),
+    ("entry missing loader", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(loader=DROP)), "dual_boot_entries"),
+    ("os linux", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(os="linux")), "dual_boot_entries"),
+    ("os windows-bios", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(os="windows-bios")), "dual_boot_entries"),
+    ("uuid injection", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(esp_uuid="ABCD-1234'; reboot; '")),
+     "dual_boot_entries"),
+    ("uuid lowercase", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(esp_uuid="abcd-1234")), "dual_boot_entries"),
+    ("uuid newline", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(esp_uuid="ABCD-1234\n")), "dual_boot_entries"),
+    ("uuid int", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(esp_uuid=1234)), "dual_boot_entries"),
+    ("disk injection", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(disk="/dev/sda'; reboot")),
+     "dual_boot_entries"),
+    ("disk outside dev", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(disk="/tmp/sda")), "dual_boot_entries"),
+    ("disk is the install disk", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(disk="/dev/nvme0n1")),
+     "dual_boot_entries"),
+    ("duplicate disk", changed("uefi_gpt_user_sudo", dual_boot_entries=entry() + entry()), "dual_boot_entries"),
+    ("loader elsewhere", changed("uefi_gpt_user_sudo", dual_boot_entries=entry(loader="/EFI/Boot/bootx64.efi")),
+     "dual_boot_entries"),
+    ("loader injection", changed("uefi_gpt_user_sudo",
+                                 dual_boot_entries=entry(loader="/EFI/Microsoft/Boot/bootmgfw.efi\n}")),
+     "dual_boot_entries"),
+]
+
+
+class DualBootValidationTests(unittest.TestCase):
+    def test_hostile_dual_boot_settings_are_refused(self):
+        for name, install, field in INVALID_DUAL_BOOT:
+            with self.subTest(name):
+                with self.assertRaises(AgentError) as caught:
+                    validated_settings(TARGET, install)
+                self.assertEqual(caught.exception.code, CONFIG_INVALID)
+                self.assertEqual(caught.exception.details.get("field"), field)
+
+    def test_entries_need_auto_and_uefi(self):
+        for install in (changed("uefi_gpt_user_sudo", dual_boot="off", dual_boot_entries=entry()),
+                        changed("bios_mbr_user_sudo", dual_boot_entries=entry(disk="/dev/sdb"))):
+            with self.subTest(boot=install["boot_mode"]), self.assertRaises(AgentError) as caught:
+                validated_settings(TARGET, install)
+            self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+
+    def test_valid_dual_boot_settings_are_accepted(self):
+        for install in (changed("uefi_gpt_user_sudo", dual_boot="auto", dual_boot_entries=entry()),
+                        changed("uefi_gpt_user_sudo", dual_boot="off", dual_boot_entries=[]),
+                        changed("bios_mbr_user_sudo", dual_boot="auto", dual_boot_entries=[]),
+                        changed("uefi_gpt_user_sudo", dual_boot=DROP, dual_boot_entries=DROP)):
+            with self.subTest(install=install.get("dual_boot_entries")):
+                validated_settings(TARGET, install)
+
+
 class SettingValidationTests(unittest.TestCase):
     def test_invalid_settings_are_rejected(self):
         for name, install, field in INVALID:

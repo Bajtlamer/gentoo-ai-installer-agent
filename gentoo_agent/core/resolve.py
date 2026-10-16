@@ -15,6 +15,7 @@ import copy
 
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.disks import disk_candidates, inventory_results
+from gentoo_agent.core.foreign_os import detect_foreign_os, dual_boot_entries
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
     CONFIG_INVALID,
@@ -29,11 +30,11 @@ from gentoo_agent.core.validate import ENV_NAME_MESSAGE, password_env_name_ok, v
 SETTABLE = {
     "username", "hostname", "timezone", "boot_mode", "init_system", "swap_mb", "disk",
     "network_method", "network_static", "create_user", "configure_sudo", "set_root_password",
-    "allow_root_password_ssh", "install_user_ssh_key", "bootloader", "user_groups", "architecture",
+    "allow_root_password_ssh", "install_user_ssh_key", "bootloader", "user_groups", "architecture", "dual_boot",
 }
 TYPES = {
     "username": str, "hostname": str, "timezone": str, "boot_mode": str, "init_system": str,
-    "network_method": str, "disk": str, "bootloader": str, "architecture": str,
+    "network_method": str, "disk": str, "bootloader": str, "architecture": str, "dual_boot": str,
     "swap_mb": int,
     "create_user": bool, "configure_sudo": bool, "set_root_password": bool,
     "allow_root_password_ssh": bool, "install_user_ssh_key": bool,
@@ -43,7 +44,7 @@ TYPES = {
 PASSWORD_FIELDS = {"user_password": "user_password_env", "root_password": "root_password_env"}
 DERIVED = {
     "disk", "partition_layout", "partition_table", "disk_must_be_erased", "target_is_disposable",
-    "disk_erase_authorized", "expected_disk_model", "expected_disk_size_gib",
+    "disk_erase_authorized", "expected_disk_model", "expected_disk_size_gib", "dual_boot_entries",
 }
 # Fallbacks fill gaps the user left open; the disk to erase, the boot mode,
 # and the architecture must come from the user, the profile, or the hardware.
@@ -126,8 +127,12 @@ def resolve_config(
     live_boot = _live_boot_mode(results)
     live_arch = live_architecture(inventory)
 
+    foreign = detect_foreign_os(inventory)
+    existing_os = {record["disk"]: record["os"] for record in foreign}
+
     inferred: dict = {"boot_mode": live_boot, "architecture": live_arch}
-    if len(eligible) == 1:
+    # A disk that holds another operating system is never chosen for the user, even when it is the only one.
+    if len(eligible) == 1 and eligible[0]["path"] not in existing_os:
         inferred["disk"] = eligible[0]["path"]
 
     base = {key: value for key, value in copy.deepcopy(defaults).items() if key not in DERIVED}
@@ -165,6 +170,13 @@ def resolve_config(
     if "disk" not in install:
         if not eligible and not excluded:
             raise AgentError(INVENTORY_MISSING, "The inventory lists no disks.", {})
+        if len(eligible) == 1:
+            raise AgentError(
+                DISK_AMBIGUOUS,
+                f"The only eligible disk, {eligible[0]['path']}, holds {existing_os[eligible[0]['path']]}; it is "
+                "never chosen automatically. Name it with the disk setting only if it may be erased.",
+                {"candidates": [eligible[0]["path"]], "excluded": excluded_details, "existing_os": existing_os},
+            )
         raise AgentError(
             DISK_AMBIGUOUS,
             "No single eligible disk was found; choose one with the disk setting.",
@@ -206,8 +218,10 @@ def resolve_config(
     install["disk_must_be_erased"] = True
     install["target_is_disposable"] = target.get("target_is_disposable") is True
     install["disk_erase_authorized"] = target.get("disk_erase_authorized") is True
+    # A preview: create_install_plan derives the same list again from the inventory.
+    install["dual_boot_entries"] = dual_boot_entries(install, foreign)
     for key in ("partition_table", "partition_layout", "disk_must_be_erased", "target_is_disposable",
-                "disk_erase_authorized"):
+                "disk_erase_authorized", "dual_boot_entries"):
         sources[key] = "derived"
 
     validated_settings(target, install)

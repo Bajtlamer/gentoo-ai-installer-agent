@@ -47,5 +47,16 @@ class InitConfigArchitectureTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
 
 
+class InitConfigDualBootTests(unittest.TestCase):
+    def test_dual_boot_defaults_to_auto(self):
+        install, _ = run()
+        self.assertEqual(install["dual_boot"], "auto")
+        self.assertNotIn("dual_boot_entries", install)
+
+    def test_no_dual_boot_turns_it_off(self):
+        install, _ = run("--no-dual-boot")
+        self.assertEqual(install["dual_boot"], "off")
+
+
 if __name__ == "__main__":
     unittest.main()

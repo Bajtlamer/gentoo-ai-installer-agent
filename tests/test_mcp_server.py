@@ -30,9 +30,10 @@ def call(name, arguments=None, *, elicitation_callback=None):
     return anyio.run(go)
 
 
-def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",), machine="x86_64"):
+def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",), machine="x86_64", partitions=None, secure_boot="0"):
+    """partitions replaces the partitions result (default: every disk empty)."""
     from gentoo_agent.core.config import save_json
-    from tests.helpers import fresh_inventory, identity_result, storage_result
+    from tests.helpers import fresh_inventory, identity_result, partitions_result, secure_boot_result, storage_result
 
     save_json(home / "config" / "target.json", {
         "name": "gentoo", "host": "192.0.2.10", "port": 22, "user": "root", "identity_file": "~/.ssh/id_test",
@@ -48,6 +49,8 @@ def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",), machine="x86_64"):
         storage_result(*disks),
         {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
         identity_result(machine),
+        partitions or partitions_result(*disks),
+        secure_boot_result(secure_boot),
     ))
 
 

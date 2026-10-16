@@ -22,6 +22,9 @@ IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
 DEVICE_PATH = re.compile(r"/dev/[A-Za-z0-9._+/-]+")
 # The volume serial of a FAT EFI system partition, as blkid and lsblk print it.
 ESP_UUID = re.compile(r"[0-9A-F]{4}-[0-9A-F]{4}")
+DUAL_BOOT_MODES = {"auto", "off"}
+DUAL_BOOT_ENTRY_KEYS = {"os", "disk", "esp_uuid", "loader"}
+WINDOWS_LOADER = "/EFI/Microsoft/Boot/bootmgfw.efi"
 
 
 IPV4_CIDR = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}")
@@ -109,16 +112,44 @@ def _check_network(install: dict) -> None:
         raise _invalid("network_static", message)
 
 
+def validated_dual_boot_entries(install: dict) -> list[dict]:
+    """dual_boot and the derived dual_boot_entries; every entry must be a UEFI Windows on another disk."""
+    mode = install.get("dual_boot", "auto")
+    if not isinstance(mode, str) or mode not in DUAL_BOOT_MODES:
+        raise _invalid("dual_boot", "dual_boot must be 'auto' or 'off'")
+    entries = install.get("dual_boot_entries", [])
+    if not isinstance(entries, list):
+        raise _invalid("dual_boot_entries", "dual_boot_entries must be a list")
+    if entries and (mode != "auto" or install.get("boot_mode") != "uefi"):
+        raise AgentError(CONFIG_CONFLICT, "dual_boot_entries need dual_boot 'auto' and a UEFI install.",
+                         {"fields": ["dual_boot", "boot_mode", "dual_boot_entries"]})
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != DUAL_BOOT_ENTRY_KEYS:
+            raise _invalid("dual_boot_entries", "each dual_boot_entries item needs exactly os, disk, esp_uuid, and loader")
+        if entry["os"] != "windows":
+            raise _invalid("dual_boot_entries", "dual_boot_entries supports os 'windows' only")
+        disk = entry["disk"]
+        if not isinstance(disk, str) or not DEVICE_PATH.fullmatch(disk) or disk == install.get("disk") or disk in seen:
+            raise _invalid("dual_boot_entries", "each dual boot entry needs its own safe disk path other than the install disk")
+        seen.add(disk)
+        if not isinstance(entry["esp_uuid"], str) or not ESP_UUID.fullmatch(entry["esp_uuid"]):
+            raise _invalid("dual_boot_entries", "esp_uuid must look like ABCD-1234")
+        if entry["loader"] != WINDOWS_LOADER:
+            raise _invalid("dual_boot_entries", f"loader must be {WINDOWS_LOADER}")
+    return entries
+
+
 def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
     disk = install.get("disk", "")
-    if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", disk):
+    if not isinstance(disk, str) or not DEVICE_PATH.fullmatch(disk):
         raise AgentError(CONFIG_INVALID, f"Unsafe disk path in configuration: {disk!r}", {"field": "disk"})
     layout = install.get("partition_layout")
     if not isinstance(layout, list) or not layout:
         raise AgentError(CONFIG_INVALID, "partition_layout is empty", {"field": "partition_layout"})
     for item in layout:
         device = item.get("device", "")
-        if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", device):
+        if not isinstance(device, str) or not DEVICE_PATH.fullmatch(device):
             raise AgentError(CONFIG_INVALID, f"Unsafe partition path in configuration: {device!r}", {"field": "partition_layout"})
     spec = architecture_spec(install.get("architecture"))
     if install.get("boot_mode") == "bios" and not spec["bios"]:
@@ -145,6 +176,7 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
     if not isinstance(init_system, str) or init_system not in INIT_SYSTEMS:
         raise _invalid("init_system", "init_system must be 'openrc'; systemd is not supported in this version")
     _check_network(install)
+    validated_dual_boot_entries(install)
     if "swap_mb" in install:
         swap_mb = install["swap_mb"]
         if not isinstance(swap_mb, int) or isinstance(swap_mb, bool) or not 0 <= swap_mb <= MAX_SWAP_MB:

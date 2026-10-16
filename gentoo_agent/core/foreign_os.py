@@ -12,7 +12,7 @@ import re
 
 from gentoo_agent.core.disks import _block_devices, inventory_results
 from gentoo_agent.core.errors import INVENTORY_MISSING, AgentError
-from gentoo_agent.core.validate import DEVICE_PATH, ESP_UUID
+from gentoo_agent.core.validate import DEVICE_PATH, ESP_UUID, WINDOWS_LOADER
 
 
 PARTITIONS_LABEL = "partitions"
@@ -117,3 +117,17 @@ def parse_secure_boot(inventory: dict) -> str:
     item = inventory_results(inventory).get(SECURE_BOOT_LABEL) or {}
     stdout = item.get("stdout") if item.get("returncode") == 0 else None
     return SECURE_BOOT_STATES.get(stdout.strip(), "unknown") if isinstance(stdout, str) else "unknown"
+
+
+def dual_boot_entries(install: dict, records: list[dict]) -> list[dict]:
+    """GRUB menu entries for every UEFI Windows on a disk other than the install disk.
+
+    Empty with dual_boot 'off' or a BIOS install. Windows in BIOS mode is never an entry.
+    """
+    if install.get("dual_boot", "auto") != "auto" or install.get("boot_mode") != "uefi":
+        return []
+    return [
+        {"os": "windows", "disk": record["disk"], "esp_uuid": record["esp_uuid"], "loader": WINDOWS_LOADER}
+        for record in sorted(records, key=lambda item: item["disk"])
+        if record["os"] == "windows" and record["disk"] != install.get("disk")
+    ]

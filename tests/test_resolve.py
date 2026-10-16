@@ -10,7 +10,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.resolve import SETTABLE, resolve_config
-from tests.helpers import identity_result
+from tests.helpers import identity_result, partitions_result, windows_bios_disk, windows_disk
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -20,8 +20,9 @@ DEFAULTS = json.loads((REPO / "config" / "install.default.json").read_text(encod
 
 
 def inventory(boot: str = "uefi", disks: tuple[str, ...] = ("/dev/nvme0n1",), extra: dict | None = None,
-              storage: dict | None = None, machine: str = "x86_64") -> dict:
-    """extra maps a disk path to additional lsblk fields (rm, tran, ro, size)."""
+              storage: dict | None = None, machine: str = "x86_64", partitions: dict | None = None) -> dict:
+    """extra maps a disk path to additional lsblk fields (rm, tran, ro, size);
+    partitions replaces the default partitions result (every disk empty)."""
     devices = [{"path": path, "type": "disk", "size": 512110190592, "model": "NVMe", "serial": f"S{index}", "wwn": None,
                 **(extra or {}).get(path, {})}
                for index, path in enumerate(disks)]
@@ -29,6 +30,7 @@ def inventory(boot: str = "uefi", disks: tuple[str, ...] = ("/dev/nvme0n1",), ex
         {"label": "boot_mode", "returncode": 0, "stdout": boot if boot == "uefi" else "bios-or-unknown"},
         {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
         identity_result(machine),
+        partitions or partitions_result(*disks),
     ]
     if storage is not None:
         results.append({"label": "storage_json", "returncode": 0, "stdout": json.dumps(storage)})
@@ -322,6 +324,78 @@ class ResolveTests(unittest.TestCase):
     def test_zero_swap_has_no_swap_partition(self):
         layout = resolve({"swap_mb": 0})["install"]["partition_layout"]
         self.assertEqual([item["type"] for item in layout], ["efi-system", "linux-root"])
+
+
+class DualBootResolveTests(unittest.TestCase):
+    def two_disks(self, sda: dict | None = None) -> dict:
+        return inventory(disks=("/dev/nvme0n1", "/dev/sda"),
+                         partitions=partitions_result("/dev/nvme0n1", sda or windows_disk("/dev/sda")))
+
+    def test_windows_on_another_disk_is_previewed_as_a_menu_entry(self):
+        result = resolve({"disk": "/dev/nvme0n1"}, inv=self.two_disks())
+        self.assertEqual(result["install"]["dual_boot"], "auto")
+        self.assertEqual(result["sources"]["dual_boot"], "default")
+        self.assertEqual(result["install"]["dual_boot_entries"], [
+            {"os": "windows", "disk": "/dev/sda", "esp_uuid": "ABCD-1234",
+             "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"},
+        ])
+        self.assertEqual(result["sources"]["dual_boot_entries"], "derived")
+
+    def test_dual_boot_off_previews_no_entries(self):
+        result = resolve({"disk": "/dev/nvme0n1", "dual_boot": "off"}, inv=self.two_disks())
+        self.assertEqual(result["install"]["dual_boot_entries"], [])
+        self.assertEqual(result["sources"]["dual_boot"], "override")
+
+    def test_bios_install_and_windows_in_bios_mode_preview_no_entries(self):
+        bios = inventory(boot="bios", disks=("/dev/nvme0n1", "/dev/sda"),
+                         partitions=partitions_result("/dev/nvme0n1", windows_disk("/dev/sda")))
+        self.assertEqual(resolve({"disk": "/dev/nvme0n1"}, inv=bios)["install"]["dual_boot_entries"], [])
+        legacy = self.two_disks(windows_bios_disk("/dev/sda"))
+        self.assertEqual(resolve({"disk": "/dev/nvme0n1"}, inv=legacy)["install"]["dual_boot_entries"], [])
+
+    def test_no_windows_previews_no_entries(self):
+        self.assertEqual(resolve({})["install"]["dual_boot_entries"], [])
+
+    def test_the_only_eligible_disk_is_not_inferred_when_it_holds_windows(self):
+        for disk in (windows_disk("/dev/sda"), windows_bios_disk("/dev/sda")):
+            inv = inventory(disks=("/dev/sda",), partitions=partitions_result(disk))
+            with self.subTest(os=disk["children"][0]["parttype"]), self.assertRaises(AgentError) as caught:
+                resolve({}, inv=inv)
+            self.assertEqual(caught.exception.code, DISK_AMBIGUOUS)
+            self.assertEqual(caught.exception.details["candidates"], ["/dev/sda"])
+            self.assertIn("never chosen automatically", caught.exception.message)
+
+    def test_a_windows_disk_named_explicitly_is_accepted_without_an_entry_for_itself(self):
+        inv = inventory(disks=("/dev/sda",), partitions=partitions_result(windows_disk("/dev/sda")))
+        result = resolve({"disk": "/dev/sda"}, inv=inv)
+        self.assertEqual(result["install"]["disk"], "/dev/sda")
+        self.assertEqual(result["install"]["dual_boot_entries"], [])
+
+    def test_dual_boot_entries_cannot_be_set(self):
+        for layer in ("overrides", "profile", "fallbacks"):
+            with self.subTest(layer=layer), self.assertRaises(AgentError) as caught:
+                value = [{"os": "windows", "disk": "/dev/sda", "esp_uuid": "ABCD-1234",
+                          "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"}]
+                if layer == "overrides":
+                    resolve({"dual_boot_entries": value})
+                elif layer == "profile":
+                    resolve(profile={"dual_boot_entries": value})
+                else:
+                    resolve({}, {"dual_boot_entries": value})
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+            self.assertEqual(caught.exception.details["keys"], ["dual_boot_entries"])
+
+    def test_dual_boot_must_be_auto_or_off(self):
+        with self.assertRaises(AgentError) as caught:
+            resolve({"dual_boot": "always"})
+        self.assertEqual(caught.exception.details, {"field": "dual_boot"})
+
+    def test_missing_partition_list_is_refused(self):
+        inv = inventory()
+        inv["results"] = [item for item in inv["results"] if item["label"] != "partitions"]
+        with self.assertRaises(AgentError) as caught:
+            resolve({}, inv=inv)
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
 
 if __name__ == "__main__":
