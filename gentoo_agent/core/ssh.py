@@ -39,6 +39,15 @@ READ_ONLY_COMMANDS = {
     "errors": "dmesg --level=err,warn 2>/dev/null | tail -n 200 || true",
 }
 
+HOST_KEY_FAILURE = "Host key verification failed"
+HOST_KEY_MESSAGE = ("The target's SSH host key is unknown or has changed. Verify its fingerprint on the target "
+                    "console, then add it to known_hosts (see docs/guides/cli-install.md).")
+
+
+def host_key_failed(result: dict) -> bool:
+    """True when ssh refused the connection because of the host key (strict checking)."""
+    return result.get("returncode") == 255 and HOST_KEY_FAILURE in str(result.get("stderr") or "")
+
 
 def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
     # OpenSSH joins all arguments after the host into one remote command. Quote

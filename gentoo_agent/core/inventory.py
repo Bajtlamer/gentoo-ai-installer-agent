@@ -9,8 +9,8 @@ from typing import Callable
 
 from gentoo_agent.core.config import load_json, now, save_json
 from gentoo_agent.core import paths
-from gentoo_agent.core.errors import SSH_UNREACHABLE, AgentError
-from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
+from gentoo_agent.core.errors import HOST_KEY_UNKNOWN, SSH_UNREACHABLE, AgentError
+from gentoo_agent.core.ssh import HOST_KEY_MESSAGE, READ_ONLY_COMMANDS, host_key_failed, run_ssh_readonly
 from gentoo_agent.core.state import load_state, save_state
 
 
@@ -33,6 +33,8 @@ def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = 
                              {"host": target.get("host"), "label": label}) from exc
     if all(_unreachable(item) for item in results):
         # An inventory without a single answer from the target is not evidence: never save it.
+        if any(host_key_failed(item) for item in results):
+            raise AgentError(HOST_KEY_UNKNOWN, HOST_KEY_MESSAGE, {"host": target["host"]})
         raise AgentError(SSH_UNREACHABLE, "Could not reach the target over SSH; check the address, key, and host key.",
                          {"host": target["host"]})
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
