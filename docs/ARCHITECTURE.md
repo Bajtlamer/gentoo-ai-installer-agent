@@ -123,7 +123,8 @@ Rules that hold across the code:
    `PHASE_FAILED`. Every program runs as one `sh -c` invocation through
    `core/ssh.remote_shell()`. The worker passes its worker-lock descriptor as
    `keep_fds`. With `keep_fds`, `remote_shell()` does not start ssh directly:
-   it starts a small holder process (`ssh.HOLDER`, run by the interpreter the
+   it starts a small holder process (`ssh.HOLDER`, whose first line is the
+   marker comment `# gentoo-agent-ssh-holder` so `pgrep -f` finds it, run by the interpreter the
    worker passes as `holder_python`, `sys.executable`, with `-I` so modules in
    the working directory cannot shadow the standard library) with
    `pass_fds`, and the holder runs ssh as its child with stdin, stdout, and

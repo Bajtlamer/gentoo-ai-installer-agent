@@ -199,8 +199,10 @@ still alive:
   worker lock, the run stays active whatever the recorded process id says.
 - A worker killed during a phase leaves its ssh running the remote program,
   under a small holder process (a `python -I -c ...` process whose child is
-  ssh). The holder keeps the worker lock until ssh exits, so the run stays
-  `running` until the remote program ends; only then can you resume.
+  ssh, recognizable by the marker `gentoo-agent-ssh-holder` in its command
+  line). The holder keeps the worker lock until ssh exits, so the run stays
+  `running` until the remote program ends; only then can you resume. If the
+  remote program hangs, see "Clearing a run whose remote program hangs" below.
 - A run is also `interrupted` when the worker itself was interrupted during a
   phase ("Installation was interrupted.").
 
@@ -215,6 +217,41 @@ To continue:
 A run that is stuck in `running` with a live worker is usually waiting for a
 long phase (`base-system`, `kernel`). The log gets an entry only when each step
 ends.
+
+### Clearing a run whose remote program hangs
+
+A run stays `running` for as long as the ssh of its current phase runs, even
+when the worker is gone, and `run cancel` takes effect only between phases.
+When you are sure the remote program hangs (check it on the target's
+console), stop it on the operator machine:
+
+1. Find the holder process. Its command line always contains the marker
+   `gentoo-agent-ssh-holder`:
+
+   ```sh
+   pgrep -fl gentoo-agent-ssh-holder
+   ```
+
+   Each match is the holder of one phase. With more than one match, confirm
+   the target address in the ssh command line with
+   `ps -o pid,pgid,command -p <pid>`.
+2. Kill the holder's whole process group. The holder starts its own session,
+   so its process id is also the group id:
+
+   ```sh
+   kill -KILL -- -<pid>
+   ```
+
+   Never kill only the holder: its ssh child would keep running the remote
+   program without the worker lock, and a resume could then start a second
+   program on the same disk.
+3. Run `gentoo-agent run status <run_id>`. With the worker gone the run
+   becomes `interrupted`; with the worker still alive the phase fails and the
+   run becomes `failed`.
+4. The remote side may still be running after ssh is gone. Check on the
+   target's console that nothing from the phase is left (for example with
+   `ps aux`), then resume or re-plan as described in
+   [Disk mounted after a failed run](#disk-mounted-after-a-failed-run).
 
 ## RUN_ALREADY_ACTIVE
 
