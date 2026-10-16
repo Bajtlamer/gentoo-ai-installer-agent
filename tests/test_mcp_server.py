@@ -454,6 +454,21 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["code"], "SSH_UNREACHABLE")
 
+    def test_verify_install_reports_a_host_key_failure(self):
+        from tests.helpers import temp_home
+
+        def refused(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            return {"label": label, "command": command, "returncode": 255, "stdout": "",
+                    "stderr": "Host key verification failed.\r\n", "finished_at": "t"}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", refused), \
+                patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            plan_id = self.create(home)
+            result = call("verify_install", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "HOST_KEY_UNKNOWN")
+        self.assertEqual(result.structured_content["details"]["host"], "192.0.2.10")
+
     def test_verify_install_refuses_a_tampered_check(self):
         import copy
         from gentoo_agent.core.install_plan import load_install_plan
