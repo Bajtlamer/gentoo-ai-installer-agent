@@ -17,7 +17,7 @@ from pathlib import Path
 from gentoo_agent.core import paths
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, now, save_json
-from gentoo_agent.core.disks import disk_from_inventory
+from gentoo_agent.core.disks import disk_candidates, disk_from_inventory
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
     CONFIG_INVALID,
@@ -88,6 +88,15 @@ def _check_review(target: dict, install: dict, project_plan: dict, inventory: di
                          {"errors": review["errors"]})
 
 
+def _check_disk_eligible(inventory: dict, path: str) -> None:
+    """The same exclusions as resolve_config (removable, USB, read-only, mounted), for every front end."""
+    _, excluded = disk_candidates(inventory)
+    rejected = next((item for item in excluded if item["path"] == path), None)
+    if rejected is not None:
+        raise AgentError(CONFIG_CONFLICT, f"Disk {path} cannot be installed to: {rejected['reason']}.",
+                         {"field": "disk", "disk": path, "reason": rejected["reason"]})
+
+
 def _check_expected_disk(install: dict, disk: dict) -> None:
     """The operator's expected model and size, checked against the inventory before anything is approved.
 
@@ -116,6 +125,7 @@ def create_install_plan(target: dict, install: dict, project_plan: dict, invento
                          f"but the live system is {live}.", {"configured": install.get("architecture"), "live": live})
     _check_review(target, install, project_plan, inventory)
     disk = disk_from_inventory(inventory, install["disk"])
+    _check_disk_eligible(inventory, disk["path"])
     _check_expected_disk(install, disk)
     destructive = {item["id"]: bool(item.get("destructive", True)) for item in project_plan.get("phases", [])}
     plan = {

@@ -253,7 +253,11 @@ all of these hold, in this order:
    install on a BIOS-booted live system.
 5. The disk is in the inventory, and a disk without a serial number or WWN has
    no twin of the same size and model (`DISK_AMBIGUOUS`).
-6. When set, `expected_disk_model` equals the inventory's model and
+6. The disk is eligible: not removable, not attached over USB, not read-only,
+   and without a mounted partition (`CONFIG_CONFLICT`, with `details.reason`).
+   This is the same rule `resolve_config` applies, so a hand-written
+   `install.json` cannot select such a disk either.
+7. When set, `expected_disk_model` equals the inventory's model and
    `expected_disk_size_gib` is within 1 GiB of the inventory's size
    (`CONFIG_INVALID`).
 
