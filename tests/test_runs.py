@@ -357,5 +357,71 @@ class LogRobustnessTests(unittest.TestCase):
         self.assertEqual(page["next_offset"], 3)
 
 
+class WorkerLockTests(unittest.TestCase):
+    def start(self, pid: int) -> str:
+        run_id = runs.new_run_id()
+        runs.acquire_lock(run_id, {"run_id": run_id, "plan_id": "a" * 16, "status": "running", "pid": pid,
+                                   "started_at": runs.now()})
+        return run_id
+
+    def test_held_worker_lock_keeps_the_run_active_even_if_the_pid_is_gone(self):
+        with temp_home():
+            run_id = self.start(dead_pid())
+            handle = runs.hold_worker_lock(run_id)
+            try:
+                self.assertEqual(runs.run_status(run_id)["status"], "running")
+                with self.assertRaises(AgentError) as caught:
+                    runs.acquire_lock(runs.new_run_id(), {"status": "starting", "pid": None, "started_at": runs.now()})
+                self.assertEqual(caught.exception.code, "RUN_ALREADY_ACTIVE")
+            finally:
+                handle.close()
+
+    def test_released_worker_lock_ends_the_run_even_if_the_pid_is_alive(self):
+        with temp_home():
+            run_id = self.start(os.getpid())
+            runs.hold_worker_lock(run_id).close()
+            self.assertEqual(runs.run_status(run_id)["status"], "interrupted")
+
+    def test_a_second_worker_cannot_hold_the_same_run(self):
+        with temp_home():
+            run_id = self.start(os.getpid())
+            handle = runs.hold_worker_lock(run_id)
+            try:
+                with self.assertRaises(AgentError) as caught:
+                    runs.hold_worker_lock(run_id)
+                self.assertEqual(caught.exception.code, "RUN_ALREADY_ACTIVE")
+            finally:
+                handle.close()
+
+    def test_without_a_lock_file_the_pid_probe_decides(self):
+        with temp_home():
+            run_id = self.start(dead_pid())
+            self.assertIsNone(runs.worker_lock_held(run_id))
+            self.assertFalse(runs.worker_lock_path(run_id).exists())
+            self.assertEqual(runs.run_status(run_id)["status"], "interrupted")
+
+    def test_taking_the_worker_lock_waits_for_the_mutex(self):
+        # Probes run under the mutex; taking the lock under it too means a probe never sees
+        # a lock file that exists but is not yet locked, and never makes the worker's flock fail.
+        with temp_home():
+            run_id = self.start(os.getpid())
+            handles = []
+            with runs._mutex():
+                thread = threading.Thread(target=lambda: handles.append(runs.hold_worker_lock(run_id)))
+                thread.start()
+                thread.join(0.3)
+                waiting = thread.is_alive()
+                file_before = runs.worker_lock_path(run_id).exists()
+            thread.join(5)
+            try:
+                self.assertTrue(waiting)
+                self.assertFalse(file_before)
+                self.assertEqual(len(handles), 1)
+                self.assertIs(runs.worker_lock_held(run_id), True)
+            finally:
+                for handle in handles:
+                    handle.close()
+
+
 if __name__ == "__main__":
     unittest.main()

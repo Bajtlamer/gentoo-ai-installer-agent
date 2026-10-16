@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import gentoo_agent
@@ -101,6 +102,8 @@ def start_run(
         handing_over = True
         process.stdin.write(json.dumps(payload).encode("utf-8"))
         process.stdin.close()
+        # Wait for the worker in the background so a long-lived front end (the MCP server) leaves no zombies.
+        threading.Thread(target=process.wait, name=f"reap-{run_id}", daemon=True).start()
     except BaseException as exc:
         if process is not None:
             # A worker that never got its payload must not linger.

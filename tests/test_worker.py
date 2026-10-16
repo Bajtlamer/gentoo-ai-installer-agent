@@ -164,6 +164,37 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(record["status"], "failed")
         self.assertFalse(lock_exists)
 
+    def test_worker_holds_its_lock_while_executing(self):
+        seen = {}
+
+        def fake_execute(plan, run_id, records, phase_ids=None):
+            seen["held"] = runs.worker_lock_held(run_id)
+            return {"status": "installed_pending_reboot", "authentication_applied": True}
+
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            with patch.object(worker, "execute_plan", side_effect=fake_execute):
+                worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {}})
+            held_after = runs.worker_lock_held(run_id)
+        self.assertIs(seen["held"], True)
+        self.assertIs(held_after, False)
+
+    def test_a_second_worker_for_a_held_run_leaves_the_run_lock_alone(self):
+        with temp_home():
+            plan = approved_plan()
+            run_id = self.new_run(plan)
+            handle = runs.hold_worker_lock(run_id)
+            try:
+                with patch.object(worker, "execute_plan") as execute:
+                    result = worker.run(run_id, {"password_records": "root:x\n", "generated_credentials": {}})
+                holder = runs.lock_path().read_text(encoding="utf-8")
+            finally:
+                handle.close()
+        execute.assert_not_called()
+        self.assertEqual(result["error"]["code"], "RUN_ALREADY_ACTIVE")
+        self.assertEqual(holder, run_id)
+
     @unittest.skipUnless(shutil.which("ssh"), "OpenSSH client not installed")
     def test_real_worker_process_reports_an_unreachable_target(self):
         with temp_home():

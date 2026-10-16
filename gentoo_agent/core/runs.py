@@ -5,6 +5,12 @@ under one inter-process mutex (flock on runs/.mutex). Readers of run.json do
 not need it because writes are atomic. The mutex is not re-entrant, so public
 functions take it once and delegate to private *_unlocked helpers.
 
+A worker holds runs/<run_id>/worker.lock (flock) for its whole life; liveness
+is read from that lock, with a pid probe only before the worker takes it (and
+for old runs without the file). The worker takes the lock under the mutex, as
+every probe runs under it, so a probe never sees a lock file that exists but
+is not locked yet, and a probe's brief flock never makes the worker's fail.
+
 Background runs are supported on macOS and Linux only.
 """
 
@@ -137,6 +143,49 @@ def pid_alive(pid: int | None) -> bool:
     return True
 
 
+def worker_lock_path(run_id: str) -> Path:
+    return run_dir(run_id) / "worker.lock"
+
+
+def hold_worker_lock(run_id: str):
+    """Take the run's worker lock and return the open file; the lock lasts until it is closed or the process exits."""
+    path = worker_lock_path(run_id)
+    with _mutex():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            raise AgentError(RUN_ALREADY_ACTIVE, f"Another worker already holds run {run_id}.",
+                             {"run_id": run_id}) from None
+        except BaseException:
+            handle.close()
+            raise
+    return handle
+
+
+def worker_lock_held(run_id: str) -> bool | None:
+    """True while a worker holds the run's lock, False after it let go, None if no worker ever took it.
+
+    Never creates the file. Production callers hold the mutex (see the module docstring)."""
+    if fcntl is None:
+        return None
+    try:
+        handle = worker_lock_path(run_id).open("r", encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None  # unreadable: let the pid probe decide
+    with handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
 def lock_path() -> Path:
     return paths.runs_dir() / "active.lock"
 
@@ -174,7 +223,13 @@ def _record_active(record: dict | None, fallback: bool) -> bool:
         return dt.datetime.now(dt.timezone.utc) - started < STARTING_GRACE
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return fallback
-    return pid_alive(pid)
+    run_id = record.get("run_id")
+    held = worker_lock_held(run_id) if isinstance(run_id, str) and RUN_ID_PATTERN.fullmatch(run_id) else None
+    if held is None:
+        return pid_alive(pid)
+    if not held:
+        pid_alive(pid)  # reaps the worker if it was our child
+    return held
 
 
 def _holder_active(run_id: str) -> bool:

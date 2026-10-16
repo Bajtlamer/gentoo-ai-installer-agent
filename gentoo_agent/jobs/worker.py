@@ -3,7 +3,8 @@
 Started only by jobs.launcher.start_run(). It reads and validates the start
 payload from stdin, claims the run, re-checks the approval, writes generated
 credentials for one-time pickup (pending until the plan returns), runs the
-plan, and always releases the run lock. A missing or malformed payload fails
+plan, and always releases the run lock. It holds runs/<run_id>/worker.lock
+from before the claim until after the run lock is released. A missing or malformed payload fails
 the run without executing anything.
 """
 
@@ -17,7 +18,7 @@ from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.errors import CONFIG_INVALID, PLAN_HASH_MISMATCH, AgentError
 from gentoo_agent.core.runner import execute_plan
-from gentoo_agent.core.runs import claim_run, release_lock, update_run, write_credentials
+from gentoo_agent.core.runs import claim_run, hold_worker_lock, release_lock, update_run, write_credentials
 
 
 PAYLOAD_KEYS = {"password_records", "generated_credentials"}
@@ -75,6 +76,12 @@ def run(run_id: str, payload: dict) -> dict:
         return {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
 
     try:
+        # Taken before claim_run, so a run is never "running" without a held lock.
+        worker_lock = hold_worker_lock(run_id)
+    except AgentError as error:
+        # Another worker owns this run: leave its record and run lock alone.
+        return {"status": "failed", "error": error.to_dict(), "authentication_applied": False}
+    try:
         try:
             record = claim_run(run_id, os.getpid())
         except AgentError as error:
@@ -98,7 +105,10 @@ def run(run_id: str, payload: dict) -> dict:
         save_credentials(bool(result.get("authentication_applied")))
         return result
     finally:
-        release_lock(run_id)
+        try:
+            release_lock(run_id)
+        finally:
+            worker_lock.close()
 
 
 def main(argv: list[str] | None = None) -> int:
