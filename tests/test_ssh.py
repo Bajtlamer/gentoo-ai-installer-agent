@@ -81,6 +81,20 @@ class HolderProcessTests(unittest.TestCase):
                 if stream:
                     self.assertEqual(seen, ["hello\n", "done\n"])
 
+    def test_holder_reports_an_ssh_that_cannot_start_and_exits_255(self):
+        missing = ["/nonexistent/gentoo-agent-test/ssh"]
+        for stream in (True, False):
+            with self.subTest(stream=stream):
+                with temp_home(), patch.object(ssh, "ssh_base", lambda target: list(missing)):
+                    result = ssh.remote_shell(TARGET, "label", "true", stream=stream,
+                                              keep_fds=(self.lock.fileno(),), holder_python=sys.executable)
+                self.assertEqual(result["returncode"], 255)
+                text = result["stdout"] if stream else result["stderr"]
+                lines = text.splitlines()
+                self.assertEqual(len(lines), 1, text)
+                self.assertTrue(lines[0].startswith("gentoo-agent holder: cannot run ssh: "), text)
+                self.assertIn("/nonexistent/gentoo-agent-test/ssh", lines[0])
+
     def test_signal_death_of_ssh_passes_through_the_holder(self):
         with temp_home(), patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "kill -TERM $$", "x"]):
             result = ssh.remote_shell(TARGET, "label", "true", stream=True, keep_fds=(self.lock.fileno(),), holder_python=sys.executable)

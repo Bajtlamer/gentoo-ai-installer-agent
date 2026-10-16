@@ -76,10 +76,15 @@ def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
 # descriptors (pass_fds), it holds them until ssh exits: OpenSSH closes every
 # inherited descriptor above stderr at startup, so it cannot hold them itself.
 # subprocess.call closes them for ssh (close_fds) and passes stdin, stdout,
-# and stderr through unchanged.
+# and stderr through unchanged. If ssh cannot be started, it writes one line
+# to stderr and exits 255, the code ssh itself uses for its own errors.
 HOLDER = (
     "import os, signal, subprocess, sys\n"
-    "code = subprocess.call(sys.argv[1:])\n"
+    "try:\n"
+    "    code = subprocess.call(sys.argv[1:])\n"
+    "except OSError as error:\n"
+    "    sys.stderr.write(f'gentoo-agent holder: cannot run ssh: {error}\\n')\n"
+    "    sys.exit(255)\n"
     "if code < 0:\n"
     "    signal.signal(-code, signal.SIG_DFL)\n"
     "    os.kill(os.getpid(), -code)\n"
