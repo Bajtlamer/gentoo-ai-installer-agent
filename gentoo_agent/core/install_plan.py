@@ -35,6 +35,7 @@ PLAN_ID_LENGTH = 16
 PLAN_ID_PATTERN = re.compile(r"[0-9a-f]{16}")
 UNHASHED_FIELDS = {"plan_id", "plan_hash", "created_at"}
 INVENTORY_MAX_AGE = dt.timedelta(hours=24)
+INVENTORY_MAX_SKEW = dt.timedelta(minutes=5)
 GIB = 1024 ** 3
 TARGET_FIELDS = ("name", "host", "port", "user", "identity_file", "known_hosts_file")
 
@@ -71,9 +72,13 @@ def _check_inventory_fresh(inventory: dict) -> None:
         moment = dt.datetime.fromisoformat(collected) if isinstance(collected, str) else None
     except ValueError:
         moment = None
-    if moment is None or moment.tzinfo is None or dt.datetime.now(dt.timezone.utc) - moment > INVENTORY_MAX_AGE:
+    current = dt.datetime.now(dt.timezone.utc)
+    if moment is None or moment.tzinfo is None or current - moment > INVENTORY_MAX_AGE:
         raise AgentError(INVENTORY_MISSING, "The latest inventory is undated or older than 24 hours; run inspect again.",
                          {"collected_at": collected})
+    if moment - current > INVENTORY_MAX_SKEW:
+        raise AgentError(INVENTORY_MISSING, "The latest inventory is dated more than 5 minutes in the future; "
+                         "check the clock and run inspect again.", {"collected_at": collected})
 
 
 def _check_review(target: dict, install: dict, project_plan: dict, inventory: dict) -> None:
