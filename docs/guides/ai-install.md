@@ -171,7 +171,7 @@ The tools in workflow order:
 | `start_install(plan_id)` | Starts the approved plan in the background. Erases the target disk. Returns `run_id`. |
 | `run_phase(plan_id, phases)` | Runs only the listed phases of an approved plan, in plan order, in the background. |
 | `get_run_status(run_id)` | Run status, phase index, current phase, and last error. Reports `credentials_waiting` and `credentials_applied`, never passwords. |
-| `get_run_log(run_id, offset, limit)` | Reads part of a run's log; offset and limit count log lines. |
+| `get_run_log(run_id, offset, limit)` | Reads part of a run's log; offset and limit count log lines. Each `stdout`/`stderr` keeps its last 16,000 characters (`stdout_truncated` gives the original length), and a page stops at about 1,000,000 characters, so continue from `next_offset`. The full output stays in `runs/<run_id>/log.jsonl`. |
 | `cancel_run(run_id)` | Stops a run at the next phase boundary. |
 | `resume_run(run_id)` | Starts a new run of the same approved plan; completed phases are checked and skipped. |
 | `verify_install(plan_id)` | Runs each phase's read-only check from the stored plan over SSH and reports which phases are complete. |
@@ -188,7 +188,7 @@ Resources:
 |---|---|
 | `gentoo://plan/{plan_id}` | The same view of a plan as `get_plan`. |
 | `gentoo://run/{run_id}/state` | The run record. |
-| `gentoo://run/{run_id}/log` | The first 500 log lines. |
+| `gentoo://run/{run_id}/log` | The first 500 log lines, with the same output and page limits as `get_run_log`. |
 
 The prompt `install_gentoo(request)` gives the model the workflow in seven
 steps: refresh the hardware and ask which disk if several are listed; translate
