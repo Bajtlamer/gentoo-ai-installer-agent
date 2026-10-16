@@ -15,7 +15,7 @@ import shutil
 
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, load_plan, save_json
-from gentoo_agent.core.disks import IDENTITY_LABEL, parse_disk_identities
+from gentoo_agent.core.disks import IDENTITY_LABEL, disk_candidates, parse_disk_identities
 from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
@@ -127,22 +127,36 @@ def identity_size_gib(inventory: dict, disk_path: str | None) -> float | None:
 
 
 def choose_disk(inventory: dict) -> dict:
-    disks = disks_from_inventory(inventory)
-    if disks:
-        print("\nDetected disks:")
-        for disk in disks:
-            print(
-                f"  {disk.get('path', disk.get('name'))}: "
-                f"{disk.get('size', '?')}, model={disk.get('model') or 'unknown'}, "
-                f"mounts={disk.get('mountpoints') or 'none'}"
-            )
-        default = disks[0].get("path") or disks[0].get("name")
-        selected = ask("Disk to use", default)
-        for disk in disks:
-            if (disk.get("path") or disk.get("name")) == selected:
-                return disk
-    selected = ask("Disk to use, for example /dev/sda")
-    return {"path": selected, "size": None, "model": None}
+    """Offer only the disks disk_candidates() accepts; the same rule plan create enforces."""
+    try:
+        eligible, excluded = disk_candidates(inventory)
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
+    if not eligible:
+        listed = ", ".join(f"{item['path']} ({item['reason']})" for item in excluded) or "none"
+        raise SystemExit(
+            "No eligible disk was found. Removable, USB, read-only, and mounted disks are excluded. "
+            f"Excluded: {listed}"
+        )
+    sizes = {disk.get("path") or disk.get("name"): disk.get("size") for disk in disks_from_inventory(inventory)}
+    print("\nEligible disks:")
+    for disk in eligible:
+        print(f"  {disk['path']}: {disk['size_bytes'] / 1024 ** 3:.1f} GiB, model={disk['model'] or 'unknown'}")
+    if excluded:
+        print("Excluded disks (cannot be installed to):")
+        for item in excluded:
+            print(f"  {item['path']}: {item['reason']}")
+    by_path = {disk["path"]: disk for disk in eligible}
+    reasons = {item["path"]: item["reason"] for item in excluded}
+    while True:
+        selected = ask("Disk to use", eligible[0]["path"])
+        if selected in by_path:
+            disk = by_path[selected]
+            return {"path": disk["path"], "model": disk["model"] or None, "size": sizes.get(disk["path"])}
+        if selected in reasons:
+            print(f"{selected} cannot be installed to: {reasons[selected]}")
+        else:
+            print(f"{selected} is not an eligible disk. Choose one of: {', '.join(by_path)}")
 
 
 def snapshot_handbook(target: dict) -> str | None:
