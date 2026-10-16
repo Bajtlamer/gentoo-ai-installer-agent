@@ -223,7 +223,7 @@ def _record_active(record: dict | None, fallback: bool) -> bool:
     run_id = record.get("run_id")
     held = worker_lock_held(run_id) if isinstance(run_id, str) and RUN_ID_PATTERN.fullmatch(run_id) else None
     if held:
-        return True  # a held worker lock means a live worker (or its ssh child), whatever the pid says
+        return True  # a held worker lock means a live worker (or its ssh holder), whatever the pid says
     pid = record.get("pid")
     if pid is None:
         started = _parse_aware(record.get("started_at"))

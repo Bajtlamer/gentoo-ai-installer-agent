@@ -1,6 +1,7 @@
 import datetime as dt
 import errno
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -468,19 +469,24 @@ class WorkerLockTests(unittest.TestCase):
                 for handle in handles:
                     handle.close()
 
-    @unittest.skipUnless(os.name == "posix", "flock and SIGKILL are POSIX only")
-    def test_lock_outlives_a_killed_worker_while_its_ssh_child_runs(self):
-        # The child takes the worker lock, starts a remote program the way the worker does
-        # (ssh replaced by `sleep 3`), and SIGKILLs itself while the program runs.
+    @unittest.skipUnless(os.name == "posix" and shutil.which("ssh"), "needs POSIX and an OpenSSH client")
+    def test_lock_outlives_a_killed_worker_while_its_real_ssh_runs(self):
+        # The child takes the worker lock, runs a real ssh through remote_shell the way the
+        # worker does, and SIGKILLs itself while ssh runs. ssh closes inherited descriptors
+        # at startup, so only the holder process keeps the lock. ProxyCommand=sleep 3
+        # stands in for the connection: no host is contacted.
         child_code = textwrap.dedent("""
             import os, signal, sys, threading, time
             from unittest.mock import patch
             from gentoo_agent.core import runs, ssh
             handle = runs.hold_worker_lock(sys.argv[1])
-            with patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "sleep 3", "sleep"]):
+            command = ["ssh", "-F", "/dev/null", "-o", "ProxyCommand=sleep 3", "-o", "BatchMode=yes",
+                       "nohost.invalid"]
+            with patch.object(ssh, "ssh_base", lambda target: command):
                 threading.Thread(target=ssh.remote_shell, daemon=True, args=({}, "label", "true"),
-                                 kwargs={"stream": True, "keep_fds": (handle.fileno(),)}).start()
-                time.sleep(0.5)
+                                 kwargs={"stream": True, "keep_fds": (handle.fileno(),),
+                                         "holder_python": sys.executable}).start()
+                time.sleep(0.8)
                 os.kill(os.getpid(), signal.SIGKILL)
         """)
         with temp_home() as home:

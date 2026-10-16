@@ -122,11 +122,20 @@ Rules that hold across the code:
    then the check again as verification. A nonzero exit stops the run with
    `PHASE_FAILED`. Every program runs as one `sh -c` invocation through
    `core/ssh.remote_shell()`. The worker passes its worker-lock descriptor as
-   `keep_fds`, which `remote_shell()` hands to the ssh process with
-   `pass_fds`. The ssh process then shares the lock's open file description,
-   so a worker killed with SIGKILL during a phase keeps the run active until
-   that remote program has ended; a resume cannot start a second program on
-   the same disk.
+   `keep_fds`. With `keep_fds`, `remote_shell()` does not start ssh directly:
+   it starts a small holder process (`ssh.HOLDER`, run by the interpreter the
+   worker passes as `holder_python`, `sys.executable`, with `-I` so modules in
+   the working directory cannot shadow the standard library) with
+   `pass_fds`, and the holder runs ssh as its child with stdin, stdout, and
+   stderr inherited and exits with ssh's return code. OpenSSH closes every
+   inherited descriptor above stderr at startup, so ssh cannot hold the lock
+   itself; the holder shares the lock's open file description until ssh
+   exits. A worker killed with SIGKILL during a phase therefore keeps the run
+   active until that ssh, and with it the remote program, has ended; a resume
+   cannot start a second program on the same disk. The holder starts its own
+   session, and a timeout kills the whole process group (holder, ssh, and any
+   ProxyCommand), so no ssh is left behind. Calls without `keep_fds` run ssh
+   directly.
 10. **Run records.** Every step is appended to `runs/<run_id>/log.jsonl`
     (phase, kind, label, command, return code, output). `run.json` tracks the
     status, the current phase, the completed phases, and the last error. A
@@ -142,9 +151,9 @@ Interrupted runs are detected lazily. When `run_status()` reads an active run
 whose worker is gone, it marks the run `interrupted` and releases the lock.
 Liveness is read from the worker's flock: while a worker is alive it holds
 `runs/<run_id>/worker.lock`, and the kernel drops the lock when the process
-ends (and the ssh process of the current phase, which inherits the
-descriptor, has ended too), so a reused process id cannot make a dead worker
-look alive. A held lock
+ends (and the holder process of the current phase, which keeps the
+descriptor until its ssh exits, has ended too), so a reused process id cannot
+make a dead worker look alive. A held lock
 means the run is active even when no process id was recorded. The recorded
 process id is the fallback only before the worker took the lock, for runs
 without the file, and when `flock` itself fails on the lock file. There is no startup scan.
@@ -193,7 +202,7 @@ current code does not write to it.
 | Run lock | `runs/active.lock` under the `runs/.mutex` `fcntl` mutex | Two runs at once (`RUN_ALREADY_ACTIVE`). |
 | Claim | `runs.claim_run()` | A worker running a run it does not own, or a run that is no longer `starting`. `execute_plan()` refuses unclaimed runs. |
 | Drift check | `core/disks.check_drift()` | Writing to a disk that differs from the approved one (`TARGET_DRIFT`). It runs at the start of a run and before every destructive apply. |
-| Worker lock | `runs/<run_id>/worker.lock` | A dead worker that looks alive (process id reuse), a second worker for the same run, and a resume while a killed worker's ssh program still runs (the ssh process inherits the lock descriptor). |
+| Worker lock | `runs/<run_id>/worker.lock` | A dead worker that looks alive (process id reuse), a second worker for the same run, and a resume while a killed worker's ssh program still runs (the ssh holder process keeps the lock descriptor until ssh exits). |
 | No reboot | `core/runner.py` | No phase reboots. The target stays up for console recovery. |
 | Passwords on stdin only | `core/credentials.py`, authentication apply program | Passwords in commands, logs, or configuration. The program reads the records once and pipes them only to `chpasswd`. |
 | No passwords to the model | `mcp/server.py` | `get_run_status` reports only `credentials_waiting` and `credentials_applied`. |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import queue
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -71,6 +72,32 @@ def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
     }
 
 
+# Runs ssh as its child and exits the way ssh did. Started with the kept
+# descriptors (pass_fds), it holds them until ssh exits: OpenSSH closes every
+# inherited descriptor above stderr at startup, so it cannot hold them itself.
+# subprocess.call closes them for ssh (close_fds) and passes stdin, stdout,
+# and stderr through unchanged.
+HOLDER = (
+    "import os, signal, subprocess, sys\n"
+    "code = subprocess.call(sys.argv[1:])\n"
+    "if code < 0:\n"
+    "    signal.signal(-code, signal.SIG_DFL)\n"
+    "    os.kill(os.getpid(), -code)\n"
+    "sys.exit(code)\n"
+)
+
+
+def _kill(process: subprocess.Popen, group: bool) -> None:
+    """Kill the process, or with group its whole process group (the holder, ssh, and its ProxyCommand)."""
+    if not group:
+        process.kill()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def remote_shell(
     target: dict,
     label: str,
@@ -81,23 +108,37 @@ def remote_shell(
     on_output: Callable[[str], None] | None = None,
     *,
     keep_fds: tuple[int, ...] = (),
+    holder_python: str | None = None,
 ) -> dict:
     """Run one generated shell program and return an auditable result.
 
-    keep_fds are inherited by the ssh process (pass_fds). The worker passes its
-    worker-lock descriptor, so the flock stays held until ssh exits even if the
-    worker itself is killed while the remote program runs."""
+    With keep_fds, ssh runs under a holder process (HOLDER, run by
+    holder_python with -I; the caller passes the interpreter because core/
+    does not import sys) that
+    inherits those descriptors and keeps them open until ssh exits. The worker
+    passes its worker-lock descriptor, so the flock stays held while the remote
+    program runs even if the worker itself is killed. The holder starts a new
+    session, and a timeout kills the whole process group, so no ssh is left
+    behind. Without keep_fds ssh runs directly."""
     remote_command = "sh -c " + shlex.quote(command)
+    argv = ssh_base(target) + ["--", remote_command]
+    group = bool(keep_fds)
+    extra: dict = {}
+    if group:
+        if not holder_python:
+            raise ValueError("keep_fds requires holder_python, the interpreter that runs the holder")
+        argv = [holder_python, "-I", "-c", HOLDER, *argv]
+        extra = {"pass_fds": tuple(keep_fds), "start_new_session": True}
     if stream:
         process = subprocess.Popen(
-            ssh_base(target) + ["--", remote_command],
+            argv,
             cwd=paths.root(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if input_data is not None else None,
             text=True,
             bufsize=1,
-            pass_fds=keep_fds,
+            **extra,
         )
         if input_data is not None:
             assert process.stdin is not None
@@ -118,7 +159,7 @@ def remote_shell(
         try:
             while reader.is_alive() or not lines.empty():
                 if time.monotonic() - started > timeout:
-                    process.kill()
+                    _kill(process, group)
                     raise subprocess.TimeoutExpired(remote_command, timeout)
                 try:
                     line = lines.get(timeout=0.2)
@@ -129,7 +170,7 @@ def remote_shell(
                     on_output(line)
         except subprocess.TimeoutExpired:
             if process.poll() is None:
-                process.kill()
+                _kill(process, group)
             process.wait()
             raise
         reader.join(timeout=1)
@@ -142,15 +183,40 @@ def remote_shell(
             "stderr": "",
             "finished_at": now(),
         }
+    if group:
+        # subprocess.run would kill only the holder on a timeout; kill the group instead.
+        with subprocess.Popen(
+            argv,
+            cwd=paths.root(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if input_data is not None else None,
+            text=True,
+            **extra,
+        ) as process:
+            try:
+                stdout, stderr = process.communicate(input_data, timeout=timeout)
+            except BaseException:
+                _kill(process, group)
+                process.communicate()
+                raise
+            returncode = process.returncode
+        return {
+            "label": label,
+            "command": command,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "finished_at": now(),
+        }
     completed = subprocess.run(
-        ssh_base(target) + ["--", remote_command],
+        argv,
         cwd=paths.root(),
         capture_output=True,
         text=True,
         input=input_data,
         timeout=timeout,
         check=False,
-        pass_fds=keep_fds,
     )
     return {
         "label": label,

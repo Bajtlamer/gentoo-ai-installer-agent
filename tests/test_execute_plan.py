@@ -29,9 +29,9 @@ class FakeShell:
         self.keep_fds = []
 
     def __call__(self, target, label, command, timeout=3600, stream=False, input_data=None, on_output=None,
-                 keep_fds=()):
+                 keep_fds=(), holder_python=None):
         self.calls.append((label, command, input_data))
-        self.keep_fds.append(keep_fds)
+        self.keep_fds.append((keep_fds, holder_python))
         if label in self.raise_on:
             raise self.raise_on[label]
         stdout = "".join(f"line {number}\n" for number in range(60))
@@ -47,10 +47,9 @@ class ExecutePlanTests(unittest.TestCase):
             runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
                                     "pid": None, "started_at": runs.now()})
             with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
-                result = runner.execute_plan(PLAN, run_id, RECORDS, keep_fds=(9,))
+                result = runner.execute_plan(PLAN, run_id, RECORDS, keep_fds=(9,), holder_python="/py")
         self.assertEqual(result["status"], "installed_pending_reboot")
-        self.assertEqual(len(shell.keep_fds), 5)
-        self.assertTrue(all(fds == (9,) for fds in shell.keep_fds))
+        self.assertEqual(shell.keep_fds, [((9,), "/py")] * 5)
 
     def run_plan(self, shell, drift=None):
         run_id = runs.new_run_id()
