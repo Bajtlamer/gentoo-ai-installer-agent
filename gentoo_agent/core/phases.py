@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gentoo_agent.core.arch import STAGE_BASE, STAGE_LIST, architecture_spec
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
-from gentoo_agent.core.validate import validated_settings
+from gentoo_agent.core.validate import validated_dual_boot_entries, validated_settings
 
 
 MOUNT_ROOT = "/mnt/gentoo"
@@ -19,6 +19,7 @@ DHCPCD_CONF = "/etc/dhcpcd.conf"
 DHCPCD_BEGIN = "# gentoo-agent static network begin"
 DHCPCD_END = "# gentoo-agent static network end"
 RC_AUTOSTART_USER = 'rc_autostart_user="NO"'
+DUAL_BOOT_SCRIPT = "/etc/grub.d/45_gentoo_agent_dualboot"
 PHASES = [
     "preflight",
     "storage",
@@ -389,6 +390,43 @@ def kernel_command(install: dict) -> str:
     return "\n".join(["set -eu", chroot(inside)])
 
 
+def dual_boot_lines(entries: list[dict]) -> list[str]:
+    """Chroot lines that check each Windows ESP and write the GRUB script with one menu entry per Windows.
+
+    Runs after grub-install and before grub-mkconfig. The script is rewritten on every run, so the
+    phase stays idempotent; /etc/grub.d/40_custom is never touched. Empty entries add no lines.
+    """
+    if not entries:
+        return []
+    lines = []
+    for entry in entries:
+        uuid = entry["esp_uuid"]
+        message = f"Windows EFI partition {uuid} not found; refresh the inventory"
+        lines.append(f"if ! test -b \"$(blkid -U {q(uuid)} || true)\"; then printf '%s\\n' {q(message)} >&2; exit 1; fi")
+    script = ["#!/bin/sh", 'exec tail -n +3 "$0"']
+    for entry in entries:
+        script += [
+            f"menuentry 'Windows Boot Manager (on {entry['disk']})' --class windows {{",
+            "    insmod part_gpt",
+            "    insmod fat",
+            f"    search --no-floppy --fs-uuid --set=root {entry['esp_uuid']}",
+            f"    chainloader {entry['loader']}",
+            "}",
+        ]
+    lines += [
+        f"printf '%s\\n' {' '.join(q(line) for line in script)} > {q(DUAL_BOOT_SCRIPT)}",
+        f"chmod 755 {q(DUAL_BOOT_SCRIPT)}",
+    ]
+    return lines
+
+
+def dual_boot_checks(install: dict) -> list[str]:
+    """One grep per Windows entry: a grub.cfg without it never counts as a complete bootloader."""
+    grub_cfg = q(MOUNT_ROOT + "/boot/grub/grub.cfg")
+    return [f"grep -Fq {q('search --no-floppy --fs-uuid --set=root ' + entry['esp_uuid'])} {grub_cfg}"
+            for entry in validated_dual_boot_entries(install)]
+
+
 def bootloader_command(target: dict, install: dict) -> str:
     disk, _ = validated_settings(target, install)
     if install["boot_mode"] == "bios":
@@ -405,6 +443,7 @@ def bootloader_command(target: dict, install: dict) -> str:
             "emerge --noreplace --verbose sys-boot/grub sys-boot/efibootmgr",
             f"grub-install --target={q(spec['grub_efi_target'])} --efi-directory=/boot --bootloader-id=Gentoo",
             f"grub-install --target={q(spec['grub_efi_target'])} --efi-directory=/boot --removable",
+            *dual_boot_lines(install.get("dual_boot_entries", [])),
             "grub-mkconfig -o /boot/grub/grub.cfg",
         ])
     return "\n".join(["set -eu", chroot(inside)])
@@ -426,6 +465,7 @@ def validation_command(target: dict, install: dict) -> str:
         f"test -n \"$(find {q(MOUNT_ROOT + '/boot')} -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)\"",
         f"lsblk {q(disk)}",
         f"findmnt -D {q(MOUNT_ROOT)}",
+        *dual_boot_checks(install),
         "printf 'validation-ok\\n'",
     ]
     return "\n".join(checks)
@@ -527,6 +567,7 @@ def bootloader_check_command(install: dict) -> str:
         spec = architecture_spec(install.get("architecture"))
         lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/' + spec['grub_efi_binary'])}")
         lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/BOOT/' + spec['grub_efi_fallback'])}")
+    lines += dual_boot_checks(install)
     lines.append("printf 'bootloader-ok\\n'")
     return "\n".join(lines)
 

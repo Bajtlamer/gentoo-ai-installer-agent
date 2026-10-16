@@ -1,6 +1,7 @@
 import json
 import os
 import shlex
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -267,6 +268,109 @@ class InitSystemTests(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             phases.validated_settings(TARGET, install)
         self.assertEqual(caught.exception.details, {"field": "init_system"})
+
+
+def block_device() -> str | None:
+    """Any block device on this machine, for a fake blkid -U answer; None if there is none."""
+    for name in sorted(os.listdir("/dev")):
+        path = os.path.join("/dev", name)
+        try:
+            if stat.S_ISBLK(os.stat(path).st_mode):
+                return path
+        except OSError:
+            continue
+    return None
+
+
+EXPECTED_DUAL_BOOT_SCRIPT = """#!/bin/sh
+exec tail -n +3 "$0"
+menuentry 'Windows Boot Manager (on /dev/sda)' --class windows {
+    insmod part_gpt
+    insmod fat
+    search --no-floppy --fs-uuid --set=root ABCD-1234
+    chainloader /EFI/Microsoft/Boot/bootmgfw.efi
+}
+"""
+
+
+class DualBootProgramTests(unittest.TestCase):
+    def run_lines(self, blkid_output: str | None) -> tuple[subprocess.CompletedProcess, Path]:
+        install = fixture("uefi_gpt_dualboot_windows")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        tmp = Path(directory.name)
+        script = tmp / "45_gentoo_agent_dualboot"
+        blkid = tmp / "blkid"
+        body = f"printf '%s\\n' {shlex.quote(blkid_output)}" if blkid_output else "exit 2"
+        blkid.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        os.chmod(blkid, 0o755)
+        program = "\n".join(phases.dual_boot_lines(install["dual_boot_entries"]))
+        program = program.replace(shlex.quote(phases.DUAL_BOOT_SCRIPT), shlex.quote(str(script)))
+        result = subprocess.run(["/bin/sh", "-c", "set -e\n" + program], env={"PATH": f"{tmp}:/usr/bin:/bin"},
+                                capture_output=True, text=True, check=False)
+        return result, script
+
+    @unittest.skipUnless(block_device(), "no block device to stand in for the Windows ESP")
+    def test_script_has_exactly_the_windows_entry_and_prints_it_for_grub_mkconfig(self):
+        result, script = self.run_lines(block_device())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(script.read_text(encoding="utf-8"), EXPECTED_DUAL_BOOT_SCRIPT)
+        self.assertEqual(os.stat(script).st_mode & 0o777, 0o755)
+        printed = subprocess.run([str(script)], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(printed, "".join(EXPECTED_DUAL_BOOT_SCRIPT.splitlines(keepends=True)[2:]))
+
+    def test_missing_windows_esp_stops_before_the_script_is_written(self):
+        result, script = self.run_lines(None)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Windows EFI partition ABCD-1234 not found; refresh the inventory", result.stderr)
+        self.assertFalse(script.exists())
+
+    def test_entries_go_between_grub_install_and_grub_mkconfig(self):
+        program = phases.bootloader_command(TARGET, fixture("uefi_gpt_dualboot_windows"))
+        inside = chroot_lines(program)
+        removable = next(i for i, line in enumerate(inside) if "--removable" in line)
+        written = next(i for i, line in enumerate(inside) if "45_gentoo_agent_dualboot" in line)
+        mkconfig = next(i for i, line in enumerate(inside) if line.startswith("grub-mkconfig"))
+        self.assertLess(removable, written)
+        self.assertLess(written, mkconfig)
+        self.assertNotIn("40_custom", program)
+        self.assertNotIn("os-prober", program)
+        self.assertNotIn("mount", program)
+
+    def test_bootloader_and_validation_checks_require_the_windows_entry(self):
+        install = fixture("uefi_gpt_dualboot_windows")
+        line = "grep -Fq 'search --no-floppy --fs-uuid --set=root ABCD-1234' /mnt/gentoo/boot/grub/grub.cfg"
+        self.assertIn(line, phases.bootloader_check_command(install).splitlines())
+        self.assertIn(line, phases.validation_command(TARGET, install).splitlines())
+        for program in (phases.bootloader_check_command(install), phases.validation_command(TARGET, install)):
+            self.assertEqual(program.splitlines()[-1][:6], "printf")
+
+    def test_a_grub_cfg_without_the_entry_fails_the_check(self):
+        install = fixture("uefi_gpt_dualboot_windows")
+        line = phases.dual_boot_checks(install)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "grub.cfg"
+            cfg.write_text("menuentry 'Gentoo GNU/Linux' {\n}\n", encoding="utf-8")
+            check = line.replace(shlex.quote("/mnt/gentoo/boot/grub/grub.cfg"), shlex.quote(str(cfg)))
+            self.assertNotEqual(subprocess.run(["/bin/sh", "-c", check], check=False).returncode, 0)
+            cfg.write_text("    search --no-floppy --fs-uuid --set=root ABCD-1234\n", encoding="utf-8")
+            self.assertEqual(subprocess.run(["/bin/sh", "-c", check], check=False).returncode, 0)
+
+    def test_hostile_entries_never_reach_a_program(self):
+        install = fixture("uefi_gpt_dualboot_windows")
+        install["dual_boot_entries"][0]["esp_uuid"] = "ABCD-1234'; reboot; '"
+        for generate in (lambda: phases.bootloader_command(TARGET, install),
+                         lambda: phases.bootloader_check_command(install),
+                         lambda: phases.validation_command(TARGET, install)):
+            with self.assertRaises(AgentError) as caught:
+                generate()
+            self.assertEqual(caught.exception.details, {"field": "dual_boot_entries"})
+
+    def test_bios_and_no_entries_add_nothing(self):
+        for name in ("bios_mbr_user_sudo", "uefi_gpt_user_sudo"):
+            install = fixture(name)
+            self.assertEqual(phases.dual_boot_checks(install), [])
+            self.assertNotIn("45_gentoo_agent_dualboot", phases.bootloader_command(TARGET, install))
 
 
 if __name__ == "__main__":
