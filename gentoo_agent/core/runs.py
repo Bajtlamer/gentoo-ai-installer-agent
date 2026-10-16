@@ -41,6 +41,11 @@ ACTIVE_STATUSES = {"starting", "running"}
 STARTING_GRACE = dt.timedelta(seconds=60)
 CREDENTIALS_MAX_AGE = dt.timedelta(hours=24)
 MAX_LOG_PAGE = 500
+# A full install log is ~12 MB of build output. MCP sends each page twice (text
+# and structured content) and Claude Code drops a server that writes more than
+# 16 MB in one message, so pages keep each output's tail and stop at a budget.
+MAX_LOG_OUTPUT = 16_000
+MAX_LOG_PAGE_CHARS = 1_000_000
 
 
 def new_run_id() -> str:
@@ -408,9 +413,26 @@ def read_log(run_id: str, offset: int = 0, limit: int = 50) -> dict:
     except FileNotFoundError:
         lines = []
     entries = []
+    size = 0
     for index, line in enumerate(lines[offset:offset + limit], start=offset):
         try:
-            entries.append(json.loads(line.decode("utf-8")))
+            entry = _clip_output(json.loads(line.decode("utf-8")))
         except ValueError:
-            entries.append({"corrupt": True, "line": index})
+            entry = {"corrupt": True, "line": index}
+        size += len(json.dumps(entry))
+        if entries and size > MAX_LOG_PAGE_CHARS:
+            break
+        entries.append(entry)
     return {"entries": entries, "next_offset": offset + len(entries), "total": len(lines)}
+
+
+def _clip_output(entry: object) -> object:
+    """Keep the tail of long stdout/stderr; the full text stays in log.jsonl."""
+    if not isinstance(entry, dict):
+        return entry
+    for field in ("stdout", "stderr"):
+        text = entry.get(field)
+        if isinstance(text, str) and len(text) > MAX_LOG_OUTPUT:
+            entry[field] = text[-MAX_LOG_OUTPUT:]
+            entry[f"{field}_truncated"] = len(text)
+    return entry

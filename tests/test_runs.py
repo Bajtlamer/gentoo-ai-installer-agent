@@ -1,5 +1,6 @@
 import datetime as dt
 import errno
+import json
 import os
 import shutil
 import signal
@@ -362,6 +363,37 @@ class LogRobustnessTests(unittest.TestCase):
         self.assertEqual(page["entries"][1], {"corrupt": True, "line": 1})
         self.assertEqual(page["entries"][2], {"index": 2})
         self.assertEqual(page["next_offset"], 3)
+
+    def test_long_output_keeps_its_tail(self):
+        # A full install log is ~12 MB; MCP sends each page twice, and Claude Code
+        # disconnects a server that writes more than 16 MB in one message.
+        stdout = "x" * (runs.MAX_LOG_OUTPUT + 10) + "the error is here"
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id))
+            runs.append_log(run_id, {"phase": "kernel", "stdout": stdout, "stderr": "short"})
+            entry = runs.read_log(run_id, offset=0, limit=1)["entries"][0]
+            self.assertEqual(entry["stdout"], stdout[-runs.MAX_LOG_OUTPUT:])
+            self.assertTrue(entry["stdout"].endswith("the error is here"))
+            self.assertEqual(entry["stdout_truncated"], len(stdout))
+            self.assertEqual(entry["stderr"], "short")
+            self.assertNotIn("stderr_truncated", entry)
+            self.assertEqual(len(load_json(runs.run_dir(run_id) / "log.jsonl")["stdout"]), len(stdout))
+
+    def test_page_stops_at_the_size_budget(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, record(run_id))
+            count = runs.MAX_LOG_PAGE_CHARS // runs.MAX_LOG_OUTPUT + 5
+            for index in range(count):
+                runs.append_log(run_id, {"index": index, "stdout": "y" * (runs.MAX_LOG_OUTPUT * 2)})
+            first = runs.read_log(run_id, offset=0, limit=runs.MAX_LOG_PAGE)
+            self.assertLess(len(json.dumps(first)), runs.MAX_LOG_PAGE_CHARS + runs.MAX_LOG_OUTPUT * 2)
+            self.assertLess(first["next_offset"], count)
+            self.assertEqual(first["total"], count)
+            second = runs.read_log(run_id, offset=first["next_offset"], limit=runs.MAX_LOG_PAGE)
+            self.assertEqual(second["entries"][0]["index"], first["next_offset"])
+            self.assertEqual(second["next_offset"], count)
 
 
 class WorkerLockTests(unittest.TestCase):
