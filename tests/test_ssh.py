@@ -109,6 +109,53 @@ class HolderProcessTests(unittest.TestCase):
                     subprocess.run(["pkill", "-KILL", "-f", marker], check=False)
                 self.assertEqual(found, "")
 
+    @unittest.skipUnless(shutil.which("ssh") and shutil.which("pgrep"), "needs an OpenSSH client and pgrep")
+    def test_an_exception_while_ssh_runs_kills_the_whole_group(self):
+        # ssh -v prints debug lines at once while the ProxyCommand still sleeps; the callback raises on the first.
+        marker = f"gentoo-agent-holder-test-{uuid.uuid4().hex}"
+        command = ["ssh", "-v", "-F", "/dev/null", "-o", f"ProxyCommand=sh -c 'sleep 30; echo {marker}'",
+                   "-o", "BatchMode=yes", "nohost.invalid"]
+
+        def leftovers() -> str:
+            return subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
+
+        def explode(line):
+            raise RuntimeError("callback failed")
+
+        with temp_home(), patch.object(ssh, "ssh_base", lambda target: command):
+            with self.assertRaises(RuntimeError):
+                ssh.remote_shell(TARGET, "label", "true", stream=True, on_output=explode,
+                                 keep_fds=(self.lock.fileno(),), holder_python=sys.executable)
+        deadline = time.monotonic() + 3
+        while leftovers() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        found = leftovers()
+        if found:
+            subprocess.run(["pkill", "-KILL", "-f", marker], check=False)
+        self.assertEqual(found, "")
+
+    def test_an_exception_while_ssh_runs_kills_ssh_without_a_holder(self):
+        # Without a holder there is no process group; ssh itself is killed.
+        started = []
+        real_popen = subprocess.Popen
+
+        def recording_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            started.append(process)
+            return process
+
+        def explode(line):
+            raise RuntimeError("callback failed")
+
+        with temp_home(), patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "echo start; exec sleep 30", "x"]), \
+                patch.object(subprocess, "Popen", side_effect=recording_popen):
+            with self.assertRaises(RuntimeError):
+                ssh.remote_shell(TARGET, "label", "true", stream=True, on_output=explode)
+        for process in started:
+            self.addCleanup(lambda process=process: process.poll() is None and process.kill())
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0].poll())
+
 
 if __name__ == "__main__":
     unittest.main()

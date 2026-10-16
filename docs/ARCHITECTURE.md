@@ -133,7 +133,8 @@ Rules that hold across the code:
    exits. A worker killed with SIGKILL during a phase therefore keeps the run
    active until that ssh, and with it the remote program, has ended; a resume
    cannot start a second program on the same disk. The holder starts its own
-   session, and a timeout kills the whole process group (holder, ssh, and any
+   session, and a timeout or any other exception while it runs (for example
+   a failing output callback) kills the whole process group (holder, ssh, and any
    ProxyCommand), so no ssh is left behind. Calls without `keep_fds` run ssh
    directly.
 10. **Run records.** Every step is appended to `runs/<run_id>/log.jsonl`

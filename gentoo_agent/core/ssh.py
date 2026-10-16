@@ -118,8 +118,9 @@ def remote_shell(
     inherits those descriptors and keeps them open until ssh exits. The worker
     passes its worker-lock descriptor, so the flock stays held while the remote
     program runs even if the worker itself is killed. The holder starts a new
-    session, and a timeout kills the whole process group, so no ssh is left
-    behind. Without keep_fds ssh runs directly."""
+    session, and a timeout or any other exception while it runs kills the whole
+    process group, so no ssh is left behind. Without keep_fds ssh runs directly
+    and such an exception kills ssh itself."""
     remote_command = "sh -c " + shlex.quote(command)
     argv = ssh_base(target) + ["--", remote_command]
     group = bool(keep_fds)
@@ -140,10 +141,6 @@ def remote_shell(
             bufsize=1,
             **extra,
         )
-        if input_data is not None:
-            assert process.stdin is not None
-            process.stdin.write(input_data)
-            process.stdin.close()
         output: list[str] = []
         lines: queue.Queue[str] = queue.Queue()
 
@@ -153,10 +150,14 @@ def remote_shell(
                 lines.put(line)
             process.stdout.close()
 
-        reader = threading.Thread(target=read_output, daemon=True)
-        reader.start()
         started = time.monotonic()
         try:
+            if input_data is not None:
+                assert process.stdin is not None
+                process.stdin.write(input_data)
+                process.stdin.close()
+            reader = threading.Thread(target=read_output, daemon=True)
+            reader.start()
             while reader.is_alive() or not lines.empty():
                 if time.monotonic() - started > timeout:
                     _kill(process, group)
@@ -168,7 +169,8 @@ def remote_shell(
                 output.append(line)
                 if on_output is not None:
                     on_output(line)
-        except subprocess.TimeoutExpired:
+        except BaseException:
+            # A timeout, a failing on_output callback, or an interrupt: never leave ssh running.
             if process.poll() is None:
                 _kill(process, group)
             process.wait()
