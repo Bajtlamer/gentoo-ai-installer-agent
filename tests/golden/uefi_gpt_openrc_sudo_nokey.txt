@@ -146,6 +146,10 @@ root_uuid=$(blkid -s UUID -o value /dev/sdc3)
 swap_uuid=$(blkid -s UUID -o value /dev/sdc2 2>/dev/null || true)
 printf '"'"'%s\n'"'"' "UUID=$root_uuid / ext4 noatime 0 1" > /etc/fstab
 if [ -n "$swap_uuid" ]; then printf '"'"'%s\n'"'"' "UUID=$swap_uuid none swap sw 0 0" >> /etc/fstab; fi
+emerge --noreplace --verbose sys-fs/dosfstools
+efi_uuid=$(blkid -s UUID -o value /dev/sdc1)
+test -n "$efi_uuid"
+printf '"'"'%s\n'"'"' "UUID=$efi_uuid /boot vfat umask=0077,tz=UTC 0 2" >> /etc/fstab
 emerge --noreplace --verbose net-misc/dhcpcd
 rc-update add dhcpcd default
 emerge --noreplace --verbose net-misc/openssh
@@ -173,6 +177,7 @@ grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
 test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
 grep -Fqx 'rc_autostart_user="NO"' /mnt/gentoo/etc/rc.conf
+grep -Eq '^UUID=[^ ]+ /boot vfat ' /mnt/gentoo/etc/fstab
 printf 'configuration-ok\n'
 ===== authentication apply =====
 set -eu

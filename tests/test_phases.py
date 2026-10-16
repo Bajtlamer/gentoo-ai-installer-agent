@@ -143,6 +143,44 @@ class ConfigurationQuotingTests(unittest.TestCase):
             check = phases.configuration_check_command(TARGET, fixture("uefi_gpt_user_sudo"))
         self.assertIn("grep -Fqx 'rc_autostart_user=\"NO\"' /mnt/gentoo/etc/rc.conf", check)
 
+    def render_fstab(self, name: str) -> str:
+        """Run the generated fstab lines with a fake blkid that prints UUID-<device name>."""
+        install = fixture(name)
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            lines = chroot_lines(phases.configuration_command(TARGET, install))
+        lines = [line for line in lines if "fstab" in line or "_uuid=" in line or line.startswith("test -n")]
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = Path(directory) / "bin"
+            bin_dir.mkdir()
+            blkid = bin_dir / "blkid"
+            blkid.write_text('#!/bin/sh\nfor arg; do last=$arg; done\nprintf "UUID-%s\\n" "${last##*/}"\n', encoding="utf-8")
+            blkid.chmod(0o755)
+            fstab = Path(directory) / "fstab"
+            program = "\n".join(lines).replace("/etc/fstab", shlex.quote(str(fstab)))
+            env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+            subprocess.run(["sh", "-eu", "-c", program], check=True, env=env)
+            return fstab.read_text(encoding="utf-8")
+
+    def test_uefi_fstab_mounts_the_efi_partition_at_boot(self):
+        # The kernel and grub.cfg live on the EFI partition; without this line the
+        # installed system left /boot empty and kernel updates went to the root filesystem.
+        self.assertEqual(self.render_fstab("uefi_gpt_user_sudo"),
+                         "UUID=UUID-nvme0n1p3 / ext4 noatime 0 1\n"
+                         "UUID=UUID-nvme0n1p2 none swap sw 0 0\n"
+                         "UUID=UUID-nvme0n1p1 /boot vfat umask=0077,tz=UTC 0 2\n")
+        self.assertNotIn("/boot", self.render_fstab("bios_mbr_user_sudo"))
+
+    def test_uefi_installs_dosfstools_for_the_boot_check(self):
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            uefi = phases.configuration_command(TARGET, fixture("uefi_gpt_user_sudo"))
+            bios = phases.configuration_command(TARGET, fixture("bios_mbr_user_sudo"))
+            check = phases.configuration_check_command(TARGET, fixture("uefi_gpt_user_sudo"))
+            bios_check = phases.configuration_check_command(TARGET, fixture("bios_mbr_user_sudo"))
+        self.assertIn("sys-fs/dosfstools", uefi)
+        self.assertNotIn("sys-fs/dosfstools", bios)
+        self.assertIn("grep -Eq '^UUID=[^ ]+ /boot vfat ' /mnt/gentoo/etc/fstab", check)
+        self.assertNotIn("/boot vfat", bios_check)
+
     def test_zoneinfo_path_is_quoted(self):
         lines = self.configuration(timezone="UTC; touch /PWNED")
         line = next(line for line in lines if line.startswith("ln -snf"))

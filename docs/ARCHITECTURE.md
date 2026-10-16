@@ -290,7 +290,7 @@ part of a plan.
 | `storage` | yes | Wipes the disk and writes the partition table with `sfdisk` |
 | `filesystems` | yes | Creates ext4, swap, and (UEFI) vfat, and mounts them under `/mnt/gentoo` |
 | `base-system` | yes | Downloads and verifies the stage3 archive, extracts it, mounts `/dev`, `/proc`, `/sys`, `/run`, runs `emerge-webrsync` |
-| `configuration` | yes | Hostname, timezone, locale, fstab, networking (dhcpcd), OpenSSH with the root key, OpenRC user services off |
+| `configuration` | yes | Hostname, timezone, locale, fstab (with the EFI partition at `/boot` on UEFI), networking (dhcpcd), OpenSSH with the root key, OpenRC user services off |
 | `authentication` | yes | Regular user, user SSH key, sudo with the `%wheel` rule, passwords through `chpasswd` |
 | `kernel` | yes | Installs `sys-kernel/gentoo-kernel-bin` with dracut through installkernel |
 | `bootloader` | yes | Installs GRUB for BIOS or UEFI and writes `grub.cfg`; on UEFI also `efibootmgr` and a `/EFI/BOOT` fallback copy |

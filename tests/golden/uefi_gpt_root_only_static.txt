@@ -138,6 +138,10 @@ root_uuid=$(blkid -s UUID -o value /dev/vda2)
 swap_uuid=$(blkid -s UUID -o value '"'"''"'"' 2>/dev/null || true)
 printf '"'"'%s\n'"'"' "UUID=$root_uuid / ext4 noatime 0 1" > /etc/fstab
 if [ -n "$swap_uuid" ]; then printf '"'"'%s\n'"'"' "UUID=$swap_uuid none swap sw 0 0" >> /etc/fstab; fi
+emerge --noreplace --verbose sys-fs/dosfstools
+efi_uuid=$(blkid -s UUID -o value /dev/vda1)
+test -n "$efi_uuid"
+printf '"'"'%s\n'"'"' "UUID=$efi_uuid /boot vfat umask=0077,tz=UTC 0 2" >> /etc/fstab
 emerge --noreplace --verbose net-misc/dhcpcd
 touch /etc/dhcpcd.conf
 sed -i '"'"'/^# gentoo-agent static network begin$/,/^# gentoo-agent static network end$/d'"'"' /etc/dhcpcd.conf
@@ -168,6 +172,7 @@ grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
 test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
 grep -Fqx 'rc_autostart_user="NO"' /mnt/gentoo/etc/rc.conf
+grep -Eq '^UUID=[^ ]+ /boot vfat ' /mnt/gentoo/etc/fstab
 grep -Fqx 'interface enp1s0' /mnt/gentoo/etc/dhcpcd.conf
 grep -Fqx 'static ip_address=192.168.10.20/24' /mnt/gentoo/etc/dhcpcd.conf
 printf 'configuration-ok\n'
