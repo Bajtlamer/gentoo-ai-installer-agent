@@ -1,5 +1,8 @@
 import json
+import os
 import shlex
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -105,6 +108,32 @@ class ConfigLoadingTests(unittest.TestCase):
             with self.assertRaises(AgentError) as caught:
                 config.target_config()
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+
+class ApplyProgramStrictnessTests(unittest.TestCase):
+    def test_every_apply_program_starts_with_set_eu(self):
+        for config_path in sorted((ROOT / "tests" / "golden" / "configs").glob("*.json")):
+            install = json.loads(config_path.read_text(encoding="utf-8"))
+            for phase in phases.PHASES:
+                with self.subTest(config=config_path.stem, phase=phase):
+                    with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+                        program = phases.command_for(phase, TARGET, install)
+                    self.assertEqual(program.splitlines()[0], "set -eu")
+
+    def test_failed_chroot_does_not_write_the_configuration_marker(self):
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            program = phases.configuration_command(TARGET, fixture("bios_mbr_user_sudo"))
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp)
+            touched = bin_dir / "touched"
+            (bin_dir / "chroot").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            (bin_dir / "touch").write_text(f"#!/bin/sh\necho \"$@\" >> {shlex.quote(str(touched))}\n", encoding="utf-8")
+            for name in ("chroot", "touch"):
+                os.chmod(bin_dir / name, 0o755)
+            result = subprocess.run(["/bin/sh", "-c", program], env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+                                    capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(touched.exists())
 
 
 if __name__ == "__main__":
