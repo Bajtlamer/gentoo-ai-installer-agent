@@ -32,6 +32,7 @@ def call(name, arguments=None, *, elicitation_callback=None):
 
 def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",)):
     from gentoo_agent.core.config import save_json
+    from tests.helpers import fresh_inventory, storage_result
 
     save_json(home / "config" / "target.json", {
         "name": "gentoo", "host": "192.0.2.10", "port": 22, "user": "root", "identity_file": "~/.ssh/id_test",
@@ -42,10 +43,11 @@ def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",)):
               json.loads((REPO / "config" / "install.default.json").read_text(encoding="utf-8")))
     devices = [{"path": path, "type": "disk", "size": 512110190592, "model": "NVMe", "serial": f"S{i}", "wwn": None}
                for i, path in enumerate(disks)]
-    save_json(home / "inventory" / "inventory-20261015T120000Z.json", {"target": "gentoo", "collected_at": "x", "results": [
+    save_json(home / "inventory" / "inventory-20261015T120000Z.json", fresh_inventory(
         {"label": "boot_mode", "returncode": 0, "stdout": boot},
+        storage_result(*disks),
         {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
-    ]})
+    ))
 
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from gentoo_agent import cli
 from gentoo_agent.core import approval, paths, phases, runs
 from gentoo_agent.core.config import save_json
-from tests.helpers import temp_home
+from tests.helpers import fresh_inventory, storage_result, temp_home
 from tests.test_launcher import approved_plan
 
 
@@ -108,10 +108,13 @@ class PlanAndRunCommandTests(unittest.TestCase):
                                                "identity_file": "~/.ssh/id_test", "target_is_disposable": True,
                                                "disk_erase_authorized": True})
             save_json(config / "plan.json", json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8")))
-            stdout = json.dumps({"blockdevices": [{"path": "/dev/sda", "type": "disk", "size": 1, "model": "m",
+            stdout = json.dumps({"blockdevices": [{"path": "/dev/sda", "type": "disk", "size": 42949672960,
+                                                   "model": "QEMU HARDDISK",
                                                    "serial": "s1", "wwn": None}]})
             save_json(home / "inventory" / "inventory-20261015T120000Z.json",
-                      {"results": [{"label": "disk_identity", "returncode": 0, "stdout": stdout}]})
+                      fresh_inventory({"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
+                                      storage_result("/dev/sda"),
+                                      {"label": "disk_identity", "returncode": 0, "stdout": stdout}))
             output = io.StringIO()
             with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"), redirect_stdout(output):
                 code = cli.main(["plan", "create"])

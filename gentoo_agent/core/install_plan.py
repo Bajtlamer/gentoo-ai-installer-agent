@@ -8,6 +8,7 @@ approval of the hash is an approval of these exact commands on this exact disk.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import hashlib
 import json
 import re
@@ -24,13 +25,15 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.phases import PHASES, check_command_for, command_for
-from gentoo_agent.core.validate import validated_settings
+from gentoo_agent.core.validate import validate_installation, validated_settings
 
 
 PLAN_SCHEMA_VERSION = 1
 PLAN_ID_LENGTH = 16
 PLAN_ID_PATTERN = re.compile(r"[0-9a-f]{16}")
 UNHASHED_FIELDS = {"plan_id", "plan_hash", "created_at"}
+INVENTORY_MAX_AGE = dt.timedelta(hours=24)
+GIB = 1024 ** 3
 TARGET_FIELDS = ("name", "host", "port", "user", "identity_file", "known_hosts_file")
 
 
@@ -60,12 +63,49 @@ def _check_erase_authorized(target: dict, install: dict) -> None:
         )
 
 
+def _check_inventory_fresh(inventory: dict) -> None:
+    collected = inventory.get("collected_at")
+    try:
+        moment = dt.datetime.fromisoformat(collected) if isinstance(collected, str) else None
+    except ValueError:
+        moment = None
+    if moment is None or moment.tzinfo is None or dt.datetime.now(dt.timezone.utc) - moment > INVENTORY_MAX_AGE:
+        raise AgentError(INVENTORY_MISSING, "The latest inventory is undated or older than 24 hours; run inspect again.",
+                         {"collected_at": collected})
+
+
+def _check_review(target: dict, install: dict, project_plan: dict, inventory: dict) -> None:
+    review = validate_installation(target, install, project_plan, inventory)
+    if review["errors"]:
+        raise AgentError(CONFIG_INVALID, "The configuration does not pass review: " + "; ".join(review["errors"]),
+                         {"errors": review["errors"]})
+
+
+def _check_expected_disk(install: dict, disk: dict) -> None:
+    """The operator's expected model and size, checked against the inventory before anything is approved.
+
+    Preflight checks the same values on the live target; the size tolerance matches it (under 1 GiB).
+    """
+    model = install.get("expected_disk_model")
+    if model and model != disk["model"]:
+        raise AgentError(CONFIG_INVALID, f"Disk {disk['path']} is a {disk['model']!r}, not the expected {model!r}.",
+                         {"field": "expected_disk_model"})
+    size = install.get("expected_disk_size_gib")
+    if size:
+        if abs(disk["size_bytes"] - int(float(size) * GIB)) >= GIB:
+            raise AgentError(CONFIG_INVALID, f"Disk {disk['path']} is {disk['size_bytes'] / GIB:.1f} GiB, "
+                             f"not the expected {size} GiB.", {"field": "expected_disk_size_gib"})
+
+
 def create_install_plan(target: dict, install: dict, project_plan: dict, inventory: dict | None) -> dict:
     validated_settings(target, install)
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No inventory exists; run inspect first.", {})
     _check_erase_authorized(target, install)
+    _check_inventory_fresh(inventory)
+    _check_review(target, install, project_plan, inventory)
     disk = disk_from_inventory(inventory, install["disk"])
+    _check_expected_disk(install, disk)
     destructive = {item["id"]: bool(item.get("destructive", True)) for item in project_plan.get("phases", [])}
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,

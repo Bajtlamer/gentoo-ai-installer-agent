@@ -1,4 +1,7 @@
 {
+  "profile": "gentoo-amd64-openrc",
+  "bootloader": "grub",
+  "swap_mb": 2048,
   "disk": "/dev/sda",
   "boot_mode": "bios",
   "partition_table": "mbr",
