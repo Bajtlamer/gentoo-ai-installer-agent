@@ -12,7 +12,7 @@ from gentoo_agent.core.errors import (
     PLAN_NOT_FOUND,
     AgentError,
 )
-from tests.helpers import temp_home
+from tests.helpers import fresh_inventory, storage_result, temp_home
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,11 +33,18 @@ def project_plan() -> dict:
     return json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8"))
 
 
-def inventory(serial: str = "QM00001") -> dict:
+def inventory(serial: str = "QM00001", collected_at: str | None = None) -> dict:
     stdout = json.dumps({"blockdevices": [
         {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": "QEMU HARDDISK", "serial": serial, "wwn": None},
     ]})
-    return {"results": [{"label": "disk_identity", "returncode": 0, "stdout": stdout}]}
+    data = fresh_inventory(
+        {"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
+        storage_result("/dev/sda"),
+        {"label": "disk_identity", "returncode": 0, "stdout": stdout},
+    )
+    if collected_at is not None:
+        data["collected_at"] = collected_at
+    return data
 
 
 class CreatePlanTests(unittest.TestCase):
@@ -51,6 +58,40 @@ class CreatePlanTests(unittest.TestCase):
     def create(self, **changes):
         install = {**install_fixture(), **changes.pop("install", {})}
         return install_plan.create_install_plan(TARGET, install, project_plan(), changes.pop("inventory", inventory()))
+
+    def test_review_errors_block_the_plan(self):
+        # validated_settings() does not check the boot_mode value for BIOS tables; the review does.
+        with self.assertRaises(AgentError) as caught:
+            self.create(install={"boot_mode": "efi"})
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertIn("boot_mode must be 'uefi' or 'bios'", caught.exception.details["errors"])
+
+    def test_review_needs_the_disk_in_the_storage_inventory(self):
+        data = inventory()
+        data["results"] = [item for item in data["results"] if item["label"] != "storage"]
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=data)
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertIn("configured disk /dev/sda was not found in the latest inventory", caught.exception.details["errors"])
+
+    def test_stale_inventory_is_refused(self):
+        for collected_at in ("2020-01-01T00:00:00+00:00", "not a date", ""):
+            with self.subTest(collected_at=collected_at):
+                with self.assertRaises(AgentError) as caught:
+                    self.create(inventory=inventory(collected_at=collected_at))
+                self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_expected_disk_model_must_match_the_inventory(self):
+        with self.assertRaises(AgentError) as caught:
+            self.create(install={"expected_disk_model": "Samsung SSD"})
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertEqual(caught.exception.details["field"], "expected_disk_model")
+
+    def test_expected_disk_size_must_match_within_one_gib(self):
+        self.create(install={"expected_disk_size_gib": 40})
+        with self.assertRaises(AgentError) as caught:
+            self.create(install={"expected_disk_size_gib": 60})
+        self.assertEqual(caught.exception.details["field"], "expected_disk_size_gib")
 
     def test_plan_is_deterministic_and_id_is_hash_prefix(self):
         first, second = self.create(), self.create()

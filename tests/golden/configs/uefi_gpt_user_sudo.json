@@ -1,4 +1,7 @@
 {
+  "profile": "gentoo-amd64-openrc",
+  "bootloader": "grub",
+  "swap_mb": 4096,
   "disk": "/dev/nvme0n1",
   "boot_mode": "uefi",
   "partition_table": "gpt",
