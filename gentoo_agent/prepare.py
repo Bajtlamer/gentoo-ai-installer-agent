@@ -17,6 +17,7 @@ from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.disks import IDENTITY_LABEL, disk_candidates, parse_disk_identities
 from gentoo_agent.core.errors import AgentError
+from gentoo_agent.core.foreign_os import detect_foreign_os
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
 from gentoo_agent.core.layout import build_layout
@@ -234,11 +235,21 @@ def build_install_config(target: dict, inventory: dict) -> dict:
     partition_table, layout = build_layout(disk_path, boot_mode, swap_mb, root_filesystem)
 
     print(f"\nThe selected disk is {disk_path}. This plan will erase it during a future storage phase.")
+    try:
+        existing = {record["disk"]: record for record in detect_foreign_os(inventory)}
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
+    phrase = f"ERASE {disk_path}"
+    if disk_path in existing:
+        # Evidence strings passed the strict format checks in core/foreign_os.py.
+        print(f"WARNING: {disk_path} contains Windows ({', '.join(existing[disk_path]['evidence'])}). "
+              "It will be erased.")
+        phrase = f"ERASE WINDOWS {disk_path}"
     # The typed line is the decision for the disk chosen in this run. An
     # authorization saved by an earlier run never skips it, because that run
     # may have chosen a different disk.
-    erase_confirmation = ask(f"Type ERASE {disk_path} to record that decision", "CANCEL")
-    disk_must_be_erased = erase_confirmation == f"ERASE {disk_path}"
+    erase_confirmation = ask(f"Type {phrase} to record that decision", "CANCEL")
+    disk_must_be_erased = erase_confirmation == phrase
     if not disk_must_be_erased:
         print("Disk erasure was not confirmed; execution will remain blocked.")
 

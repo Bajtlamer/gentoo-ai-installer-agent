@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from gentoo_agent import prepare
 from gentoo_agent.core.config import load_json, save_json
-from tests.helpers import identity_result, temp_home
+from tests.helpers import identity_result, partitions_result, temp_home, windows_bios_disk, windows_disk
 
 
 class PrepareInventoryTests(unittest.TestCase):
@@ -59,7 +59,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 class EraseAuthorizationTests(unittest.TestCase):
     def build(self, erase_answer: str, machine: str = "x86_64", disk: dict | None = None,
-              extra_results: tuple = (), **target_fields) -> tuple[dict, dict]:
+              extra_results: tuple = (), partitions: dict | None = None, **target_fields) -> tuple[dict, dict]:
         target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test",
                   **target_fields}
         self.erase_prompts = []
@@ -84,8 +84,8 @@ class EraseAuthorizationTests(unittest.TestCase):
                     patch.object(prepare, "ask_choice", fake_choice), \
                     patch.object(prepare, "ask_int", lambda prompt, default: default), \
                     redirect_stdout(io.StringIO()):
-                install = prepare.build_install_config(
-                    target, {"results": [identity_result(machine), *extra_results]})
+                results = [identity_result(machine), partitions or partitions_result("/dev/sda"), *extra_results]
+                install = prepare.build_install_config(target, {"results": results})
         return target, install
 
     def test_typed_erase_confirmation_authorizes_both_files(self):
@@ -143,6 +143,28 @@ class EraseAuthorizationTests(unittest.TestCase):
         self.assertEqual(target["architecture"], "arm64")
         self.assertEqual(target["handbook_url"], "https://wiki.gentoo.org/wiki/Handbook:ARM64")
         self.assertNotIn("Boot mode", self.choices)
+
+    def test_a_windows_disk_needs_the_extended_confirmation(self):
+        for disk in (windows_disk("/dev/sda"), windows_bios_disk("/dev/sda")):
+            with self.subTest(disk=disk["children"][0]["parttype"]):
+                target, install = self.build("ERASE /dev/sda", partitions=partitions_result(disk))
+                self.assertEqual(self.erase_prompts, ["Type ERASE WINDOWS /dev/sda to record that decision"])
+                self.assertIs(install["disk_must_be_erased"], False)
+                self.assertIs(target["disk_erase_authorized"], False)
+                target, install = self.build("ERASE WINDOWS /dev/sda", partitions=partitions_result(disk))
+                self.assertIs(install["disk_must_be_erased"], True)
+                self.assertIs(target["disk_erase_authorized"], True)
+
+    def test_windows_on_another_disk_keeps_the_ordinary_confirmation(self):
+        target, install = self.build("ERASE /dev/sda", partitions=partitions_result("/dev/sda", windows_disk("/dev/sdb")))
+        self.assertEqual(self.erase_prompts, ["Type ERASE /dev/sda to record that decision"])
+        self.assertIs(install["disk_must_be_erased"], True)
+        self.assertEqual(install["dual_boot"], "auto")
+
+    def test_missing_partition_list_stops_preparation(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.build("ERASE /dev/sda", partitions={"label": "partitions", "returncode": 1, "stdout": ""})
+        self.assertIn("INVENTORY_MISSING", str(caught.exception))
 
     def test_unknown_architecture_stops_preparation(self):
         with self.assertRaises(SystemExit) as caught:
