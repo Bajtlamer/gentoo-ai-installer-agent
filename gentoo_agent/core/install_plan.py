@@ -128,17 +128,24 @@ def _check_secure_boot(install: dict, secure_boot: str) -> list[str]:
     return []
 
 
-def _foreign_os_warnings(install: dict, records: list[dict]) -> list[str]:
-    others = [record for record in records if record["disk"] != install["disk"]]
-    warnings = [f"Windows in BIOS mode on {record['disk']} will not be in the GRUB menu."
-                for record in others if record["os"] == "windows-bios"]
-    warnings += [f"{record['disk']} holds Windows data or boot files ({', '.join(record['evidence'])}) but no "
-                 "complete UEFI Windows; it will not be added to the GRUB menu."
-                 for record in others if record["os"] == "windows-data"]
+def _foreign_os_warning(install: dict, record: dict) -> str | None:
+    """One warning per Windows on another disk that gets no menu entry; None when it gets one."""
+    disk = record["disk"]
+    if record["os"] == "windows-bios":
+        return f"Windows in BIOS mode on {disk} will not be in the GRUB menu."
+    if record["os"] == "windows-data":
+        return (f"{disk} holds Windows data or boot files ({', '.join(record['evidence'])}) but no "
+                "complete UEFI Windows; it will not be added to the GRUB menu.")
     if install.get("dual_boot") == "off":
-        warnings += [f"Windows on {record['disk']} will not be added to the GRUB menu (dual_boot is off)."
-                     for record in others if record["os"] in ("windows", "windows-bios")]
-    return warnings
+        return f"Windows on {disk} will not be added to the GRUB menu (dual_boot is off)."
+    if install.get("boot_mode") != "uefi":
+        return f"Windows on {disk} will not be added to the GRUB menu: the install boots in BIOS mode."
+    return None
+
+
+def _foreign_os_warnings(install: dict, records: list[dict]) -> list[str]:
+    warnings = [_foreign_os_warning(install, record) for record in records if record["disk"] != install["disk"]]
+    return [warning for warning in warnings if warning is not None]
 
 
 def _erases_existing_os(install: dict, records: list[dict]) -> dict | None:

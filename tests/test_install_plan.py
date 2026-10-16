@@ -298,6 +298,27 @@ class DualBootPlanTests(unittest.TestCase):
         self.assertEqual(plan["install"]["dual_boot_entries"], [])
         self.assertEqual(plan["warnings"], ["Windows on /dev/sda will not be added to the GRUB menu (dual_boot is off)."])
 
+    def test_windows_in_bios_mode_with_dual_boot_off_warns_once(self):
+        plan = self.create({**uefi_install(), "dual_boot": "off"}, sda=windows_bios_disk("/dev/sda"))
+        self.assertEqual(plan["warnings"], ["Windows in BIOS mode on /dev/sda will not be in the GRUB menu."])
+
+    def bios_plan(self, install: dict) -> dict:
+        data = inventory()
+        data["results"] = [item for item in data["results"] if item["label"] != "partitions"]
+        data["results"].append(partitions_result("/dev/sda", windows_disk("/dev/sdb")))
+        return install_plan.create_install_plan(TARGET, install, project_plan(), data)
+
+    def test_uefi_windows_on_another_disk_warns_for_a_bios_install(self):
+        plan = self.bios_plan(install_fixture())
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+        self.assertEqual(plan["warnings"], [
+            "Windows on /dev/sdb will not be added to the GRUB menu: the install boots in BIOS mode."])
+
+    def test_uefi_windows_with_dual_boot_off_warns_once_for_a_bios_install(self):
+        plan = self.bios_plan({**install_fixture(), "dual_boot": "off"})
+        self.assertEqual(plan["warnings"], [
+            "Windows on /dev/sdb will not be added to the GRUB menu (dual_boot is off)."])
+
     def test_windows_on_the_install_disk_with_dual_boot_off_does_not_warn(self):
         plan = self.create({**uefi_install(), "dual_boot": "off"}, nvme=windows_disk("/dev/nvme0n1"))
         self.assertEqual(plan["warnings"], [])

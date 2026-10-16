@@ -316,7 +316,8 @@ every Windows disk with a menu entry (after the install disk in
 `plan["disks"]`), `secure_boot` (`on`, `off`, or `unknown`), `warnings`, and
 `erases_existing_os` (the install disk, the operating system, and the evidence,
 or `null`). Warnings are shown in the approval dialog and returned by the MCP
-`create_plan` tool. They are:
+`create_plan` tool. Each Windows on a disk other than the install disk that
+gets no menu entry has exactly one warning. They are:
 
 - Secure Boot state unknown for a UEFI install.
 - `Windows in BIOS mode on <disk> will not be in the GRUB menu.` for Windows
@@ -326,8 +327,10 @@ or `null`). Warnings are shown in the approval dialog and returned by the MCP
   Windows; it will not be added to the GRUB menu.` for a `windows-data` disk
   other than the install disk.
 - `Windows on <disk> will not be added to the GRUB menu (dual_boot is off).` for
-  Windows (UEFI or BIOS mode) on a disk other than the install disk when
-  `dual_boot` is `off`.
+  UEFI Windows on a disk other than the install disk when `dual_boot` is `off`.
+- `Windows on <disk> will not be added to the GRUB menu: the install boots in
+  BIOS mode.` for UEFI Windows on another disk when the install uses BIOS mode
+  and `dual_boot` is `auto`.
 
 ## Passwords
 
