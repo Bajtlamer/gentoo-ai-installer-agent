@@ -62,15 +62,20 @@ Rules that hold across the code:
    with `refresh=true`) runs every command in `core/ssh.READ_ONLY_COMMANDS`
    over SSH and saves `inventory/inventory-<stamp>.json`. One of those
    commands, `disk_identity`, runs `lsblk -J -b -d` and records each disk's
-   path, size, model, serial, and WWN. If every command fails with ssh exit
-   255 or a timeout, nothing is saved and `SSH_UNREACHABLE` is raised (or
-   `HOST_KEY_UNKNOWN` when ssh reports "Host key verification failed").
+   path, size, model, serial, and WWN. The allowlist also includes `partitions`
+   (`lsblk -J -b -e7` with the columns `PATH`, `TYPE`, `PKNAME`, `PARTTYPE`,
+   `PARTTYPENAME`, `FSTYPE`, `UUID`, `PARTUUID`, `SIZE`, and `LABEL`) and
+   `secure_boot` (the last data byte of the SecureBoot EFI variable). If every
+   command fails with ssh exit 255 or a timeout, nothing is saved and
+   `SSH_UNREACHABLE` is raised (or `HOST_KEY_UNKNOWN` when ssh reports "Host key
+   verification failed").
 2. **Resolve the configuration.** The CLI reads `config/target.json` and
    `config/install.json`. The MCP server calls `core/resolve.resolve_config()`,
    which layers overrides, profile, values inferred from the inventory,
    fallbacks, and `config/install.default.json`, and records the source of
    every value. It infers the boot mode and the architecture from the live system, and the
-   disk when exactly one disk is eligible; otherwise it raises `DISK_AMBIGUOUS` or
+   disk when exactly one disk is eligible and it holds no Windows (a disk that
+   holds Windows is never inferred); otherwise it raises `DISK_AMBIGUOUS` or
    `CONFIG_CONFLICT` instead of guessing.
 3. **Create the plan.** `core/install_plan.create_install_plan()` runs
    `validated_settings()`, requires full disk-erase authorization and an
@@ -79,19 +84,28 @@ Rules that hold across the code:
    error, takes the disk identity from the latest inventory, refuses a disk
    that `disks.disk_candidates()` excludes (removable, USB, read-only, or
    mounted) with `CONFIG_CONFLICT`, checks `expected_disk_model` and `expected_disk_size_gib` against it, and generates
-   the apply and check program of every phase. It writes `plans/<plan_id>.json`. The `plan_hash`
+   the apply and check program of every phase. For dual boot it refuses a UEFI
+   install while Secure Boot is on (`CONFIG_CONFLICT`), derives
+   `install.dual_boot_entries` from the `partitions` result, and freezes
+   `secure_boot`, `warnings`, `erases_existing_os`, and the identity of every
+   Windows disk with an entry (after the install disk in `plan["disks"]`, so the
+   drift check re-reads it). It writes `plans/<plan_id>.json`. The `plan_hash`
    is SHA-256 over everything except `plan_id`, `plan_hash`, and `created_at`.
    The `plan_id` is the first 16 hex characters of the hash.
 4. **Approve.** A human approves in one of two channels:
    - `gentoo-agent approve <plan_id>` opens `/dev/tty`, shows the summary, and
-     requires the phrase `APPROVE <plan_id>`.
+     requires the phrase `APPROVE <plan_id>`, or `APPROVE <plan_id> ERASE
+     WINDOWS <disk>` when the plan erases a disk that holds Windows.
    - The MCP tool `approve_plan` shows the same summary in an elicitation
-     dialog. Only an explicit accept with `approve: true` counts. If the client
-     cannot show dialogs, the tool returns `APPROVAL_REQUIRED` with the
-     terminal command.
+     dialog. Only an explicit accept with `approve: true` counts. For a plan
+     that erases Windows, the form also needs `confirm` equal to `ERASE WINDOWS
+     <disk>`. If the client cannot show dialogs, the tool returns
+     `APPROVAL_REQUIRED` with the terminal command.
 
    Both call `core/approval.record_approval()`, which writes a signed
-   `approvals/<plan_id>.json` valid for 60 minutes.
+   `approvals/<plan_id>.json` valid for 60 minutes. The record carries
+   `erase_confirmed`, and `require_approved_plan()` refuses a plan that erases
+   Windows unless it is true.
 5. **Start the run.** `jobs/launcher.start_run()` is the only code path that
    starts work. It calls `require_approved_plan()`, resolves passwords (from
    environment variables, generation, or a CLI prompt callback), takes the
@@ -210,7 +224,9 @@ current code does not write to it.
 | No reboot | `core/runner.py` | No phase reboots. The target stays up for console recovery. |
 | Passwords on stdin only | `core/credentials.py`, authentication apply program | Passwords in commands, logs, or configuration. The program reads the records once and pipes them only to `chpasswd`. |
 | No passwords to the model | `mcp/server.py` | `get_run_status` reports only `credentials_waiting` and `credentials_applied`. |
-| Escaped approval dialog | `approval._shown()`, `approval_summary()` | Target or inventory values faking dialog lines. Values with newlines, control characters, or more than 200 characters are JSON-escaped and truncated. The "Disk erase" and "Destructive phases" lines come before any such value. |
+| Escaped approval dialog | `approval._shown()`, `approval_summary()` | Target or inventory values faking dialog lines. Values with newlines, control characters, or more than 200 characters are JSON-escaped and truncated. The "Disk erase" and "Destructive phases" lines come before any such value. The install disk is labeled `Disk (erased)`, a Windows disk with a menu entry `Windows disk (kept, not written)`. |
+| Strict inventory formats | `core/foreign_os.py`, `core/validate.py` | Untrusted inventory values reaching a program or the dialog. A device path, ESP UUID, or PARTUUID must pass `DEVICE_PATH`, `ESP_UUID`, or `PARTUUID` first; anything else makes the inventory unusable (`INVENTORY_MISSING`). Nothing mounts or writes the Windows disk. |
+| Extended Windows confirmation | `core/approval.py`, `cli.py`, `mcp/server.py`, `prepare.py` | Erasing a disk that holds Windows with an ordinary approval. It needs `ERASE WINDOWS <disk>`, recorded as `erase_confirmed` in the signed record. |
 | Operator profile | `docs/operator/claude-settings.json` | The agent's shell and file tools writing `approvals/`, `plans/`, `runs/`, `secrets/`, `config/`, `inventory/`, `.mcp.json`, or `.claude/`. The shell cannot read `secrets/` or `runs/`, and the file tools cannot read `secrets/` or run credentials. |
 | Protected mode | [guides/protected-mode.md](guides/protected-mode.md) | The agent editing the server's own code. The server runs from a separate venv. |
 
@@ -231,7 +247,8 @@ rules in `.claude/settings.json` are a convention.
 | `disks.py` | Disk identities from `lsblk`, eligible candidates, identity strength, `check_drift()` |
 | `errors.py` | `AgentError` and the stable error codes |
 | `handbook.py` | Fetches the Handbook and saves a snapshot with URL and retrieval time |
-| `hardware.py` | Inventory summary for discovery: boot mode, architecture, and disks |
+| `foreign_os.py` | Windows detection from the `partitions` inventory, `parse_secure_boot()`, derived `dual_boot_entries` |
+| `hardware.py` | Inventory summary for discovery: boot mode, architecture, Secure Boot state, and disks with their existing OS |
 | `install_plan.py` | Plan creation, `plan_hash`, loading and saving plans |
 | `inventory.py` | Collects and records the read-only inventory |
 | `layout.py` | Partition layout from disk, boot mode, and swap size |
@@ -293,7 +310,7 @@ part of a plan.
 | `configuration` | yes | Hostname, timezone, locale, fstab (with the EFI partition at `/boot` on UEFI), networking (dhcpcd), OpenSSH with the root key, OpenRC user services off |
 | `authentication` | yes | Regular user, user SSH key, sudo with the `%wheel` rule, passwords through `chpasswd` |
 | `kernel` | yes | Installs `sys-kernel/gentoo-kernel-bin` with dracut through installkernel |
-| `bootloader` | yes | Installs GRUB for BIOS or UEFI and writes `grub.cfg`; on UEFI also `efibootmgr` and a `/EFI/BOOT` fallback copy |
+| `bootloader` | yes | Installs GRUB for BIOS or UEFI and writes `grub.cfg`; on UEFI also `efibootmgr` and a `/EFI/BOOT` fallback copy, and a menu entry per Windows (see below) |
 | `validation` | no | Read-only final checks of mounts, boot files, services, and SSH |
 
 The `destructive` flag comes from `config/plan.json` and is copied into the
@@ -310,7 +327,17 @@ Every phase follows the contract in [phases/README.md](../phases/README.md):
 
 Phase programs must be idempotent, target-specific, logged, and safe to rerun
 after an SSH disconnect. `tests/test_golden_commands.py` pins the generated
-programs for six configurations in `tests/golden/`.
+programs for seven configurations in `tests/golden/`.
+
+For dual boot, the bootloader apply checks that each Windows EFI partition
+resolves (`blkid -U <uuid>`), then writes `/etc/grub.d/45_gentoo_agent_dualboot`
+inside the chroot between `grub-install` and `grub-mkconfig`. The script is
+rewritten on every run, and `/etc/grub.d/40_custom` is never touched. The
+bootloader check and the `validation` phase grep `grub.cfg` for each entry's
+`search --no-floppy --fs-uuid --set=root <uuid>` line. Without entries the
+programs are byte-identical to the ones without dual boot
+(`test_empty_dual_boot_entries_change_nothing`); the seventh golden
+configuration is `uefi_gpt_dualboot_windows`.
 
 ## Architectures
 

@@ -21,6 +21,7 @@ MCP tools run the same code underneath.
 - [Tools, resources, and the prompt](#tools-resources-and-the-prompt)
 - [Example conversation](#example-conversation)
 - [The approval dialog](#the-approval-dialog)
+- [Dual boot with Windows](#dual-boot-with-windows)
 - [Reading generated passwords](#reading-generated-passwords)
 - [What the AI must never do](#what-the-ai-must-never-do)
 
@@ -232,14 +233,21 @@ detect_hardware({"refresh": true})
   "collected_at": "2026-10-16T09:12:04+00:00",
   "inventory_hash": "0519c7ea46113d27ce8beff6bf4b160b65d65f63dcf35c3a2141ef4ece044014",
   "boot_mode": "uefi",
+  "secure_boot": "off",
   "disks": [
     {"path": "/dev/sda", "size_bytes": 42949672960, "model": "VMware Virtual S",
-     "serial": "6000c29a1b2c3d4e", "wwn": "0x6000c29a1b2c3d4e", "strength": "strong"},
+     "serial": "6000c29a1b2c3d4e", "wwn": "0x6000c29a1b2c3d4e", "strength": "strong",
+     "existing_os": null},
     {"path": "/dev/sdb", "size_bytes": 31004295168, "model": "Ultra USB 3.0",
-     "serial": "4C530001230517112093", "wwn": "", "strength": "strong"}
+     "serial": "4C530001230517112093", "wwn": "", "strength": "strong",
+     "existing_os": null}
   ]
 }
 ```
+
+`secure_boot` is `on`, `off`, or `unknown`, and `existing_os` is `windows`,
+`windows-bios`, `null`, or `unknown`; see
+[Dual boot with Windows](#dual-boot-with-windows).
 
 Two disks are listed, but `/dev/sdb` is the USB stick the live system booted
 from. The AI may ask you which disk to use; here it lets `resolve_config`
@@ -422,17 +430,36 @@ cannot change it. It contains the plan summary, in this order:
 1. `Plan` and `Plan hash`.
 2. `Disk erase` and `Destructive phases`. These always come first, before any
    value that was read from the target or the inventory. Read them before
-   anything else.
+   anything else. Plan warnings (for example an unknown Secure Boot state) follow
+   as `WARNING:` lines. If the install disk holds Windows, the whole dialog
+   starts with one more line, before `Plan`:
+
+   ```text
+   WARNING: /dev/sdb contains Windows (esp vfat /dev/sdb1, msr /dev/sdb2, ntfs /dev/sdb3). It will be erased.
+   ```
 3. `Target` (SSH user, address, port, name) and `Created`.
 4. `Install` (boot mode, partition table, hostname, user, init system),
    `Network`, `Passwords` (source and variable names, never values), and
    `Access` (root password SSH, sudo, groups).
-5. One `Disk` line with path, size, model, serial, and WWN, plus a `WARNING`
-   line when the disk has no serial or WWN.
+5. One `Disk (erased)` line with path, size, model, serial, and WWN, plus a
+   `WARNING` line when the disk has no serial or WWN. When Windows gets a menu
+   entry, a `Dual boot:` line per entry follows `Network`, and each
+   Windows disk follows as `Windows disk (kept, not written)`.
 
 Then: "Approve this plan? The approval is valid for 60 minutes and covers
 exactly the commands and disk above. Check 'approve' and accept only if you,
 the human operator, agree." The form has a single boolean field, `approve`.
+For a plan that erases a disk holding Windows, the text adds "This plan erases
+a disk that holds Windows: type exactly ERASE WINDOWS <disk> in 'confirm'." and
+the form has a second text field, `confirm`.
+
+For a plan with a Windows entry, the dialog also shows this line, for example:
+
+```text
+Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.
+```
+
+See [Dual boot with Windows](#dual-boot-with-windows).
 
 Values that come from the target or the configuration are shown on one line;
 anything with newlines or control characters, and anything longer than 200
@@ -445,6 +472,54 @@ fails (unsupported transport, client error, timeout), the server falls back to
 
 Only you answer the dialog. Do not configure anything that answers it for you
 (for example an elicitation hook), and never tell the AI the answer.
+
+## Dual boot with Windows
+
+When Windows is installed in UEFI mode on another disk of the target, the
+installer can keep it bootable through an explicit GRUB menu entry that is
+frozen into the plan. It never writes to the Windows disk.
+
+Prerequisites:
+
+- Windows is installed in UEFI mode on a disk other than the install disk.
+- Secure Boot is off in the firmware setup. `create_plan` refuses a UEFI
+  install while it is on (`CONFIG_CONFLICT`), because the installed GRUB is not
+  signed. An unknown state is a warning in the plan and the dialog.
+- The live ISO was booted in UEFI mode. After any firmware change, boot it again
+  and call `detect_hardware` with `refresh=true`.
+
+`detect_hardware` reports `secure_boot` (`on`, `off`, or `unknown`) and, per
+disk, `existing_os`: `windows` (UEFI), `windows-bios`, `null` (nothing found),
+or `unknown` for every disk when the partition list is missing or unusable.
+`resolve_config` previews the derived `dual_boot_entries`.
+
+What the result looks like:
+
+- GRUB lists Gentoo first (the default) and `Windows Boot Manager (on /dev/sdX)`.
+- The bootloader phase writes `/etc/grub.d/45_gentoo_agent_dualboot` in the new
+  system and runs `grub-mkconfig`. Nothing on the Windows disk is mounted or
+  written; the plan records its identity, so the run stops with `TARGET_DRIFT`
+  if that disk is gone or swapped.
+- Windows may ask once for its BitLocker recovery key after the first boot
+  through GRUB. Have the key ready.
+
+To leave Windows out, the AI passes the override `{"dual_boot": "off"}` (or
+`config/install.json` carries `"dual_boot": "off"` for the CLI, for example from
+`init_config.py --no-dual-boot`). The plan then carries the warning `Windows on
+<disk> will not be added to the GRUB menu (dual_boot is off).` Windows installed
+in BIOS mode is never added in this version; see
+[Windows in BIOS mode](../TROUBLESHOOTING.md#windows-in-bios-mode).
+
+Erasing a disk that holds Windows:
+
+- It is never chosen automatically: when it is the only eligible disk,
+  `resolve_config` returns `DISK_AMBIGUOUS` and names it. The AI must ask you
+  and pass the disk as the `disk` override only if you say it may be erased.
+- The dialog then starts with `WARNING: <disk> contains Windows (...). It will
+  be erased.` and has a second field, `confirm`, which must be exactly
+  `ERASE WINDOWS <disk>`. A missing or different value records nothing
+  (`APPROVAL_DECLINED`). Type it yourself; the AI must not know the answer.
+- The CLI equivalent is the phrase `APPROVE <plan_id> ERASE WINDOWS <disk>`.
 
 ## Reading generated passwords
 

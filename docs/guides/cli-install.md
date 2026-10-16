@@ -19,6 +19,7 @@ yourself in your own terminal.
 - [Step 5: Inspect the target](#step-5-inspect-the-target)
 - [Step 6: Validate the configuration](#step-6-validate-the-configuration)
 - [Step 7: Read the dry run](#step-7-read-the-dry-run)
+- [Dual boot with Windows](#dual-boot-with-windows)
 - [Step 8: Create a plan](#step-8-create-a-plan)
 - [Step 9: Approve the plan](#step-9-approve-the-plan)
 - [Step 10: Start and follow the run](#step-10-start-and-follow-the-run)
@@ -322,7 +323,8 @@ gentoo-agent inspect
 
 `inspect` runs only the built-in, read-only command allowlist (identity, boot
 mode, `lsblk` views including disk serial and WWN, `blkid`, mounts, network,
-and kernel warnings). Progress goes to stderr and the path of the saved
+kernel warnings, the partition types and filesystems, and the Secure Boot
+state). Progress goes to stderr and the path of the saved
 inventory to stdout:
 
 ```text
@@ -335,6 +337,8 @@ Inspecting block_ids...
 Inspecting mounts...
 Inspecting network...
 Inspecting errors...
+Inspecting partitions...
+Inspecting secure_boot...
 /path/to/gentoo-ai-installer-agent/inventory/inventory-20261016T091204Z.json
 ```
 
@@ -343,6 +347,10 @@ fails with `SSH_UNREACHABLE` ("Could not reach the target over SSH; check the
 address, key, and host key."), or with `HOST_KEY_UNKNOWN` when ssh reports
 "Host key verification failed". Read the inventory file and confirm that the
 disk you plan to erase is the one you expect: size, model, serial, and WWN.
+The `partitions` and `secure_boot` results are what `plan create` uses to find
+Windows and to check Secure Boot; the summary that the MCP `detect_hardware`
+tool builds from them reports `secure_boot` (`on`, `off`, or `unknown`) and an
+`existing_os` per disk (see [Dual boot with Windows](#dual-boot-with-windows)).
 
 Optionally record the Handbook source as well:
 
@@ -430,6 +438,65 @@ target.
 `install --execute` no longer exists; it fails with `APPROVAL_REQUIRED` and
 points you to plans.
 
+## Dual boot with Windows
+
+When Windows is installed in UEFI mode on another disk of the target, the
+installer can keep it bootable. It adds an explicit GRUB menu entry for it,
+frozen into the plan, and it never writes to the Windows disk.
+
+Prerequisites:
+
+- Windows is installed in UEFI mode on a disk other than the install disk.
+- Secure Boot is off in the firmware setup. `plan create` refuses a UEFI
+  install while it is on (`CONFIG_CONFLICT`), because the installed GRUB is not
+  signed. An unknown state is only a `WARNING` line in the plan.
+- You booted the live ISO in UEFI mode. After any firmware change, boot the
+  live ISO again and run `gentoo-agent inspect` again: the plan is built from
+  the inventory, not from the live system.
+
+What the result looks like:
+
+- GRUB lists Gentoo first (the default) and `Windows Boot Manager (on /dev/sdX)`.
+- The bootloader phase writes `/etc/grub.d/45_gentoo_agent_dualboot` inside the
+  new system and runs `grub-mkconfig`. Nothing on the Windows disk is mounted
+  or written. The plan only records that disk's identity, so the run stops with
+  `TARGET_DRIFT` if the disk is gone or swapped.
+- Windows may ask once for its BitLocker recovery key after the first boot
+  through GRUB, because the boot path changed. Have the key ready.
+
+In the plan summary, the `Dual boot:` line names the Windows disk and its EFI
+partition UUID, and the Windows disk appears as `Windows disk (kept, not
+written)` below the `Disk (erased)` line:
+
+```text
+Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.
+...
+Disk (erased): /dev/nvme0n1  size=512110190592 bytes  model=NVMe  serial=N1  wwn=none
+Windows disk (kept, not written): /dev/sda  size=256060514304 bytes  model=WinDisk  serial=W1  wwn=none
+```
+
+To leave Windows out, set `"dual_boot": "off"` in `config/install.json`, or
+write the file with `init_config.py --no-dual-boot`. With `off`, the plan
+carries the warning `Windows on <disk> will not be added to the GRUB menu
+(dual_boot is off).` Windows installed in BIOS mode is never added to the menu
+in this version; the plan warns about it (see
+[Windows in BIOS mode](../TROUBLESHOOTING.md#windows-in-bios-mode)).
+
+Erasing a disk that holds Windows:
+
+- `resolve_config` never infers it. Name it explicitly as the install disk, and
+  only when you mean to erase it.
+- `prepare_install.py` prints `WARNING: <disk> contains Windows (...). It will be
+  erased.` and asks you to type `ERASE WINDOWS <disk>` instead of
+  `ERASE <disk>`.
+- The plan summary starts with that `WARNING` line, and `approve` asks for the
+  phrase `APPROVE <plan_id> ERASE WINDOWS <disk>`. An approval without it does
+  not start a run (`APPROVAL_REQUIRED`).
+
+The configuration fields are described in the
+[configuration reference](../CONFIGURATION.md#configinstalljson), and failures
+in [Troubleshooting](../TROUBLESHOOTING.md).
+
 ## Step 8: Create a plan
 
 ```sh
@@ -455,7 +522,7 @@ Install: boot=uefi table=gpt hostname=gentoo user=gentoo init=openrc
 Network: dhcp
 Passwords: source=environment root_password_env=GENTOO_ROOT_PASSWORD user_password_env=GENTOO_USER_PASSWORD
 Access: allow_root_password_ssh=no configure_sudo=yes user_groups=wheel
-Disk: /dev/sda  size=42949672960 bytes  model=VMware Virtual S  serial=6000c29a1b2c3d4e  wwn=0x6000c29a1b2c3d4e
+Disk (erased): /dev/sda  size=42949672960 bytes  model=VMware Virtual S  serial=6000c29a1b2c3d4e  wwn=0x6000c29a1b2c3d4e
 
 Plan saved: c275199989470858
 Approve it yourself in a terminal: gentoo-agent approve c275199989470858
@@ -472,7 +539,10 @@ How to read the summary:
 | `Network` | `dhcp`, or the static address, gateway, and DNS servers. |
 | `Passwords` | The password source and, for `environment`, the variable names (never values). |
 | `Access` | Root password SSH login, sudo, and the user's groups. |
-| `Disk` | The exact disk the plan is bound to. A `WARNING` line follows when the disk has no serial or WWN. |
+| `Dual boot` | One line per Windows that gets a GRUB menu entry. Absent when there is none. |
+| `Disk (erased)` | The exact disk the plan is bound to and erases. A `WARNING` line follows when the disk has no serial or WWN. |
+| `Windows disk (kept, not written)` | A Windows disk with a menu entry. It is only read and drift-checked. |
+| `WARNING` | Plan warnings (for example an unknown Secure Boot state) follow `Destructive phases`; a line first in the summary says the install disk holds Windows. |
 
 `plan create` refuses when the configuration does not fully authorize erasing
 the disk (`CONFIG_INVALID` with the missing flags listed), when there is no
@@ -502,12 +572,14 @@ Plan: c275199989470858
 Plan hash: c27519998947085810ecce233153fc9272cda9e2327f63d906b168c710e8e31e
 Disk erase: YES, all data on the disk will be destroyed
 ...
-Disk: /dev/sda  size=42949672960 bytes  model=VMware Virtual S  serial=6000c29a1b2c3d4e  wwn=0x6000c29a1b2c3d4e
+Disk (erased): /dev/sda  size=42949672960 bytes  model=VMware Virtual S  serial=6000c29a1b2c3d4e  wwn=0x6000c29a1b2c3d4e
 
 Type APPROVE c275199989470858 to approve this plan for 60 minutes:
 ```
 
-Type `APPROVE <plan_id>` exactly. On success:
+Type `APPROVE <plan_id>` exactly. If the plan erases a disk that holds
+Windows, the prompt asks for `APPROVE <plan_id> ERASE WINDOWS <disk>` instead
+(see [Dual boot with Windows](#dual-boot-with-windows)). On success:
 
 ```text
 Approved until 2026-10-16T09:41:06+00:00. Start with: gentoo-agent run start c275199989470858

@@ -20,26 +20,30 @@ the background stores the same object in `error` (and the message in
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
 - [Credentials not shown](#credentials-not-shown)
+- [Secure Boot is on](#secure-boot-is-on)
+- [Windows EFI partition not found](#windows-efi-partition-not-found)
+- [BitLocker recovery prompt](#bitlocker-recovery-prompt)
+- [Windows in BIOS mode](#windows-in-bios-mode)
 - [Windows](#windows)
 
 ## Error codes
 
 | Code | Typical causes | What to do |
 |---|---|---|
-| `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network including a missing or invalid `interface`). A missing `architecture` in an older `config/install.json`. The configuration does not pass review at `plan create` (`details.errors` lists the findings of `validate`). The disk model or size differs from `expected_disk_model` or `expected_disk_size_gib`, or one of them has the wrong type (`expected_disk_size_gib` must be a number greater than 0, `expected_disk_model` a string). A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` (in any front end or in `install.json`), or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
-| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A configured `architecture` that differs from the live system, or `arm64` with BIOS boot. A chosen disk that is excluded (removable, USB, read-only, or mounted), whether it comes from `resolve_config` or from `config/install.json` at `plan create`. After a failed run the disk is usually still mounted at `/mnt/gentoo` (see [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
-| `APPROVAL_REQUIRED` | The plan has no approval yet. The approval record is malformed, unsigned, or signed with another key. `approve` run without an interactive terminal. The signing key `secrets/approval.key` is not a private regular file you own, or is malformed. `install --execute` (replaced by plans). An MCP client without elicitation support, or a failed dialog. | Approve the plan yourself in your own terminal: `gentoo-agent approve <plan_id>`. For a bad key, remove `secrets/approval.key` and approve again (existing approvals become invalid). |
-| `APPROVAL_DECLINED` | The typed phrase was not exactly `APPROVE <plan_id>`, or the dialog was declined, cancelled, or accepted without checking `approve`. | Nothing was recorded. Approve again if you meant to. |
+| `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network including a missing or invalid `interface`). A missing `architecture` in an older `config/install.json`. The configuration does not pass review at `plan create` (`details.errors` lists the findings of `validate`). The disk model or size differs from `expected_disk_model` or `expected_disk_size_gib`, or one of them has the wrong type (`expected_disk_size_gib` must be a number greater than 0, `expected_disk_model` a string). A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` (in any front end or in `install.json`), or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid `dual_boot` (not `auto` or `off`) or an invalid `dual_boot_entries`. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
+| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A configured `architecture` that differs from the live system, or `arm64` with BIOS boot. Secure Boot on for a UEFI install (see [Secure Boot is on](#secure-boot-is-on)). `dual_boot_entries` together with `dual_boot: off` or a BIOS install. A chosen disk that is excluded (removable, USB, read-only, or mounted), whether it comes from `resolve_config` or from `config/install.json` at `plan create`. After a failed run the disk is usually still mounted at `/mnt/gentoo` (see [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
+| `APPROVAL_REQUIRED` | The plan has no approval yet. The approval record is malformed, unsigned, or signed with another key. `approve` run without an interactive terminal. The signing key `secrets/approval.key` is not a private regular file you own, or is malformed. `install --execute` (replaced by plans). An MCP client without elicitation support, or a failed dialog. A plan that erases a disk holding Windows whose approval lacks the extended confirmation, including approval records written before that rule (they have no `erase_confirmed`). | Approve the plan yourself in your own terminal: `gentoo-agent approve <plan_id>`. For a bad key, remove `secrets/approval.key` and approve again (existing approvals become invalid). |
+| `APPROVAL_DECLINED` | The typed phrase was not exactly `APPROVE <plan_id>` (or `APPROVE <plan_id> ERASE WINDOWS <disk>` for a plan that erases Windows), or the dialog was declined, cancelled, or accepted without checking `approve`. For a plan that erases Windows, a missing or different `confirm` value (it must be exactly `ERASE WINDOWS <disk>`). | Nothing was recorded. Approve again if you meant to. |
 | `APPROVAL_EXPIRED` | More than 60 minutes passed between the approval and `run start`, `run resume`, `start_install`, `run_phase`, or `resume_run`. | Approve the same plan again, then start or resume. See [Approval expired](#approval-expired). |
 | `PLAN_NOT_FOUND` | No `plans/<plan_id>.json` for that id (typo, or a different `GENTOO_AGENT_HOME`). | Check the id from `plan create` and the work directory. |
 | `PLAN_HASH_MISMATCH` | A plan file was edited after creation. The approval is for a different plan hash. The plan changed after the run started. `verify_install` found a stored check that does not match what the code generates now, for example after the SSH key changed. | Never edit `plans/` or `approvals/`. Create a new plan, approve it, and start it. |
-| `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. At `plan create`: the latest inventory is older than 24 hours, has no valid `collected_at`, or is dated more than 5 minutes in the future (check the operator machine's clock). The identity probe did not report the live architecture. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
-| `DISK_AMBIGUOUS` | In `resolve_config` and `create_plan`: none or several disks are eligible, so no disk can be inferred (`details.candidates`, `details.excluded`). At `plan create`: the disk has no serial or WWN and another disk has the same size and model (`details.twins`). | Name the disk explicitly (the `disk` override, or `disk` in `install.json`), or detach the twin disk and inspect again. See [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick). |
-| `TARGET_DRIFT` | At the start of a run, and again before each destructive phase, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
+| `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. At `plan create`: the latest inventory is older than 24 hours, has no valid `collected_at`, or is dated more than 5 minutes in the future (check the operator machine's clock). The identity probe did not report the live architecture. A missing or unusable `partitions` result (malformed, or a value that fails the strict format checks), or a Windows disk with a menu entry that is missing from the `disk_identity` result. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
+| `DISK_AMBIGUOUS` | In `resolve_config` and `create_plan`: none or several disks are eligible, so no disk can be inferred (`details.candidates`, `details.excluded`). At `plan create`: the disk has no serial or WWN and another disk has the same size and model (`details.twins`). In `resolve_config` and `create_plan`: the only eligible disk holds Windows, which is never inferred (`details.existing_os`). | Name the disk explicitly (the `disk` override, or `disk` in `install.json`), or detach the twin disk and inspect again. See [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick). |
+| `TARGET_DRIFT` | At the start of a run, and again before each destructive phase, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. The same check covers every Windows disk with a menu entry: one that is gone or swapped stops the run. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
 | `HOST_KEY_UNKNOWN` | ssh exited with 255 and "Host key verification failed": the target's host key is not in the known hosts file, or has changed. Raised by `inspect` and `detect_hardware` (inventory), by the disk identity read at the start of a run and before each destructive phase, and by `verify_install`. | Verify the fingerprint on the target console, then add the key to the configured known hosts file. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
 | `SSH_UNREACHABLE` | Every inventory command failed (wrong address, key, or user); nothing was saved. `ssh` could not be executed. The disk identity could not be read at the start of a run. `verify_install` could not reach the target. | Test the connection by hand with `BatchMode=yes` and `StrictHostKeyChecking=yes`. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
 | `HANDBOOK_UNAVAILABLE` | `gentoo-agent handbook` could not download `handbook_url`. | Check the network and the URL in `config/target.json`. `prepare_install.py` only warns about this. |
-| `PHASE_FAILED` | A phase's apply or verification returned non-zero (`details.phase`, `details.returncode`). An unexpected exception during the run. The worker could not be started, or exited before receiving its payload. The worker ended without recording a result (status `interrupted`). | Read the end of the log for that phase, fix the cause (often network, mirrors, or a console fix), then `run resume <run_id>`. |
+| `PHASE_FAILED` | A phase's apply or verification returned non-zero (`details.phase`, `details.returncode`). An unexpected exception during the run. The worker could not be started, or exited before receiving its payload. The worker ended without recording a result (status `interrupted`). A Windows entry missing from `grub.cfg` fails the bootloader or validation check, and the bootloader apply fails when the Windows EFI partition is gone (see [Windows EFI partition not found](#windows-efi-partition-not-found)). | Read the end of the log for that phase, fix the cause (often network, mirrors, or a console fix), then `run resume <run_id>`. |
 | `RUN_NOT_FOUND` | No `runs/<run_id>/run.json` for that id. | Check the run id and `GENTOO_AGENT_HOME`. |
 | `RUN_ALREADY_ACTIVE` | Another run holds `runs/active.lock` and is still active, or `run resume` was called on a run that is still active. | See [RUN_ALREADY_ACTIVE](#run_already_active). |
 | `INTERNAL_ERROR` | MCP only: a tool failed with an unexpected exception. | Read the server log on its stderr (your MCP client keeps it in its MCP server log) and report the traceback. |
@@ -319,6 +323,45 @@ terminal.
 
 If the passwords are lost, log in on the target's console or with the SSH key
 (the root key is always installed) and set new passwords with `passwd`.
+
+## Secure Boot is on
+
+`plan create` or `create_plan` refuses a UEFI install with `CONFIG_CONFLICT`
+("Secure Boot is on, and the installed GRUB is not signed. ..."). The installed
+GRUB is not signed, so the firmware would refuse to start it.
+
+1. Turn Secure Boot off in the firmware setup.
+2. Boot the live ISO again.
+3. Refresh the inventory: `gentoo-agent inspect`, or `detect_hardware` with
+   `refresh=true`. The summary should report `secure_boot` as `off`.
+4. Create the plan again.
+
+Shim and MOK enrollment are not supported. When the state cannot be read, the
+plan carries a warning ("Secure Boot state is unknown; ...") instead of a
+refusal: check the firmware setup before approving.
+
+## Windows EFI partition not found
+
+The bootloader apply printed `Windows EFI partition <uuid> not found; refresh
+the inventory` and the run failed with `PHASE_FAILED`. The Windows disk was
+detached or reformatted after the inventory was taken.
+
+Refresh the inventory, create and approve a new plan, and start it; completed
+phases are skipped. A Windows disk that was swapped for another one stops the
+run earlier with `TARGET_DRIFT`.
+
+## BitLocker recovery prompt
+
+After the first boot through the GRUB menu entry, Windows may ask once for its
+BitLocker recovery key, because the boot path changed. Enter the key. Nothing
+on the Windows disk was changed by the installer.
+
+## Windows in BIOS mode
+
+A Windows installed in BIOS mode (MBR, no EFI system partition) is reported as
+`windows-bios`. The plan warns `Windows in BIOS mode on <disk> will not be in
+the GRUB menu.` and this version never adds it to the menu. Either convert
+Windows to UEFI (outside this tool), or boot it through the firmware boot menu.
 
 ## Windows
 

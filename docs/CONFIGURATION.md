@@ -160,7 +160,22 @@ Fields with a default when absent:
 | `user_password_env` | string | none | Variable holding the regular-user password |
 | `expected_disk_model` | string | none | When set, plan creation requires the inventory to report exactly this model, and `preflight` requires `lsblk` to report it on the live target. Must be a string or `null` |
 | `expected_disk_size_gib` | number | none | When set, plan creation and `preflight` require the disk size to be within 1 GiB of this value. Must be a number greater than 0 (not a boolean) or `null`. `prepare_install.py` derives it from the exact byte count in the `disk_identity` inventory, falling back to the rounded `lsblk` size only when that is missing |
+| `dual_boot` | string | `auto` | `auto` adds every Windows installed in UEFI mode on a disk other than the install disk to the GRUB menu; `off` adds none. `init_config.py --no-dual-boot` writes `off` |
 | `schema_version` | integer | none | Configuration schema version; currently `1` |
+
+The derived field `dual_boot_entries` is a list of Windows menu entries.
+`create_install_plan` (used by `plan create` and the MCP `create_plan` tool)
+derives it from the `partitions` result of the latest inventory, and
+`resolve_config` previews the same list. It is never accepted from overrides,
+profiles, or fallbacks, and a value in `install.json` is replaced at plan
+creation. It is empty with `dual_boot: off` and for a BIOS install. Each
+entry names one Windows installed in UEFI mode on a disk other than the install
+disk:
+
+```json
+[{"os": "windows", "disk": "/dev/sdb", "esp_uuid": "ABCD-1234",
+  "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"}]
+```
 
 `prepare_install.py` also writes `detected_live_boot_mode`,
 `inventory_source`, and `handbook_snapshot`. They are a record for review; no
@@ -199,6 +214,8 @@ in `gentoo_agent/core/validate.py`). A violation raises `CONFIG_INVALID`, or
 | `architecture` | `amd64` or `arm64`; `arm64` with `boot_mode: bios` is `CONFIG_CONFLICT` |
 | `network_method` | `dhcp` or `static`; `static` requires a valid `network_static` |
 | `swap_mb` | Integer from 0 to 131072 (booleans are refused) |
+| `dual_boot` | `auto` or `off` |
+| `dual_boot_entries` | A list. Each entry has exactly the keys `os`, `disk`, `esp_uuid`, and `loader`. `os` is `windows`. `disk` matches the device path rule, differs from `disk`, and differs from the other entries. `esp_uuid` matches `[0-9A-F]{4}-[0-9A-F]{4}`. `loader` is exactly `/EFI/Microsoft/Boot/bootmgfw.efi`. Entries need `dual_boot: auto` and `boot_mode: uefi`, otherwise the result is `CONFIG_CONFLICT` |
 | Boolean flags | `create_user`, `set_root_password`, `install_user_ssh_key`, `configure_sudo`, `allow_root_password_ssh`, `generate_missing_passwords` must be JSON booleans |
 | `install_user_ssh_key`, `configure_sudo` | Require `create_user: true` |
 | `create_user`, `set_root_password` | At least one must be true |
@@ -229,8 +246,12 @@ The `storage` phase always erases the target disk. `plan create` (and the MCP
 | `target.json` | `target_is_disposable` |
 | `target.json` | `disk_erase_authorized` |
 
-The error lists the missing flags. Plan creation has further requirements; see
-[Plan creation requirements](#plan-creation-requirements). Before any change,
+The error lists the missing flags. A disk that holds Windows is never inferred
+by `resolve_config`, and it can be the install disk only with the extended
+confirmation `ERASE WINDOWS <disk>`: typed in `prepare_install.py`, as part of
+the phrase `APPROVE <plan_id> ERASE WINDOWS <disk>` in `approve`, and as the
+`confirm` field of the MCP approval dialog. Plan creation has further
+requirements; see [Plan creation requirements](#plan-creation-requirements). Before any change,
 and again before every destructive phase, a run re-reads the disk path, size,
 model, serial, and WWN and stops with `TARGET_DRIFT` if they differ from the
 plan.
@@ -247,19 +268,42 @@ all of these hold, in this order:
    is also `INVENTORY_MISSING`: run `inspect` again.
 3. `architecture` matches the live system's `uname -m` from the inventory
    (`CONFIG_CONFLICT`).
-4. The `validate` review (`validate_installation()`) reports no errors
+4. For a UEFI install, Secure Boot is not on (`CONFIG_CONFLICT`: turn it off in
+   the firmware setup, boot the live ISO again, refresh the inventory). An
+   unknown state is a warning in the plan and the approval dialog.
+5. The `validate` review (`validate_installation()`) reports no errors
    (`CONFIG_INVALID`; `details.errors` lists them). This includes a missing
    required field, a configured disk that is not in the inventory, and a UEFI
    install on a BIOS-booted live system.
-5. The disk is in the inventory, and a disk without a serial number or WWN has
+6. The disk is in the inventory, and a disk without a serial number or WWN has
    no twin of the same size and model (`DISK_AMBIGUOUS`).
-6. The disk is eligible: not removable, not attached over USB, not read-only,
+7. The disk is eligible: not removable, not attached over USB, not read-only,
    and without a mounted partition (`CONFIG_CONFLICT`, with `details.reason`).
    This is the same rule `resolve_config` applies, so a hand-written
    `install.json` cannot select such a disk either.
-7. When set, `expected_disk_model` equals the inventory's model and
+8. When set, `expected_disk_model` equals the inventory's model and
    `expected_disk_size_gib` is within 1 GiB of the inventory's size
    (`CONFIG_INVALID`).
+9. The inventory has a usable `partitions` result (`INVENTORY_MISSING`
+   otherwise; a malformed result or a value that fails the strict format checks
+   counts as unusable). Every Windows disk with a menu entry is in the
+   `disk_identity` result (`INVENTORY_MISSING` otherwise) and joins
+   `plan["disks"]`, so the drift check re-reads it.
+
+The plan freezes, inside its hash, `install.dual_boot_entries`, the identity of
+every Windows disk with a menu entry (after the install disk in
+`plan["disks"]`), `secure_boot` (`on`, `off`, or `unknown`), `warnings`, and
+`erases_existing_os` (the install disk, the operating system, and the evidence,
+or `null`). Warnings are shown in the approval dialog and returned by the MCP
+`create_plan` tool. They are:
+
+- Secure Boot state unknown for a UEFI install.
+- `Windows in BIOS mode on <disk> will not be in the GRUB menu.` for Windows
+  installed in BIOS mode (`windows-bios`) on a disk other than the install disk;
+  such a Windows never gets a menu entry in this version.
+- `Windows on <disk> will not be added to the GRUB menu (dual_boot is off).` for
+  Windows (UEFI or BIOS mode) on a disk other than the install disk when
+  `dual_boot` is `off`.
 
 ## Passwords
 
@@ -452,7 +496,7 @@ Settable keys and types:
 
 | Key | Type |
 |---|---|
-| `username`, `hostname`, `timezone`, `boot_mode`, `init_system`, `disk`, `network_method`, `bootloader`, `architecture` | string |
+| `username`, `hostname`, `timezone`, `boot_mode`, `init_system`, `disk`, `network_method`, `bootloader`, `architecture`, `dual_boot` | string |
 | `swap_mb` | integer |
 | `create_user`, `configure_sudo`, `set_root_password`, `allow_root_password_ssh`, `install_user_ssh_key` | boolean |
 | `user_groups` | list of strings |
@@ -474,13 +518,17 @@ Rules:
   USB, not read-only, and has no mounted partition. An inventory without any
   disks returns `INVENTORY_MISSING`; when disks exist but none or several are
   eligible, the result is `DISK_AMBIGUOUS` with the candidates and the
-  excluded disks with reasons. An inferred disk adds a warning.
+  excluded disks with reasons. An inferred disk adds a warning. A disk with
+  `existing_os` (Windows, from the `partitions` result) is never inferred: when
+  it is the only eligible disk, the result is `DISK_AMBIGUOUS` and names it, and
+  you must pass it as the `disk` override to erase it.
 - A chosen disk that is not in the inventory returns `CONFIG_INVALID`; an
   excluded disk returns `CONFIG_CONFLICT` with the reason.
 - An uppercase `username` is lowercased, with a warning.
 - Derived values: `profile` as `gentoo-<architecture>-<init_system>`,
   `partition_table` and `partition_layout` from the layout rules, `disk_must_be_erased: true`, and `target_is_disposable` and
-  `disk_erase_authorized` copied from `target.json`.
+  `disk_erase_authorized` copied from `target.json`, and `dual_boot_entries`
+  (a preview of what `create_plan` derives again).
 - The result then passes the same [validation rules](#validation-rules).
 
 ## Phase selection
