@@ -156,7 +156,7 @@ def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) ->
     def run() -> dict:
         target, inventory, resolved = _resolved(overrides, fallbacks)
         plan = save_install_plan(create_install_plan(target, resolved["install"], load_plan(), inventory))
-        return {**plan_view(plan), "sources": resolved["sources"], "warnings": resolved["warnings"]}
+        return {**plan_view(plan), "sources": resolved["sources"], "warnings": resolved["warnings"] + plan["warnings"]}
     return respond(run)
 
 

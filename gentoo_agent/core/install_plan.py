@@ -18,6 +18,7 @@ from gentoo_agent.core import paths
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, now, save_json
 from gentoo_agent.core.disks import disk_candidates, disk_from_inventory
+from gentoo_agent.core.foreign_os import detect_foreign_os, dual_boot_entries, parse_secure_boot
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
     CONFIG_INVALID,
@@ -113,7 +114,46 @@ def _check_expected_disk(install: dict, disk: dict) -> None:
                              f"not the expected {size} GiB.", {"field": "expected_disk_size_gib"})
 
 
+def _check_secure_boot(install: dict, secure_boot: str) -> list[str]:
+    """Refuse a UEFI install while Secure Boot is on; warn when its state is unknown."""
+    if install.get("boot_mode") != "uefi":
+        return []
+    if secure_boot == "on":
+        raise AgentError(CONFIG_CONFLICT, "Secure Boot is on, and the installed GRUB is not signed. Turn Secure Boot "
+                         "off in the firmware setup, boot the live ISO again, and refresh the inventory.",
+                         {"secure_boot": "on"})
+    if secure_boot == "unknown":
+        return ["Secure Boot state is unknown; if it is on, the firmware will refuse to start GRUB. "
+                "Check the firmware setup before approving."]
+    return []
+
+
+def _foreign_os_warnings(install: dict, records: list[dict]) -> list[str]:
+    return [f"Windows in BIOS mode on {record['disk']} will not be in the GRUB menu."
+            for record in records if record["os"] == "windows-bios" and record["disk"] != install["disk"]]
+
+
+def _erases_existing_os(install: dict, records: list[dict]) -> dict | None:
+    record = next((item for item in records if item["disk"] == install["disk"]), None)
+    if record is None:
+        return None
+    return {"disk": record["disk"], "os": record["os"], "evidence": list(record["evidence"])}
+
+
+def _kept_disk(inventory: dict, path: str) -> dict:
+    """The identity of a Windows disk that gets a menu entry; the drift check re-reads it during the run."""
+    try:
+        return disk_from_inventory(inventory, path)
+    except AgentError as error:
+        if error.code != CONFIG_INVALID:
+            raise
+        raise AgentError(INVENTORY_MISSING, f"Windows disk {path} is not in the disk identity inventory; refresh it.",
+                         {"disk": path}) from None
+
+
 def create_install_plan(target: dict, install: dict, project_plan: dict, inventory: dict | None) -> dict:
+    # dual_boot_entries is derived below from the inventory; a value in the input is never used.
+    install = {key: value for key, value in install.items() if key != "dual_boot_entries"}
     validated_settings(target, install)
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No inventory exists; run inspect first.", {})
@@ -123,16 +163,27 @@ def create_install_plan(target: dict, install: dict, project_plan: dict, invento
     if install.get("architecture") != live:
         raise AgentError(CONFIG_CONFLICT, f"The configuration is for {install.get('architecture')}, "
                          f"but the live system is {live}.", {"configured": install.get("architecture"), "live": live})
+    secure_boot = parse_secure_boot(inventory)
+    warnings = _check_secure_boot(install, secure_boot)
     _check_review(target, install, project_plan, inventory)
     disk = disk_from_inventory(inventory, install["disk"])
     _check_disk_eligible(inventory, disk["path"])
     _check_expected_disk(install, disk)
+    records = detect_foreign_os(inventory)
+    install["dual_boot_entries"] = dual_boot_entries(install, records)
+    validated_settings(target, install)
+    warnings += _foreign_os_warnings(install, records)
+    kept = [_kept_disk(inventory, entry["disk"]) for entry in install["dual_boot_entries"]]
     destructive = {item["id"]: bool(item.get("destructive", True)) for item in project_plan.get("phases", [])}
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "target": {field: target.get(field) for field in TARGET_FIELDS},
         "install": copy.deepcopy(install),
-        "disks": [disk],
+        # The install disk first; then every Windows disk with a menu entry (never written, drift-checked).
+        "disks": [disk, *kept],
+        "secure_boot": secure_boot,
+        "erases_existing_os": _erases_existing_os(install, records),
+        "warnings": warnings,
         "inventory_hash": hashlib.sha256(canonical(inventory)).hexdigest(),
         "phases": [
             {

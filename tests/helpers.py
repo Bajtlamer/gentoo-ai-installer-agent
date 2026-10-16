@@ -90,3 +90,49 @@ def partitions_result(*disks) -> dict:
 def secure_boot_result(stdout: str = "0") -> dict:
     """The secure_boot inventory result: 1, 0, or unknown."""
     return {"label": "secure_boot", "returncode": 0, "stdout": stdout}
+
+
+REPO = Path(__file__).resolve().parents[1]
+DISPOSABLE_TARGET = {
+    "name": "gentoo", "host": "192.0.2.10", "port": 22, "user": "root",
+    "identity_file": "~/.ssh/id_test", "target_is_disposable": True, "disk_erase_authorized": True,
+}
+
+
+def uefi_install() -> dict:
+    """The uefi_gpt_user_sudo golden config (amd64, /dev/nvme0n1) with full erase authorization."""
+    data = json.loads((REPO / "tests" / "golden" / "configs" / "uefi_gpt_user_sudo.json").read_text(encoding="utf-8"))
+    data.update({"disk_must_be_erased": True, "target_is_disposable": True, "disk_erase_authorized": True})
+    return data
+
+
+def dual_boot_inventory(*, nvme: dict | None = None, sda: dict | None = None, secure_boot: str = "0",
+                        sda_serial: str = "W1") -> dict:
+    """A fresh UEFI amd64 inventory with /dev/nvme0n1 (install disk) and /dev/sda.
+
+    nvme and sda are partitions entries (windows_disk(), linux_disk(), ...); None means an empty disk.
+    """
+    devices = [
+        {"path": "/dev/nvme0n1", "type": "disk", "size": 512110190592, "model": "NVMe", "serial": "N1", "wwn": None},
+        {"path": "/dev/sda", "type": "disk", "size": 256060514304, "model": "WinDisk", "serial": sda_serial,
+         "wwn": None},
+    ]
+    return fresh_inventory(
+        {"label": "boot_mode", "returncode": 0, "stdout": "uefi"},
+        storage_result("/dev/nvme0n1", "/dev/sda"),
+        {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
+        identity_result("x86_64"),
+        partitions_result(nvme or "/dev/nvme0n1", sda or "/dev/sda"),
+        secure_boot_result(secure_boot),
+    )
+
+
+def save_dual_boot_plan(install: dict | None = None, **inventory_options) -> dict:
+    """Create and save a plan from uefi_install() and dual_boot_inventory(**inventory_options). Use inside temp_home()."""
+    from gentoo_agent.core import install_plan, phases
+
+    project = json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8"))
+    with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"):
+        plan = install_plan.create_install_plan(DISPOSABLE_TARGET, install or uefi_install(), project,
+                                                dual_boot_inventory(**inventory_options))
+        return install_plan.save_install_plan(plan)

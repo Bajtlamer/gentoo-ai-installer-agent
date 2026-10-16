@@ -14,7 +14,7 @@ from gentoo_agent.core.errors import (
     PLAN_HASH_MISMATCH,
     AgentError,
 )
-from tests.helpers import fresh_inventory, identity_result, storage_result, temp_home
+from tests.helpers import fresh_inventory, identity_result, partitions_result, storage_result, temp_home
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,7 +44,8 @@ def make_plan(serial: str = "QM00001", changes: dict | None = None, model: str =
     inventory = fresh_inventory({"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
                                 storage_result("/dev/sda"),
                                 {"label": "disk_identity", "returncode": 0, "stdout": stdout},
-                                identity_result("x86_64"))
+                                identity_result("x86_64"),
+                                partitions_result("/dev/sda"))
     with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"):
         return install_plan.save_install_plan(install_plan.create_install_plan(TARGET, install, project, inventory))
 

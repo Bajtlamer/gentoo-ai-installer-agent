@@ -217,6 +217,21 @@ class DiscoveryAndPlanningTests(unittest.TestCase):
         self.assertIn("serial=S0", created.structured_content["summary"])
         self.assertEqual(created.structured_content["sources"]["user_password_env"], "override")
 
+    def test_create_plan_reports_plan_warnings_and_secure_boot_refusal(self):
+        from tests.helpers import temp_home, windows_disk, partitions_result
+
+        with temp_home() as home, patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home, secure_boot="unknown")
+            unknown = call("create_plan", {})
+        self.assertFalse(unknown.is_error, unknown.content[0].text)
+        self.assertTrue(any("Secure Boot state is unknown" in w for w in unknown.structured_content["warnings"]))
+        with temp_home() as home:
+            write_home(home, disks=("/dev/nvme0n1", "/dev/sda"), secure_boot="1",
+                       partitions=partitions_result("/dev/nvme0n1", windows_disk("/dev/sda")))
+            refused = call("create_plan", {"overrides": {"disk": "/dev/nvme0n1"}})
+        self.assertEqual(refused.structured_content["code"], "CONFIG_CONFLICT")
+        self.assertIn("Secure Boot is on", refused.structured_content["message"])
+
     def test_plain_text_password_is_refused(self):
         from tests.helpers import temp_home
 

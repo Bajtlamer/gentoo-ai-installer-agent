@@ -10,7 +10,7 @@ from unittest.mock import patch
 from gentoo_agent import cli
 from gentoo_agent.core import approval, paths, phases, runs
 from gentoo_agent.core.config import save_json
-from tests.helpers import fresh_inventory, identity_result, storage_result, temp_home
+from tests.helpers import fresh_inventory, identity_result, partitions_result, storage_result, temp_home
 from tests.test_launcher import approved_plan
 
 
@@ -115,7 +115,8 @@ class PlanAndRunCommandTests(unittest.TestCase):
                       fresh_inventory({"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
                                       storage_result("/dev/sda"),
                                       {"label": "disk_identity", "returncode": 0, "stdout": stdout},
-                                      identity_result("x86_64")))
+                                      identity_result("x86_64"),
+                                      partitions_result("/dev/sda")))
             output = io.StringIO()
             with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"), redirect_stdout(output):
                 code = cli.main(["plan", "create"])

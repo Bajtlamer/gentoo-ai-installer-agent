@@ -14,7 +14,19 @@ from gentoo_agent.core.errors import (
     PLAN_NOT_FOUND,
     AgentError,
 )
-from tests.helpers import fresh_inventory, identity_result, storage_result, temp_home
+from tests.helpers import (
+    DISPOSABLE_TARGET,
+    dual_boot_inventory,
+    fresh_inventory,
+    identity_result,
+    linux_disk,
+    partitions_result,
+    storage_result,
+    temp_home,
+    uefi_install,
+    windows_bios_disk,
+    windows_disk,
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,6 +56,7 @@ def inventory(serial: str = "QM00001", collected_at: str | None = None, machine:
         storage_result("/dev/sda"),
         {"label": "disk_identity", "returncode": 0, "stdout": stdout},
         identity_result(machine),
+        partitions_result("/dev/sda"),
     )
     if collected_at is not None:
         data["collected_at"] = collected_at
@@ -182,7 +195,7 @@ class CreatePlanTests(unittest.TestCase):
         plan = install_plan.create_install_plan(TARGET, install, project_plan(), inventory())
         install["hostname"] = "mutated"
         install["disk"] = "/dev/other"
-        self.assertEqual(plan["install"], install_fixture())
+        self.assertEqual(plan["install"], {**install_fixture(), "dual_boot_entries": []})
         self.assertEqual(plan["plan_hash"], install_plan.compute_plan_hash(plan))
 
     def test_hash_covers_target_install_and_destructive_flags(self):
@@ -198,6 +211,120 @@ class CreatePlanTests(unittest.TestCase):
         self.assertNotEqual(base, changed(lambda p: p["install"].update(hostname="other")))
         self.assertNotEqual(base, changed(lambda p: p["phases"][0].update(destructive=not p["phases"][0]["destructive"])))
         self.assertEqual(base, changed(lambda p: p.update(created_at="1999-01-01T00:00:00Z")))
+
+
+class DualBootPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.key = patch.object(phases, "public_key_for_target", return_value=PUBLIC_KEY)
+        self.key.start()
+
+    def tearDown(self):
+        self.key.stop()
+
+    def create(self, install: dict | None = None, **inventory_options) -> dict:
+        return install_plan.create_install_plan(DISPOSABLE_TARGET, install or uefi_install(), project_plan(),
+                                                dual_boot_inventory(**inventory_options))
+
+    def test_windows_on_another_disk_becomes_a_frozen_entry(self):
+        plan = self.create(sda=windows_disk("/dev/sda"))
+        self.assertEqual(plan["install"]["dual_boot_entries"], [
+            {"os": "windows", "disk": "/dev/sda", "esp_uuid": "ABCD-1234",
+             "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"},
+        ])
+        bootloader = next(phase for phase in plan["phases"] if phase["id"] == "bootloader")
+        self.assertIn("ABCD-1234", bootloader["apply"])
+        self.assertIn("ABCD-1234", bootloader["check"])
+        self.assertIsNone(plan["erases_existing_os"])
+        self.assertEqual(plan["secure_boot"], "off")
+        self.assertEqual(plan["warnings"], [])
+
+    def test_windows_disk_identity_joins_the_drift_checked_disks(self):
+        plan = self.create(sda=windows_disk("/dev/sda"))
+        self.assertEqual([disk["path"] for disk in plan["disks"]], ["/dev/nvme0n1", "/dev/sda"])
+        self.assertEqual(plan["disks"][1]["serial"], "W1")
+        other = self.create(sda=windows_disk("/dev/sda"), sda_serial="W2")
+        self.assertNotEqual(plan["plan_hash"], other["plan_hash"])
+
+    def test_dual_boot_off_derives_no_entries(self):
+        plan = self.create({**uefi_install(), "dual_boot": "off"}, sda=windows_disk("/dev/sda"))
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+        self.assertEqual([disk["path"] for disk in plan["disks"]], ["/dev/nvme0n1"])
+
+    def test_no_windows_gives_no_entries_and_no_warning(self):
+        for sda in (None, linux_disk("/dev/sda")):
+            with self.subTest(sda=bool(sda)):
+                plan = self.create(sda=sda)
+                self.assertEqual(plan["install"]["dual_boot_entries"], [])
+                self.assertEqual(plan["warnings"], [])
+                self.assertEqual(len(plan["disks"]), 1)
+
+    def test_entries_in_the_input_are_replaced_by_the_derived_ones(self):
+        forged = [{"os": "windows", "disk": "/dev/sdz", "esp_uuid": "FFFF-FFFF",
+                   "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"}]
+        plan = self.create({**uefi_install(), "dual_boot_entries": forged})
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+
+    def test_secure_boot_on_is_refused_for_uefi(self):
+        with self.assertRaises(AgentError) as caught:
+            self.create(sda=windows_disk("/dev/sda"), secure_boot="1")
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+        self.assertIn("Secure Boot is on", caught.exception.message)
+        self.assertIn("refresh the inventory", caught.exception.message)
+
+    def test_unknown_secure_boot_warns(self):
+        plan = self.create(secure_boot="unknown")
+        self.assertEqual(plan["secure_boot"], "unknown")
+        self.assertEqual(len(plan["warnings"]), 1)
+        self.assertIn("Secure Boot state is unknown", plan["warnings"][0])
+
+    def test_secure_boot_does_not_matter_for_a_bios_install(self):
+        data = inventory()
+        data["results"].append({"label": "secure_boot", "returncode": 0, "stdout": "1"})
+        plan = install_plan.create_install_plan(TARGET, install_fixture(), project_plan(), data)
+        self.assertEqual(plan["secure_boot"], "on")
+        self.assertEqual(plan["warnings"], [])
+
+    def test_windows_in_bios_mode_on_another_disk_warns(self):
+        plan = self.create(sda=windows_bios_disk("/dev/sda"))
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+        self.assertEqual(plan["warnings"], ["Windows in BIOS mode on /dev/sda will not be in the GRUB menu."])
+
+    def test_windows_on_the_install_disk_is_recorded_as_erased(self):
+        plan = self.create(nvme=windows_disk("/dev/nvme0n1"))
+        self.assertEqual(plan["erases_existing_os"], {
+            "disk": "/dev/nvme0n1", "os": "windows",
+            "evidence": ["esp vfat /dev/nvme0n1p1", "msr /dev/nvme0n1p2", "ntfs /dev/nvme0n1p3"],
+        })
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+
+    def test_windows_in_bios_mode_on_the_install_disk_is_recorded_as_erased(self):
+        data = inventory()
+        data["results"] = [item for item in data["results"] if item["label"] != "partitions"]
+        data["results"].append(partitions_result(windows_bios_disk("/dev/sda")))
+        plan = install_plan.create_install_plan(TARGET, install_fixture(), project_plan(), data)
+        self.assertEqual(plan["erases_existing_os"]["os"], "windows-bios")
+        self.assertEqual(plan["warnings"], [])
+
+    def test_missing_partition_list_is_refused(self):
+        data = inventory()
+        data["results"] = [item for item in data["results"] if item["label"] != "partitions"]
+        with self.assertRaises(AgentError) as caught:
+            install_plan.create_install_plan(TARGET, install_fixture(), project_plan(), data)
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_hostile_partition_values_never_become_a_plan(self):
+        with self.assertRaises(AgentError) as caught:
+            self.create(sda=windows_disk("/dev/sda", esp_uuid="ABCD-1234' ; reboot ; '"))
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_windows_disk_missing_from_the_identity_inventory_is_refused(self):
+        data = dual_boot_inventory(sda=windows_disk("/dev/sda"))
+        data["results"] = [item for item in data["results"] if item["label"] != "partitions"]
+        data["results"].append(partitions_result("/dev/nvme0n1", windows_disk("/dev/sdc")))
+        with self.assertRaises(AgentError) as caught:
+            install_plan.create_install_plan(DISPOSABLE_TARGET, uefi_install(), project_plan(), data)
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+        self.assertEqual(caught.exception.details, {"disk": "/dev/sdc"})
 
 
 class PlanStorageTests(unittest.TestCase):
