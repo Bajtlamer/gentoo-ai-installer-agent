@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import time
 from contextlib import redirect_stderr
 import unittest
 from pathlib import Path
@@ -49,6 +50,10 @@ class FakeProcess:
     def close(self):
         self.closed = True
 
+    def wait(self, timeout=None):
+        self.waited = True
+        return 0
+
 
 class LauncherTests(unittest.TestCase):
     def test_unapproved_plan_never_spawns_a_worker(self):
@@ -77,6 +82,10 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(set(payload["generated_credentials"]), {"root", "gentoo"})
         self.assertTrue(payload["password_records"].startswith("root:"))
         self.assertTrue(process.closed)
+        deadline = time.monotonic() + 5
+        while not getattr(process, "waited", False) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(process.waited)
         self.assertEqual(record["status"], "starting")
         self.assertEqual(record["pid"], 424242)
         self.assertEqual(record["plan_hash"], plan["plan_hash"])
