@@ -709,9 +709,14 @@ target is left running, so you can look at it on the console.
    - The cause was temporary (network, mirror, a fix on the console): run
      `gentoo-agent run resume <run_id>`. Approve the plan again first if the
      60 minutes have passed.
-   - The configuration must change: edit `config/install.json`, then
-     `validate`, `install --dry-run`, `plan create`, `approve`, and
-     `run start` with the new plan. Never edit files under `plans/` or
+   - The configuration must change: the failed run usually left the disk
+     mounted at `/mnt/gentoo` with swap on, and `plan create` refuses a
+     mounted disk (`CONFIG_CONFLICT` "cannot be installed to: mounted at
+     ..."). On the live system run `umount -R /mnt/gentoo` and `swapoff -a`,
+     or reboot the live ISO (and verify the new host key, Step 2). Then run
+     `inspect` again, edit `config/install.json`, and run `validate`,
+     `install --dry-run`, `plan create`, `approve`, and `run start` with the
+     new plan. Never edit files under `plans/` or
      `approvals/`; a modified plan is refused with `PLAN_HASH_MISMATCH`.
    - The live system was rebooted: verify the new host key (Step 2), run
      `inspect` again, and create and approve a new plan. The old plan still
