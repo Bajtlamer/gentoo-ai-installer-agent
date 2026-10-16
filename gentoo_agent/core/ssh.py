@@ -79,8 +79,14 @@ def remote_shell(
     stream: bool = False,
     input_data: str | None = None,
     on_output: Callable[[str], None] | None = None,
+    *,
+    keep_fds: tuple[int, ...] = (),
 ) -> dict:
-    """Run one generated shell program and return an auditable result."""
+    """Run one generated shell program and return an auditable result.
+
+    keep_fds are inherited by the ssh process (pass_fds). The worker passes its
+    worker-lock descriptor, so the flock stays held until ssh exits even if the
+    worker itself is killed while the remote program runs."""
     remote_command = "sh -c " + shlex.quote(command)
     if stream:
         process = subprocess.Popen(
@@ -91,6 +97,7 @@ def remote_shell(
             stdin=subprocess.PIPE if input_data is not None else None,
             text=True,
             bufsize=1,
+            pass_fds=keep_fds,
         )
         if input_data is not None:
             assert process.stdin is not None
@@ -143,6 +150,7 @@ def remote_shell(
         input=input_data,
         timeout=timeout,
         check=False,
+        pass_fds=keep_fds,
     )
     return {
         "label": label,

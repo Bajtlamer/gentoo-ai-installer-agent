@@ -54,6 +54,7 @@ def execute_plan(
     on_event: EventSink | None = None,
     on_output: EventSink | None = None,
     phase_ids: list[str] | None = None,
+    keep_fds: tuple[int, ...] = (),
 ) -> dict:
     emit = on_event or (lambda message: None)
     target = plan["target"]
@@ -80,7 +81,8 @@ def execute_plan(
         }
 
     def step(phase: dict, kind: str, label: str, command: str, input_data: str | None = None) -> dict:
-        result = remote_shell(target, label, command, stream=True, input_data=input_data, on_output=on_output)
+        result = remote_shell(target, label, command, stream=True, input_data=input_data, on_output=on_output,
+                              keep_fds=keep_fds)
         append_log(run_id, {
             "phase": phase["id"],
             "kind": kind,

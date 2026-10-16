@@ -175,6 +175,9 @@ still alive:
   the file) the recorded process id is gone, or no process id was recorded and
   the run started more than 60 seconds ago, the run is marked `interrupted` with "The worker process ended without recording
   a result." and the run lock is released.
+- A worker killed during a phase leaves its ssh process running the remote
+  program. That process holds the worker lock too, so the run stays `running`
+  until the remote program ends; only then can you resume.
 - A run is also `interrupted` when the worker itself was interrupted during a
   phase ("Installation was interrupted.").
 
