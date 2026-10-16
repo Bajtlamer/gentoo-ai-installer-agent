@@ -211,10 +211,10 @@ class ApprovalTests(unittest.TestCase):
 
     def test_summary_shows_static_network(self):
         static = {"network_method": "static",
-                  "network_static": {"address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1", "9.9.9.9"]}}
+                  "network_static": {"interface": "enp1s0", "address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1", "9.9.9.9"]}}
         with temp_home():
             summary = approval.approval_summary(make_plan(changes=static))
-        self.assertIn("Network: static address=10.0.0.2/24 gateway=10.0.0.1 dns=1.1.1.1,9.9.9.9", summary)
+        self.assertIn("Network: static interface=enp1s0 address=10.0.0.2/24 gateway=10.0.0.1 dns=1.1.1.1,9.9.9.9", summary)
 
 
     def test_unprintable_disk_identity_never_becomes_a_plan(self):

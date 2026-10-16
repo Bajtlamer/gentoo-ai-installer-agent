@@ -137,8 +137,9 @@ swap_uuid=$(blkid -s UUID -o value '"'"''"'"' 2>/dev/null || true)
 printf '"'"'%s\n'"'"' "UUID=$root_uuid / ext4 noatime 0 1" > /etc/fstab
 if [ -n "$swap_uuid" ]; then printf '"'"'%s\n'"'"' "UUID=$swap_uuid none swap sw 0 0" >> /etc/fstab; fi
 emerge --noreplace --verbose net-misc/dhcpcd
-install -d /etc/dhcpcd.conf.d
-printf '"'"'%s\n'"'"' '"'"'interface ens33'"'"' '"'"'static ip_address=192.168.10.20/24'"'"' '"'"'static routers=192.168.10.1'"'"' '"'"'static domain_name_servers=1.1.1.1 9.9.9.9'"'"' > /etc/dhcpcd.conf.d/gentoo-agent.conf
+touch /etc/dhcpcd.conf
+sed -i '"'"'/^# gentoo-agent static network begin$/,/^# gentoo-agent static network end$/d'"'"' /etc/dhcpcd.conf
+printf '"'"'%s\n'"'"' '"'"'# gentoo-agent static network begin'"'"' '"'"'interface enp1s0'"'"' '"'"'static ip_address=192.168.10.20/24'"'"' '"'"'static routers=192.168.10.1'"'"' '"'"'static domain_name_servers=1.1.1.1 9.9.9.9'"'"' '"'"'# gentoo-agent static network end'"'"' >> /etc/dhcpcd.conf
 rc-update add dhcpcd default
 emerge --noreplace --verbose net-misc/openssh
 install -d -m 700 /root/.ssh
@@ -162,6 +163,8 @@ grep -Fqx 'PasswordAuthentication yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-
 grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
 test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+grep -Fqx 'interface enp1s0' /mnt/gentoo/etc/dhcpcd.conf
+grep -Fqx 'static ip_address=192.168.10.20/24' /mnt/gentoo/etc/dhcpcd.conf
 printf 'configuration-ok\n'
 ===== authentication apply =====
 set -eu

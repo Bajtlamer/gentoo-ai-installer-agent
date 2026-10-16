@@ -12,6 +12,8 @@ from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
 INIT_SYSTEMS = {"openrc"}
 NETWORK_METHODS = {"dhcp", "static"}
 MAX_SWAP_MB = 131072
+# Linux interface names: at most 15 characters (IFNAMSIZ - 1), no spaces or shell syntax.
+INTERFACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}")
 IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
 
 
@@ -72,10 +74,13 @@ def _check_network(install: dict) -> None:
     if network != "static":
         return
     static = install.get("network_static")
-    message = ("network_static must be an object with address (CIDR), gateway (IP address), "
-               "and dns (a list of 1 to 3 IP addresses)")
-    if not isinstance(static, dict) or set(static) != {"address", "gateway", "dns"}:
+    message = ("network_static must be an object with interface (for example enp1s0), address (CIDR), "
+               "gateway (IP address), and dns (a list of 1 to 3 IP addresses)")
+    if not isinstance(static, dict) or set(static) != {"interface", "address", "gateway", "dns"}:
         raise _invalid("network_static", message)
+    interface_name = static["interface"]
+    if not isinstance(interface_name, str) or not INTERFACE_NAME.fullmatch(interface_name):
+        raise _invalid("network_static", "network_static.interface must be a Linux interface name such as enp1s0")
     address = static["address"]
     if not isinstance(address, str) or not IPV4_CIDR.fullmatch(address):
         raise _invalid("network_static", STATIC_ADDRESS_MESSAGE)
