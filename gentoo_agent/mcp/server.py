@@ -23,6 +23,7 @@ from gentoo_agent.core.errors import (
     APPROVAL_DECLINED,
     APPROVAL_REQUIRED,
     CONFIG_INVALID,
+    HOST_KEY_UNKNOWN,
     INTERNAL_ERROR,
     INVENTORY_MISSING,
     PLAN_HASH_MISMATCH,
@@ -35,7 +36,7 @@ from gentoo_agent.core.inventory import collect_inventory, latest_inventory, rec
 from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runner import output_tail
 from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
-from gentoo_agent.core.ssh import remote_shell
+from gentoo_agent.core.ssh import HOST_KEY_MESSAGE, host_key_failed, remote_shell
 from gentoo_agent.jobs.launcher import cancel_run as launcher_cancel, resume_run as launcher_resume, start_run
 
 
@@ -296,6 +297,9 @@ def verify_install(plan_id: str) -> CallToolResult:
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise AgentError(SSH_UNREACHABLE, f"Could not run the {phase['id']} check: {exc}",
                                  {"phase": phase["id"]}) from exc
+            if host_key_failed(result):
+                raise AgentError(HOST_KEY_UNKNOWN, HOST_KEY_MESSAGE,
+                                 {"phase": phase["id"], "host": plan["target"].get("host")})
             if result["returncode"] == 255:  # ssh itself failed; the check did not run
                 raise AgentError(SSH_UNREACHABLE, f"Could not reach the target over SSH to run the {phase['id']} check.",
                                  {"phase": phase["id"], "host": plan["target"].get("host")})
