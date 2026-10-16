@@ -76,8 +76,9 @@ Rules that hold across the code:
    `validated_settings()`, requires full disk-erase authorization and an
    inventory younger than 24 hours and not dated more than 5 minutes ahead, checks the configured architecture against
    the live one, runs the `validate_installation()` review and refuses on any
-   error, takes the disk identity from the latest inventory, checks
-   `expected_disk_model` and `expected_disk_size_gib` against it, and generates
+   error, takes the disk identity from the latest inventory, refuses a disk
+   that `disks.disk_candidates()` excludes (removable, USB, read-only, or
+   mounted) with `CONFIG_CONFLICT`, checks `expected_disk_model` and `expected_disk_size_gib` against it, and generates
    the apply and check program of every phase. It writes `plans/<plan_id>.json`. The `plan_hash`
    is SHA-256 over everything except `plan_id`, `plan_hash`, and `created_at`.
    The `plan_id` is the first 16 hex characters of the hash.
@@ -185,7 +186,7 @@ current code does not write to it.
 | Validation | `core/validate.validated_settings()` | Unsafe or inconsistent values reaching remote commands. It is the single gate before generation. |
 | Quoting | `core/phases.py` | Every value is quoted with `shlex.quote`. |
 | Erase authorization | `install_plan._check_erase_authorized()` | A plan without `disk_must_be_erased`, `target_is_disposable`, and `disk_erase_authorized` set to `true` in the configuration. |
-| Plan-time review | `install_plan.create_install_plan()` | A plan from a configuration that fails the `validate` review, an inventory older than 24 hours, an architecture that differs from the live system, or a disk that differs from `expected_disk_model` or `expected_disk_size_gib`. |
+| Plan-time review | `install_plan.create_install_plan()` | A plan from a configuration that fails the `validate` review, an inventory older than 24 hours, an architecture that differs from the live system, an excluded disk (removable, USB, read-only, or mounted), or a disk that differs from `expected_disk_model` or `expected_disk_size_gib`. |
 | `plan_hash` | `core/install_plan.py` | Edited plan files. `load_install_plan()` rejects them with `PLAN_HASH_MISMATCH`. |
 | Signed approval with TTL | `core/approval.py`, `core/signing.py` | Approvals that are unsigned, malformed, for another hash, dated in the future, or older than 60 minutes. A malformed record counts as not approved. |
 | Single gate | `require_approved_plan()` | Any start without a valid approval. It runs in `start_run()` and again in the worker. |

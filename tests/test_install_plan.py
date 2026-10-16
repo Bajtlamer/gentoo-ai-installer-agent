@@ -100,6 +100,33 @@ class CreatePlanTests(unittest.TestCase):
         ahead = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).isoformat(timespec="seconds")
         self.create(inventory=inventory(collected_at=ahead))
 
+    def replace_result(self, data: dict, result: dict) -> dict:
+        data["results"] = [item for item in data["results"] if item["label"] != result["label"]] + [result]
+        return data
+
+    def test_mounted_disk_is_refused(self):
+        storage = {"label": "storage_json", "returncode": 0, "stdout": json.dumps({"blockdevices": [
+            {"path": "/dev/sda", "type": "disk", "mountpoints": [None],
+             "children": [{"path": "/dev/sda1", "type": "part", "mountpoints": ["/mnt/data"]}]},
+        ]})}
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=self.replace_result(inventory(), storage))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+        self.assertEqual(caught.exception.details["field"], "disk")
+        self.assertEqual(caught.exception.details["reason"], "mounted at /mnt/data")
+        self.assertEqual(caught.exception.message, "Disk /dev/sda cannot be installed to: mounted at /mnt/data.")
+
+    def test_usb_disk_is_refused(self):
+        identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": [
+            {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": "QEMU HARDDISK", "serial": "QM00001",
+             "wwn": None, "tran": "usb", "rm": False, "ro": False},
+        ]})}
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=self.replace_result(inventory(), identity))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+        self.assertEqual(caught.exception.details["field"], "disk")
+        self.assertEqual(caught.exception.details["reason"], "usb transport")
+
     def test_expected_disk_model_must_match_the_inventory(self):
         with self.assertRaises(AgentError) as caught:
             self.create(install={"expected_disk_model": "Samsung SSD"})
