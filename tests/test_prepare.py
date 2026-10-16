@@ -1,4 +1,5 @@
 import io
+import json
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -57,7 +58,8 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class EraseAuthorizationTests(unittest.TestCase):
-    def build(self, erase_answer: str, machine: str = "x86_64", **target_fields) -> tuple[dict, dict]:
+    def build(self, erase_answer: str, machine: str = "x86_64", disk: dict | None = None,
+              extra_results: tuple = (), **target_fields) -> tuple[dict, dict]:
         target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test",
                   **target_fields}
         self.erase_prompts = []
@@ -76,12 +78,14 @@ class EraseAuthorizationTests(unittest.TestCase):
 
         with temp_home() as home:
             save_json(home / "config" / "install.default.json", load_json(REPO / "config" / "install.default.json"))
-            with patch.object(prepare, "choose_disk", return_value={"path": "/dev/sda", "model": "QEMU HARDDISK", "size": None}), \
+            chosen = disk or {"path": "/dev/sda", "model": "QEMU HARDDISK", "size": None}
+            with patch.object(prepare, "choose_disk", return_value=chosen), \
                     patch.object(prepare, "ask", fake_ask), \
                     patch.object(prepare, "ask_choice", fake_choice), \
                     patch.object(prepare, "ask_int", lambda prompt, default: default), \
                     redirect_stdout(io.StringIO()):
-                install = prepare.build_install_config(target, {"results": [identity_result(machine)]})
+                install = prepare.build_install_config(
+                    target, {"results": [identity_result(machine), *extra_results]})
         return target, install
 
     def test_typed_erase_confirmation_authorizes_both_files(self):
@@ -110,6 +114,22 @@ class EraseAuthorizationTests(unittest.TestCase):
         target, install = self.build("ERASE /dev/sdb", target_is_disposable=True, disk_erase_authorized=True)
         self.assertIs(target["disk_erase_authorized"], False)
         self.assertIs(install["disk_must_be_erased"], False)
+
+    def test_expected_size_comes_from_the_exact_disk_identity(self):
+        # lsblk rounds 2 TB to "1.8T" (1843.2 GiB); the disk is really 1863.017 GiB.
+        size_bytes = 2000398934016
+        identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": [
+            {"path": "/dev/sdb", "size": 1, "type": "disk", "model": "other", "serial": "x", "wwn": ""},
+            {"path": "/dev/sda", "size": size_bytes, "type": "disk", "model": "QEMU HARDDISK",
+             "serial": "s1", "wwn": ""},
+        ]})}
+        _, install = self.build("CANCEL", disk={"path": "/dev/sda", "model": "QEMU HARDDISK", "size": "1.8T"},
+                                extra_results=(identity,))
+        self.assertEqual(install["expected_disk_size_gib"], round(size_bytes / 1024 ** 3, 3))
+
+    def test_expected_size_falls_back_to_the_lsblk_size_text(self):
+        _, install = self.build("CANCEL", disk={"path": "/dev/sda", "model": "QEMU HARDDISK", "size": "40G"})
+        self.assertEqual(install["expected_disk_size_gib"], 40.0)
 
     def test_architecture_comes_from_the_live_system(self):
         target, install = self.build("CANCEL")
