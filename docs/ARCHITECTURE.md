@@ -127,7 +127,9 @@ Rules that hold across the code:
    worker passes as `holder_python`, `sys.executable`, with `-I` so modules in
    the working directory cannot shadow the standard library) with
    `pass_fds`, and the holder runs ssh as its child with stdin, stdout, and
-   stderr inherited and exits with ssh's return code. OpenSSH closes every
+   stderr inherited and exits with ssh's return code. If ssh cannot be
+   started, the holder writes `gentoo-agent holder: cannot run ssh: <error>`
+   to stderr and exits 255, as ssh does for its own errors. OpenSSH closes every
    inherited descriptor above stderr at startup, so ssh cannot hold the lock
    itself; the holder shares the lock's open file description until ssh
    exits. A worker killed with SIGKILL during a phase therefore keeps the run
