@@ -1,7 +1,6 @@
 import json
 import os
 import shlex
-import stat
 import subprocess
 import tempfile
 import unittest
@@ -270,18 +269,6 @@ class InitSystemTests(unittest.TestCase):
         self.assertEqual(caught.exception.details, {"field": "init_system"})
 
 
-def block_device() -> str | None:
-    """Any block device on this machine, for a fake blkid -U answer; None if there is none."""
-    for name in sorted(os.listdir("/dev")):
-        path = os.path.join("/dev", name)
-        try:
-            if stat.S_ISBLK(os.stat(path).st_mode):
-                return path
-        except OSError:
-            continue
-    return None
-
-
 EXPECTED_DUAL_BOOT_SCRIPT = """#!/bin/sh
 exec tail -n +3 "$0"
 menuentry 'Windows Boot Manager (on /dev/sda)' --class windows {
@@ -293,26 +280,39 @@ menuentry 'Windows Boot Manager (on /dev/sda)' --class windows {
 """
 
 
+FAKE_ESP = "/dev/fake-windows-esp"
+
+
+def stub(directory: Path, name: str, output: str | None) -> None:
+    """A fake command that prints output, or fails with status 2 when output is None."""
+    body = f"printf '%s\\n' {shlex.quote(output)}" if output is not None else "exit 2"
+    path = directory / name
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    os.chmod(path, 0o755)
+
+
 class DualBootProgramTests(unittest.TestCase):
-    def run_lines(self, blkid_output: str | None) -> tuple[subprocess.CompletedProcess, Path]:
+    def run_lines(self, blkid_output: str | None, pkname: str | None = "sda") -> tuple[subprocess.CompletedProcess, Path]:
+        """Run the rendered lines under bash (as in the chroot) with stubbed blkid and lsblk.
+
+        test -b accepts only FAKE_ESP, so no real block device is needed.
+        """
         install = fixture("uefi_gpt_dualboot_windows")
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         tmp = Path(directory.name)
         script = tmp / "45_gentoo_agent_dualboot"
-        blkid = tmp / "blkid"
-        body = f"printf '%s\\n' {shlex.quote(blkid_output)}" if blkid_output else "exit 2"
-        blkid.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
-        os.chmod(blkid, 0o755)
+        stub(tmp, "blkid", blkid_output)
+        stub(tmp, "lsblk", pkname)
+        fake_test = f'test() {{ if [ "$1" = -b ]; then [ "$2" = {FAKE_ESP} ]; else builtin test "$@"; fi; }}'
         program = "\n".join(phases.dual_boot_lines(install["dual_boot_entries"]))
         program = program.replace(shlex.quote(phases.DUAL_BOOT_SCRIPT), shlex.quote(str(script)))
-        result = subprocess.run(["/bin/sh", "-c", "set -e\n" + program], env={"PATH": f"{tmp}:/usr/bin:/bin"},
-                                capture_output=True, text=True, check=False)
+        result = subprocess.run(["bash", "-c", "set -eu\n" + fake_test + "\n" + program],
+                                env={"PATH": f"{tmp}:/usr/bin:/bin"}, capture_output=True, text=True, check=False)
         return result, script
 
-    @unittest.skipUnless(block_device(), "no block device to stand in for the Windows ESP")
     def test_script_has_exactly_the_windows_entry_and_prints_it_for_grub_mkconfig(self):
-        result, script = self.run_lines(block_device())
+        result, script = self.run_lines(FAKE_ESP)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(script.read_text(encoding="utf-8"), EXPECTED_DUAL_BOOT_SCRIPT)
         self.assertEqual(os.stat(script).st_mode & 0o777, 0o755)
@@ -324,6 +324,15 @@ class DualBootProgramTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Windows EFI partition ABCD-1234 not found; refresh the inventory", result.stderr)
         self.assertFalse(script.exists())
+
+    def test_windows_esp_on_another_disk_stops_before_the_script_is_written(self):
+        for pkname in ("sdb", "", None):
+            with self.subTest(pkname=pkname):
+                result, script = self.run_lines(FAKE_ESP, pkname=pkname)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("Windows EFI partition ABCD-1234 is not on /dev/sda; refresh the inventory",
+                              result.stderr)
+                self.assertFalse(script.exists())
 
     def test_entries_go_between_grub_install_and_grub_mkconfig(self):
         program = phases.bootloader_command(TARGET, fixture("uefi_gpt_dualboot_windows"))

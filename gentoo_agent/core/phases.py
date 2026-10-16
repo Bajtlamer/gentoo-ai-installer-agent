@@ -400,9 +400,16 @@ def dual_boot_lines(entries: list[dict]) -> list[str]:
         return []
     lines = []
     for entry in entries:
-        uuid = entry["esp_uuid"]
-        message = f"Windows EFI partition {uuid} not found; refresh the inventory"
-        lines.append(f"if ! test -b \"$(blkid -U {q(uuid)} || true)\"; then printf '%s\\n' {q(message)} >&2; exit 1; fi")
+        uuid, disk = entry["esp_uuid"], entry["disk"]
+        missing = f"Windows EFI partition {uuid} not found; refresh the inventory"
+        elsewhere = f"Windows EFI partition {uuid} is not on {disk}; refresh the inventory"
+        # The UUID must resolve to a partition of the entry's own disk, not to a look-alike elsewhere.
+        lines += [
+            f"gentoo_agent_esp=\"$(blkid -U {q(uuid)} || true)\"",
+            f"if ! test -b \"$gentoo_agent_esp\"; then printf '%s\\n' {q(missing)} >&2; exit 1; fi",
+            f"if test \"/dev/$(lsblk -no PKNAME \"$gentoo_agent_esp\" || true)\" != {q(disk)}; then "
+            f"printf '%s\\n' {q(elsewhere)} >&2; exit 1; fi",
+        ]
     script = ["#!/bin/sh", 'exec tail -n +3 "$0"']
     for entry in entries:
         script += [

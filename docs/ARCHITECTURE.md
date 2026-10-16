@@ -330,7 +330,8 @@ after an SSH disconnect. `tests/test_golden_commands.py` pins the generated
 programs for seven configurations in `tests/golden/`.
 
 For dual boot, the bootloader apply checks that each Windows EFI partition
-resolves (`blkid -U <uuid>`), then writes `/etc/grub.d/45_gentoo_agent_dualboot`
+resolves (`blkid -U <uuid>`) to a partition whose parent disk
+(`lsblk -no PKNAME`) is the entry's disk, then writes `/etc/grub.d/45_gentoo_agent_dualboot`
 inside the chroot between `grub-install` and `grub-mkconfig`. The script is
 rewritten on every run, and `/etc/grub.d/40_custom` is never touched. The
 bootloader check and the `validation` phase grep `grub.cfg` for each entry's

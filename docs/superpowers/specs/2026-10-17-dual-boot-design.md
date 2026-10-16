@@ -163,7 +163,9 @@ Inside the chroot, after both `grub-install` calls and before `grub-mkconfig`:
 
 1. For each entry: `blkid -U <uuid>` must resolve to a block device, else
    print `Windows EFI partition <uuid> not found; refresh the inventory` and
-   exit non-zero.
+   exit non-zero. Its parent disk (`/dev/` plus `lsblk -no PKNAME`) must be the
+   entry's disk, else print `Windows EFI partition <uuid> is not on <disk>;
+   refresh the inventory` and exit 1.
 2. Write `/etc/grub.d/45_gentoo_agent_dualboot`, mode 755, every line quoted
    with `q()`:
 

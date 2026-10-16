@@ -232,7 +232,9 @@ chroot /mnt/gentoo /bin/bash -c 'set -e
 emerge --noreplace --verbose sys-boot/grub sys-boot/efibootmgr
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
 grub-install --target=x86_64-efi --efi-directory=/boot --removable
-if ! test -b "$(blkid -U ABCD-1234 || true)"; then printf '"'"'%s\n'"'"' '"'"'Windows EFI partition ABCD-1234 not found; refresh the inventory'"'"' >&2; exit 1; fi
+gentoo_agent_esp="$(blkid -U ABCD-1234 || true)"
+if ! test -b "$gentoo_agent_esp"; then printf '"'"'%s\n'"'"' '"'"'Windows EFI partition ABCD-1234 not found; refresh the inventory'"'"' >&2; exit 1; fi
+if test "/dev/$(lsblk -no PKNAME "$gentoo_agent_esp" || true)" != /dev/sda; then printf '"'"'%s\n'"'"' '"'"'Windows EFI partition ABCD-1234 is not on /dev/sda; refresh the inventory'"'"' >&2; exit 1; fi
 printf '"'"'%s\n'"'"' '"'"'#!/bin/sh'"'"' '"'"'exec tail -n +3 "$0"'"'"' '"'"'menuentry '"'"'"'"'"'"'"'"'Windows Boot Manager (on /dev/sda)'"'"'"'"'"'"'"'"' --class windows {'"'"' '"'"'    insmod part_gpt'"'"' '"'"'    insmod fat'"'"' '"'"'    search --no-floppy --fs-uuid --set=root ABCD-1234'"'"' '"'"'    chainloader /EFI/Microsoft/Boot/bootmgfw.efi'"'"' '"'"'}'"'"' > /etc/grub.d/45_gentoo_agent_dualboot
 chmod 755 /etc/grub.d/45_gentoo_agent_dualboot
 grub-mkconfig -o /boot/grub/grub.cfg'

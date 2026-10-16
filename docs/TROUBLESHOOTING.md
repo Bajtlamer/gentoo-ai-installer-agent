@@ -346,6 +346,10 @@ The bootloader apply printed `Windows EFI partition <uuid> not found; refresh
 the inventory` and the run failed with `PHASE_FAILED`. The Windows disk was
 detached or reformatted after the inventory was taken.
 
+The line `Windows EFI partition <uuid> is not on <disk>; refresh the inventory`
+means the UUID now resolves to a partition on another disk (for example a
+cloned EFI partition), so the entry would boot something else.
+
 Refresh the inventory, create and approve a new plan, and start it; completed
 phases are skipped. A Windows disk that was swapped for another one stops the
 run earlier with `TARGET_DRIFT`.
