@@ -11,7 +11,7 @@ from gentoo_agent.core import approval, install_plan, phases, runs
 from gentoo_agent import cli
 from gentoo_agent.core.errors import APPROVAL_REQUIRED, PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
 from gentoo_agent.jobs import launcher
-from tests.helpers import fresh_inventory, storage_result, temp_home
+from tests.helpers import fresh_inventory, identity_result, storage_result, temp_home
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -29,7 +29,8 @@ def approved_plan(host: str = "192.0.2.10") -> dict:
     ]})
     inventory = fresh_inventory({"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
                                 storage_result("/dev/sda"),
-                                {"label": "disk_identity", "returncode": 0, "stdout": stdout})
+                                {"label": "disk_identity", "returncode": 0, "stdout": stdout},
+                                identity_result("x86_64"))
     with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAA test"):
         plan = install_plan.save_install_plan(install_plan.create_install_plan(target, install, project, inventory))
     approval.record_approval(plan, "cli")

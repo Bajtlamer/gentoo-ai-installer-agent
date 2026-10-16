@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 
+from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.handbook import fetch_handbook
@@ -147,7 +148,18 @@ def build_install_config(target: dict, inventory: dict) -> dict:
     disk_path = disk.get("path") or disk.get("name")
 
     print("\nInstallation choices. Press Enter to accept the suggested default.")
-    boot_mode = ask_choice("Boot mode", ["uefi", "bios"], "uefi")
+    try:
+        architecture = live_architecture(inventory)
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
+    print(f"Architecture: {architecture} (from the live system)")
+    target["architecture"] = architecture
+    target["handbook_url"] = f"https://wiki.gentoo.org/wiki/Handbook:{architecture.upper()}"
+    if architecture == "arm64":
+        boot_mode = "uefi"
+        print("Boot mode: uefi (arm64 supports UEFI only)")
+    else:
+        boot_mode = ask_choice("Boot mode", ["uefi", "bios"], "uefi")
     root_filesystem = ask_choice("Root filesystem", ["ext4"], defaults["root_filesystem"])
     swap_mb = ask_int("Swap size in MiB", defaults["swap_mb"])
     init_system = "openrc"
@@ -210,7 +222,8 @@ def build_install_config(target: dict, inventory: dict) -> dict:
 
     install = dict(defaults)
     install.update({
-        "profile": f"gentoo-{target.get('architecture', 'amd64')}-{init_system}",
+        "architecture": architecture,
+        "profile": f"gentoo-{architecture}-{init_system}",
         "boot_mode": boot_mode,
         "partition_table": partition_table,
         "disk": disk_path,
@@ -255,8 +268,9 @@ def main() -> int:
     target = ensure_target_config()
     print(f"Connecting read-only to {target['user']}@{target['host']}...")
     inventory, inventory_path = collect_inventory_interactive(target)
-    handbook_path = snapshot_handbook(target)
     install = build_install_config(target, inventory)
+    # After build_install_config, which sets the handbook URL from the live architecture.
+    handbook_path = snapshot_handbook(target)
     install["inventory_source"] = str(inventory_path.relative_to(paths.root()))
     install["handbook_snapshot"] = handbook_path
     save_json(paths.config_dir() / "install.json", install)

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
 from gentoo_agent.core.validate import validate_installation, validated_settings
+from tests.helpers import identity_result, storage_result
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +79,8 @@ INVALID = [
     ("timezone space", changed("uefi_gpt_user_sudo", timezone="UTC x"), "timezone"),
     ("init unknown", changed("uefi_gpt_user_sudo", init_system="runit"), "init_system"),
     ("init missing", changed("uefi_gpt_user_sudo", init_system=DROP), "init_system"),
+    ("architecture missing", changed("uefi_gpt_user_sudo", architecture=DROP), "architecture"),
+    ("architecture unknown", changed("uefi_gpt_user_sudo", architecture="x86"), "architecture"),
     ("init list", changed("uefi_gpt_user_sudo", init_system=["openrc"]), "init_system"),
     ("network unknown", changed("uefi_gpt_user_sudo", network_method="ppp"), "network_method"),
     ("network list", changed("uefi_gpt_user_sudo", network_method=["dhcp"]), "network_method"),
@@ -194,6 +197,22 @@ class ValidateInstallationTests(unittest.TestCase):
         inventory = inventory_with("/dev/nvme0n1 512G disk", "bios-or-unknown")
         result = validate_installation(TARGET, fixture("uefi_gpt_user_sudo"), {}, inventory)
         self.assertTrue(any("conflicts with the latest live boot mode" in error for error in result["errors"]))
+
+
+class ArchitectureGateTests(unittest.TestCase):
+    def test_arm64_needs_uefi(self):
+        install = changed("bios_mbr_user_sudo", architecture="arm64")
+        with self.assertRaises(AgentError) as caught:
+            validated_settings(TARGET, install)
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+        self.assertEqual(caught.exception.details, {"fields": ["architecture", "boot_mode"]})
+
+    def test_review_reports_an_architecture_mismatch(self):
+        install = fixture("uefi_gpt_user_sudo")
+        inventory = {"results": [identity_result("aarch64"), {"label": "boot_mode", "returncode": 0, "stdout": "uefi"},
+                                 storage_result("/dev/sda")]}
+        review = validate_installation(TARGET, install, {}, inventory)
+        self.assertIn("architecture amd64 does not match the live system (arm64)", review["errors"])
 
 
 if __name__ == "__main__":

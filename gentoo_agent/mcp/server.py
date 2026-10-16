@@ -126,8 +126,9 @@ def _resolved(overrides: dict | None, fallbacks: dict | None) -> tuple[dict, dic
 
 @server.tool(annotations=REFRESHABLE_READ)
 def detect_hardware(refresh: bool = False) -> CallToolResult:
-    """Summarize the target: firmware boot mode and disks with serial/WWN. refresh=true runs the
-    read-only SSH inventory first; otherwise the latest saved inventory is used."""
+    """Summarize the target: CPU architecture (amd64 or arm64), firmware boot mode, and disks with
+    serial/WWN. refresh=true runs the read-only SSH inventory first; otherwise the latest saved
+    inventory is used."""
     def run() -> dict:
         target = target_config()
         if refresh:

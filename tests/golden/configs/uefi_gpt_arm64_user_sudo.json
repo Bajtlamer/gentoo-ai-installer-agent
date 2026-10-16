@@ -1,0 +1,31 @@
+{
+  "architecture": "arm64",
+  "profile": "gentoo-arm64-openrc",
+  "bootloader": "grub",
+  "disk": "/dev/nvme0n1",
+  "boot_mode": "uefi",
+  "partition_table": "gpt",
+  "root_filesystem": "ext4",
+  "swap_mb": 2048,
+  "partition_layout": [
+    {"device": "/dev/nvme0n1p1", "size_mib": 512, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"},
+    {"device": "/dev/nvme0n1p2", "size_mib": 2048, "type": "linux-swap", "mount": null},
+    {"device": "/dev/nvme0n1p3", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"}
+  ],
+  "init_system": "openrc",
+  "hostname": "gentoo-arm",
+  "timezone": "Europe/Prague",
+  "network_method": "dhcp",
+  "create_user": true,
+  "username": "gentoo",
+  "install_user_ssh_key": true,
+  "user_groups": ["wheel"],
+  "configure_sudo": true,
+  "user_shell": "/bin/bash",
+  "set_root_password": true,
+  "allow_root_password_ssh": false,
+  "password_source": "environment",
+  "generate_missing_passwords": true,
+  "root_password_env": "GENTOO_ROOT_PASSWORD",
+  "user_password_env": "GENTOO_USER_PASSWORD"
+}

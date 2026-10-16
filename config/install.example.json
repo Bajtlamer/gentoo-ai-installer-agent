@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "architecture": "amd64",
   "profile": "gentoo-amd64-openrc",
   "boot_mode": "uefi",
   "partition_table": "gpt",

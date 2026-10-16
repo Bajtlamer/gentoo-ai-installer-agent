@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 
+from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.disks import identity_strength, parse_disk_identities
+from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.install_plan import canonical
 from gentoo_agent.core.resolve import LIVE_BOOT_MODES
 
@@ -15,6 +17,11 @@ def summarize_inventory(inventory: dict) -> dict:
     # Report a boot mode only from a clean probe; anything else is "unknown", never a guess.
     stdout = probe.get("stdout") if probe.get("returncode") == 0 else None
     boot_mode = LIVE_BOOT_MODES.get(stdout, "unknown") if isinstance(stdout, str) else "unknown"
+    # Like the boot mode: a supported machine from a clean probe, otherwise "unknown".
+    try:
+        architecture = live_architecture(inventory)
+    except AgentError:
+        architecture = "unknown"
     identity = results.get("disk_identity") or {}
     disks = parse_disk_identities(identity.get("stdout", "")) if identity.get("returncode") == 0 else []
     return {
@@ -22,5 +29,6 @@ def summarize_inventory(inventory: dict) -> dict:
         "collected_at": inventory.get("collected_at"),
         "inventory_hash": hashlib.sha256(canonical(inventory)).hexdigest(),
         "boot_mode": boot_mode,
+        "architecture": architecture,
         "disks": [{**disk, "strength": identity_strength(disk)} for disk in disks],
     }

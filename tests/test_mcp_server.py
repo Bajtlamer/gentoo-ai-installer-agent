@@ -30,9 +30,9 @@ def call(name, arguments=None, *, elicitation_callback=None):
     return anyio.run(go)
 
 
-def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",)):
+def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",), machine="x86_64"):
     from gentoo_agent.core.config import save_json
-    from tests.helpers import fresh_inventory, storage_result
+    from tests.helpers import fresh_inventory, identity_result, storage_result
 
     save_json(home / "config" / "target.json", {
         "name": "gentoo", "host": "192.0.2.10", "port": 22, "user": "root", "identity_file": "~/.ssh/id_test",
@@ -47,6 +47,7 @@ def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",)):
         {"label": "boot_mode", "returncode": 0, "stdout": boot},
         storage_result(*disks),
         {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
+        identity_result(machine),
     ))
 
 
@@ -160,6 +161,22 @@ class DiscoveryAndPlanningTests(unittest.TestCase):
             result = call("detect_hardware", {})
         self.assertFalse(result.is_error)
         self.assertEqual(result.structured_content["disks"][0]["path"], "/dev/nvme0n1")
+
+    def test_detect_hardware_reports_the_architecture(self):
+        from tests.helpers import temp_home
+
+        async def go():
+            async with Client(mcp_server.server, mode="legacy") as client:
+                return await client.list_tools()
+        description = {tool.name: tool for tool in anyio.run(go).tools}["detect_hardware"].description
+        self.assertIn("architecture", description)
+        with temp_home() as home:
+            write_home(home, machine="aarch64")
+            result = call("detect_hardware", {})
+            resolved = call("resolve_config", {})
+        self.assertEqual(result.structured_content["architecture"], "arm64")
+        self.assertEqual(resolved.structured_content["install"]["architecture"], "arm64")
+        self.assertEqual(resolved.structured_content["sources"]["architecture"], "inferred")
 
     def test_detect_hardware_without_inventory_asks_for_refresh(self):
         from gentoo_agent.core.config import save_json

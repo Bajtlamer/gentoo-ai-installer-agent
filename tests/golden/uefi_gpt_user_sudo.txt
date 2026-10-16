@@ -2,6 +2,7 @@
 set -eu
 disk=/dev/nvme0n1
 test "$(id -u)" -eq 0
+test "$(uname -m)" = x86_64
 test -b "$disk"
 test "$(lsblk -dn -o TYPE "$disk")" = disk
 test "$(if [ -d /sys/firmware/efi ]; then printf uefi; else printf bios; fi)" = uefi
@@ -22,6 +23,7 @@ printf 'preflight-ok boot=uefi disk=/dev/nvme0n1\n'
 set -eu
 disk=/dev/nvme0n1
 test "$(id -u)" -eq 0
+test "$(uname -m)" = x86_64
 test -b "$disk"
 test "$(lsblk -dn -o TYPE "$disk")" = disk
 test "$(if [ -d /sys/firmware/efi ]; then printf uefi; else printf bios; fi)" = uefi

@@ -25,3 +25,9 @@ def fresh_inventory(*results: dict) -> dict:
     from gentoo_agent.core.config import now
 
     return {"target": "gentoo", "collected_at": now(), "results": list(results)}
+
+
+def identity_result(machine: str = "x86_64") -> dict:
+    """The identity inventory result as the live system prints it (uname -m in the arch= line)."""
+    return {"label": "identity", "returncode": 0,
+            "stdout": f"hostname=livecd\n\narch={machine}\n\nkernel=6.18.54-gentoo-dist\n"}

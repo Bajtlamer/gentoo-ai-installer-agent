@@ -15,9 +15,11 @@ import re
 from pathlib import Path
 
 from gentoo_agent.core import paths
+from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, now, save_json
 from gentoo_agent.core.disks import disk_from_inventory
 from gentoo_agent.core.errors import (
+    CONFIG_CONFLICT,
     CONFIG_INVALID,
     INVENTORY_MISSING,
     PLAN_HASH_MISMATCH,
@@ -103,6 +105,10 @@ def create_install_plan(target: dict, install: dict, project_plan: dict, invento
         raise AgentError(INVENTORY_MISSING, "No inventory exists; run inspect first.", {})
     _check_erase_authorized(target, install)
     _check_inventory_fresh(inventory)
+    live = live_architecture(inventory)
+    if install.get("architecture") != live:
+        raise AgentError(CONFIG_CONFLICT, f"The configuration is for {install.get('architecture')}, "
+                         f"but the live system is {live}.", {"configured": install.get("architecture"), "live": live})
     _check_review(target, install, project_plan, inventory)
     disk = disk_from_inventory(inventory, install["disk"])
     _check_expected_disk(install, disk)
