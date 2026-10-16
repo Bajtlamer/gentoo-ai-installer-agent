@@ -262,7 +262,7 @@ class ApprovalTests(unittest.TestCase):
         self.assertTrue(lines[1].startswith("Plan hash: "))
         self.assertTrue(lines[2].startswith("Disk erase: YES"))
         self.assertTrue(lines[3].startswith("Destructive phases: "))
-        first_disk = next(index for index, line in enumerate(lines) if line.startswith("Disk: "))
+        first_disk = next(index for index, line in enumerate(lines) if line.startswith("Disk (erased): "))
         self.assertLess(2, first_disk)
 
 
@@ -286,7 +286,8 @@ class DualBootApprovalTests(unittest.TestCase):
         self.assertIn("Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. "
                       "Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.", summary)
         self.assertIn("Windows disk (kept, not written): /dev/sda  size=256060514304 bytes", summary)
-        self.assertIn("Disk: /dev/nvme0n1", summary)
+        self.assertIn("Disk (erased): /dev/nvme0n1", summary)
+        self.assertTrue(any(line.startswith("Disk (erased): ") for line in summary.splitlines()))
         self.assertFalse(summary.startswith("WARNING"))
 
     def test_dialog_shows_plan_warnings_after_the_destructive_line(self):

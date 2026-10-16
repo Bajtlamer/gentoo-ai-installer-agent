@@ -141,7 +141,7 @@ def approval_summary(plan: dict) -> str:
     )
     for index, disk in enumerate(plan["disks"]):
         # The install disk comes first; the others hold Windows and are only read.
-        label = "Disk" if index == 0 else "Windows disk (kept, not written)"
+        label = "Disk (erased)" if index == 0 else "Windows disk (kept, not written)"
         lines.append(
             f"{label}: {_shown(disk['path'])}  size={_shown(str(disk['size_bytes']))} bytes  "
             f"model={_shown(disk['model'] or 'unknown')}  "
