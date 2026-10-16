@@ -256,6 +256,17 @@ def configuration_command(target: dict, install: dict) -> str:
             f"printf '%s\\n' {block} >> {DHCPCD_CONF}",
             "rc-update add dhcpcd default",
         ])
+    efi = next((item["device"] for item in install["partition_layout"] if item.get("type") == "efi-system"), None)
+    efi_fstab = []
+    if efi:
+        # The kernel and grub.cfg live on the EFI partition, so the installed
+        # system must mount it at /boot; options and pass follow the Handbook.
+        efi_fstab = [
+            "emerge --noreplace --verbose sys-fs/dosfstools",
+            f"efi_uuid=$(blkid -s UUID -o value {q(efi)})",
+            "test -n \"$efi_uuid\"",
+            "printf '%s\\n' \"UUID=$efi_uuid /boot vfat umask=0077,tz=UTC 0 2\" >> /etc/fstab",
+        ]
     inside = "\n".join([
         f"printf '%s\\n' {hostname} > /etc/hostname",
         f"ln -snf {q('/usr/share/zoneinfo/' + str(timezone_value))} /etc/localtime",
@@ -266,6 +277,7 @@ def configuration_command(target: dict, install: dict) -> str:
         f"swap_uuid=$(blkid -s UUID -o value {q(next((item['device'] for item in install['partition_layout'] if item.get('type') == 'linux-swap'), ''))} 2>/dev/null || true)",
         "printf '%s\\n' \"UUID=$root_uuid / ext4 noatime 0 1\" > /etc/fstab",
         "if [ -n \"$swap_uuid\" ]; then printf '%s\\n' \"UUID=$swap_uuid none swap sw 0 0\" >> /etc/fstab; fi",
+        *efi_fstab,
         network_setup,
         ssh_setup,
         # pam_openrc starts user.<name> on login, which needs XDG_RUNTIME_DIR
@@ -486,6 +498,8 @@ def configuration_check_command(target: dict, install: dict) -> str:
         f"test -e {q(MOUNT_ROOT + '/etc/runlevels/default/dhcpcd')}",
         f"grep -Fqx {q(RC_AUTOSTART_USER)} {q(MOUNT_ROOT + '/etc/rc.conf')}",
     ]
+    if any(item.get("type") == "efi-system" for item in install["partition_layout"]):
+        lines.append(f"grep -Eq '^UUID=[^ ]+ /boot vfat ' {q(MOUNT_ROOT + '/etc/fstab')}")
     if install.get("network_method", "dhcp") == "static":
         static = install.get("network_static") or {}
         conf = q(MOUNT_ROOT + DHCPCD_CONF)
