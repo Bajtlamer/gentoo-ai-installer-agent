@@ -182,8 +182,12 @@ Choose one:
   plan; approve it again first if the 60 minutes have passed. Completed phases
   are checked and skipped.
 - Change the configuration first: on the live system run
-  `umount -R /mnt/gentoo` and `swapoff -a`, or reboot the live ISO (then
-  verify the new host key). Then run `inspect` again and `plan create`.
+  `umount -R /mnt/gentoo` and `swapoff <planned swap partition>` (the
+  `linux-swap` entry of `partition_layout` in `config/install.json`, for
+  example `/dev/sda2` or `/dev/nvme0n1p2` with UEFI and `/dev/sda1` with
+  BIOS; skip it when `swap_mb` is 0), or reboot the live ISO (then verify the
+  new host key). Then run `inspect` again and `plan create`. Do not use
+  `swapoff -a`: it would also turn off any other swap on the live system.
 
 ## Run stuck in starting, or interrupted
 

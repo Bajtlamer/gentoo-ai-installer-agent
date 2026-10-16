@@ -715,8 +715,11 @@ target is left running, so you can look at it on the console.
    - The configuration must change: the failed run usually left the disk
      mounted at `/mnt/gentoo` with swap on, and `plan create` refuses a
      mounted disk (`CONFIG_CONFLICT` "cannot be installed to: mounted at
-     ..."). On the live system run `umount -R /mnt/gentoo` and `swapoff -a`,
-     or reboot the live ISO (and verify the new host key, Step 2). Then run
+     ..."). On the live system run `umount -R /mnt/gentoo` and
+     `swapoff <planned swap partition>` (the `linux-swap` entry of
+     `partition_layout` in `config/install.json`, for example `/dev/sda2` or
+     `/dev/nvme0n1p2` with UEFI and `/dev/sda1` with BIOS), or reboot the
+     live ISO (and verify the new host key, Step 2). Then run
      `inspect` again, edit `config/install.json`, and run `validate`,
      `install --dry-run`, `plan create`, `approve`, and `run start` with the
      new plan. Never edit files under `plans/` or
