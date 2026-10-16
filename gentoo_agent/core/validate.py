@@ -18,6 +18,11 @@ MAX_SWAP_MB = 131072
 INTERFACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}")
 IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
 
+# Block device paths that may reach a generated program or the approval dialog.
+DEVICE_PATH = re.compile(r"/dev/[A-Za-z0-9._+/-]+")
+# The volume serial of a FAT EFI system partition, as blkid and lsblk print it.
+ESP_UUID = re.compile(r"[0-9A-F]{4}-[0-9A-F]{4}")
+
 
 IPV4_CIDR = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}")
 STATIC_PREFIXES = range(8, 31)

@@ -2,7 +2,7 @@ import json
 import unittest
 
 from gentoo_agent.core.hardware import summarize_inventory
-from tests.helpers import identity_result
+from tests.helpers import identity_result, partitions_result, secure_boot_result, windows_bios_disk, windows_disk
 
 
 class HardwareSummaryTests(unittest.TestCase):
@@ -46,6 +46,28 @@ class HardwareSummaryTests(unittest.TestCase):
         for results, expected in cases:
             with self.subTest(results=results):
                 self.assertEqual(summarize_inventory({"results": results})["architecture"], expected)
+
+    def test_existing_os_and_secure_boot_are_reported(self):
+        disks = [{"path": path, "type": "disk", "size": 100, "model": "QEMU", "serial": "s", "wwn": None}
+                 for path in ("/dev/nvme0n1", "/dev/sda", "/dev/sdb")]
+        results = [
+            {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": disks})},
+            partitions_result("/dev/nvme0n1", windows_disk("/dev/sda"), windows_bios_disk("/dev/sdb")),
+            secure_boot_result("0"),
+        ]
+        summary = summarize_inventory({"results": results})
+        self.assertEqual(summary["secure_boot"], "off")
+        self.assertEqual([disk["existing_os"] for disk in summary["disks"]], [None, "windows", "windows-bios"])
+
+    def test_existing_os_is_unknown_without_a_usable_partition_list(self):
+        disks = [{"path": "/dev/sda", "type": "disk", "size": 100, "model": "QEMU", "serial": "s", "wwn": None}]
+        identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": disks})}
+        hostile = windows_disk("/dev/sda", esp_uuid="ABCD-1234\nDisk erase: no")
+        for extra in ([], [partitions_result(hostile)]):
+            with self.subTest(extra=extra):
+                summary = summarize_inventory({"results": [identity, *extra]})
+                self.assertEqual(summary["disks"][0]["existing_os"], "unknown")
+                self.assertEqual(summary["secure_boot"], "unknown")
 
 
 if __name__ == "__main__":
