@@ -202,6 +202,12 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         if not disk_must_be_erased:
             print("Disk erasure was not confirmed; execution will remain blocked.")
 
+    if disk_must_be_erased:
+        # Plan creation requires the authorization in target.json as well; the
+        # typed ERASE line (or the existing pre-authorization) is that decision.
+        target["target_is_disposable"] = True
+        target["disk_erase_authorized"] = True
+
     install = dict(defaults)
     install.update({
         "profile": f"gentoo-{target.get('architecture', 'amd64')}-{init_system}",
@@ -254,6 +260,7 @@ def main() -> int:
     install["inventory_source"] = str(inventory_path.relative_to(paths.root()))
     install["handbook_snapshot"] = handbook_path
     save_json(paths.config_dir() / "install.json", install)
+    save_json(paths.config_dir() / "target.json", target)
 
     state = load_state()
     state.update({
