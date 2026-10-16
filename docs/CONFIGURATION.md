@@ -310,6 +310,13 @@ control the installed system:
   login, which needs `XDG_RUNTIME_DIR` from elogind; the OpenRC stage3 has no
   elogind, so each login printed `ERROR: user.<name> failed to start`
   ([news item](https://www.gentoo.org/support/news-items/2025-09-04-openrc-user-services.html)).
+- On UEFI, the `configuration` phase adds the EFI partition to `/etc/fstab` as
+  `UUID=<uuid> /boot vfat umask=0077,tz=UTC 0 2` and installs
+  `sys-fs/dosfstools` for its boot-time check (options and pass from the
+  Handbook's fstab example). The kernel, initramfs, and `grub.cfg` live on that
+  partition. Systems installed before this change boot, but leave `/boot`
+  unmounted, so kernel updates land on the root filesystem; add the line by
+  hand (`blkid -s UUID -o value <efi partition>`) and `mount /boot`.
 - Root SSH login is `PermitRootLogin prohibit-password` (key only) unless
   `allow_root_password_ssh` is true, which sets `PermitRootLogin yes`. The
   generated file always contains `PasswordAuthentication yes`, so the regular
