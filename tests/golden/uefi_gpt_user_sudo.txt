@@ -133,6 +133,7 @@ test -e /mnt/gentoo/etc/gentoo-release
 test -e /mnt/gentoo/.gentoo-agent-base-complete
 printf 'base-system-ok\n'
 ===== configuration apply =====
+set -eu
 chroot /mnt/gentoo /bin/bash -c 'set -e
 printf '"'"'%s\n'"'"' server > /etc/hostname
 ln -snf /usr/share/zoneinfo/Europe/Prague /etc/localtime
@@ -205,6 +206,7 @@ test -x /mnt/gentoo/usr/bin/sudo
 grep -Fqx '%wheel ALL=(ALL:ALL) ALL' /mnt/gentoo/etc/sudoers
 printf 'authentication-ok\n'
 ===== kernel apply =====
+set -eu
 chroot /mnt/gentoo /bin/bash -c 'set -e
 mkdir -p /etc/portage/package.use
 printf '"'"'%s\n'"'"' '"'"'sys-kernel/installkernel dracut'"'"' > /etc/portage/package.use/gentoo-agent-installkernel
@@ -215,6 +217,7 @@ set -eu
 test -n "$(find /mnt/gentoo/boot -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)"
 printf 'kernel-ok\n'
 ===== bootloader apply =====
+set -eu
 chroot /mnt/gentoo /bin/bash -c 'set -e
 emerge --noreplace --verbose sys-boot/grub
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo

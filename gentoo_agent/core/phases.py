@@ -259,7 +259,7 @@ def configuration_command(target: dict, install: dict) -> str:
         "env-update",
         "source /etc/profile || true",
     ])
-    return "\n".join([chroot(inside), f"touch {q(MOUNT_ROOT + '/.gentoo-agent-configuration-complete')}"])
+    return "\n".join(["set -eu", chroot(inside), f"touch {q(MOUNT_ROOT + '/.gentoo-agent-configuration-complete')}"])
 
 
 def authentication_check_command(target: dict, install: dict) -> str:
@@ -337,7 +337,7 @@ def authentication_command(target: dict, install: dict) -> str:
         ]
     marker = f"touch {q(MOUNT_ROOT + '/.gentoo-agent-authentication-complete')}"
     if not (install.get("set_root_password", True) or create_user):
-        return "\n".join([chroot("\n".join(inside)), marker])
+        return "\n".join(["set -eu", chroot("\n".join(inside)), marker])
     # The runner sends chpasswd records on stdin. Capture them before anything
     # else runs, give every other command /dev/null as stdin, and pipe the
     # records only to chpasswd. Never echo the variable or enable tracing.
@@ -358,7 +358,7 @@ def kernel_command(install: dict) -> str:
         "emerge --noreplace --verbose sys-kernel/gentoo-kernel-bin",
         "test -n \"$(find /boot -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)\"",
     ])
-    return chroot(inside)
+    return "\n".join(["set -eu", chroot(inside)])
 
 
 def bootloader_command(target: dict, install: dict) -> str:
@@ -375,7 +375,7 @@ def bootloader_command(target: dict, install: dict) -> str:
             "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo",
             "grub-mkconfig -o /boot/grub/grub.cfg",
         ])
-    return chroot(inside)
+    return "\n".join(["set -eu", chroot(inside)])
 
 
 def validation_command(target: dict, install: dict) -> str:
