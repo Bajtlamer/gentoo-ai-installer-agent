@@ -203,7 +203,9 @@ After a failed run, `resume_run` continues the same approved plan. A new plan
 for a changed configuration is refused with `CONFIG_CONFLICT` ("cannot be
 installed to: mounted at /mnt/gentoo ...") while the failed run's mounts and
 swap are still active. The AI cannot fix that itself: you run
-`umount -R /mnt/gentoo` and `swapoff -a` on the live system's console (or
+`umount -R /mnt/gentoo` and `swapoff <planned swap partition>` (for example
+`/dev/sda2` or `/dev/nvme0n1p2`; the `linux-swap` entry of the plan's
+`partition_layout`) on the live system's console (or
 reboot the live ISO), then ask the AI to refresh the hardware with
 `detect_hardware` (`refresh=true`) and create the plan again. See
 [Disk mounted after a failed run](../TROUBLESHOOTING.md#disk-mounted-after-a-failed-run).
