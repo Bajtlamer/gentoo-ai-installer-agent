@@ -1,0 +1,260 @@
+# Troubleshooting
+
+Every failure in gentoo-agent carries a stable error code. The CLI prints it as
+`error [CODE]: message` on stderr and exits with status 1. The MCP server
+returns it as a tool error with `{code, message, details}`. A run that fails in
+the background stores the same object in `error` (and the message in
+`last_error`) in `runs/<run_id>/run.json`, which `run status` and
+`get_run_status` show.
+
+## Contents
+
+- [Error codes](#error-codes)
+- [SSH host key not trusted](#ssh-host-key-not-trusted)
+- [Approval refused without a terminal](#approval-refused-without-a-terminal)
+- [Approval expired](#approval-expired)
+- [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso)
+- [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick)
+- [Run stuck in starting, or interrupted](#run-stuck-in-starting-or-interrupted)
+- [RUN_ALREADY_ACTIVE](#run_already_active)
+- [Where the logs are](#where-the-logs-are)
+- [Credentials not shown](#credentials-not-shown)
+- [Windows](#windows)
+
+## Error codes
+
+| Code | Typical causes | What to do |
+|---|---|---|
+| `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network). A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
+| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A chosen disk that is excluded (removable, USB, read-only, or mounted). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
+| `APPROVAL_REQUIRED` | The plan has no approval yet. The approval record is malformed, unsigned, or signed with another key. `approve` run without an interactive terminal. The signing key `secrets/approval.key` is not a private regular file you own, or is malformed. `install --execute` (replaced by plans). An MCP client without elicitation support, or a failed dialog. | Approve the plan yourself in your own terminal: `gentoo-agent approve <plan_id>`. For a bad key, remove `secrets/approval.key` and approve again (existing approvals become invalid). |
+| `APPROVAL_DECLINED` | The typed phrase was not exactly `APPROVE <plan_id>`, or the dialog was declined, cancelled, or accepted without checking `approve`. | Nothing was recorded. Approve again if you meant to. |
+| `APPROVAL_EXPIRED` | More than 60 minutes passed between the approval and `run start`, `run resume`, `start_install`, `run_phase`, or `resume_run`. | Approve the same plan again, then start or resume. See [Approval expired](#approval-expired). |
+| `PLAN_NOT_FOUND` | No `plans/<plan_id>.json` for that id (typo, or a different `GENTOO_AGENT_HOME`). | Check the id from `plan create` and the work directory. |
+| `PLAN_HASH_MISMATCH` | A plan file was edited after creation. The approval is for a different plan hash. The plan changed after the run started. `verify_install` found a stored check that does not match what the code generates now, for example after the SSH key changed. | Never edit `plans/` or `approvals/`. Create a new plan, approve it, and start it. |
+| `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
+| `DISK_AMBIGUOUS` | In `resolve_config` and `create_plan`: none or several disks are eligible, so no disk can be inferred (`details.candidates`, `details.excluded`). At `plan create`: the disk has no serial or WWN and another disk has the same size and model (`details.twins`). | Name the disk explicitly (the `disk` override, or `disk` in `install.json`), or detach the twin disk and inspect again. See [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick). |
+| `TARGET_DRIFT` | At the start of a run, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
+| `SSH_UNREACHABLE` | Every inventory command failed (wrong address, key, user, or untrusted host key); nothing was saved. `ssh` could not be executed. The disk identity could not be read at the start of a run. `verify_install` could not reach the target. | Test the connection by hand with `BatchMode=yes` and `StrictHostKeyChecking=yes`. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
+| `HANDBOOK_UNAVAILABLE` | `gentoo-agent handbook` could not download `handbook_url`. | Check the network and the URL in `config/target.json`. `prepare_install.py` only warns about this. |
+| `PHASE_FAILED` | A phase's apply or verification returned non-zero (`details.phase`, `details.returncode`). An unexpected exception during the run. The worker could not be started, or exited before receiving its payload. The worker ended without recording a result (status `interrupted`). | Read the end of the log for that phase, fix the cause (often network, mirrors, or a console fix), then `run resume <run_id>`. |
+| `RUN_NOT_FOUND` | No `runs/<run_id>/run.json` for that id. | Check the run id and `GENTOO_AGENT_HOME`. |
+| `RUN_ALREADY_ACTIVE` | Another run holds `runs/active.lock` and is still active, or `run resume` was called on a run that is still active. | See [RUN_ALREADY_ACTIVE](#run_already_active). |
+| `INTERNAL_ERROR` | MCP only: a tool failed with an unexpected exception. | Read the server log on its stderr (your MCP client keeps it in its MCP server log) and report the traceback. |
+
+## SSH host key not trusted
+
+Symptoms: `inspect` fails with `SSH_UNREACHABLE` ("Could not reach the target
+over SSH; check the address, key, and host key."), or a run fails at the start
+with `SSH_UNREACHABLE` ("Could not read disk identity from ...").
+
+Every connection uses `BatchMode=yes` and `StrictHostKeyChecking=yes`, so ssh
+never asks whether to trust a key; an unknown or changed key simply fails.
+
+1. Run the same connection by hand to see ssh's own message:
+
+   ```sh
+   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i <identity_file> root@<host> true
+   ```
+
+2. "Host key verification failed" or "REMOTE HOST IDENTIFICATION HAS CHANGED"
+   means the key is not in the known hosts file that the target uses
+   (`known_hosts_file` in `config/target.json`, or your default file when it
+   is empty).
+3. Verify the key out of band: print the fingerprint on the live console
+   (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) and compare it with
+   the key fetched over the network (`ssh-keyscan -t ed25519 <host>`).
+4. Only if they match, remove a stale entry (`ssh-keygen -R <host>`) and add
+   the verified key. The [CLI guide](guides/cli-install.md#step-2-verify-and-trust-the-host-key)
+   has the full procedure.
+
+"Permission denied (publickey)" means the key is not in the live system's
+`/root/.ssh/authorized_keys`, or `identity_file` points to another key.
+
+## Approval refused without a terminal
+
+`approve` opens `/dev/tty` directly and refuses to run without a controlling
+terminal:
+
+```text
+error [APPROVAL_REQUIRED]: approve needs an interactive terminal; run it yourself in your own terminal.
+```
+
+This happens when the command runs inside an agent's shell tool, in CI, under
+`ssh` without a terminal, or on native Windows. Redirecting standard input
+does not help, because the command does not read standard input. Run the
+command yourself in a normal terminal window. With the MCP server, use
+`approve_plan` in a client that supports elicitation, or run the command it
+returns in your own terminal.
+
+## Approval expired
+
+An approval is valid for exactly 60 minutes from the moment it was recorded.
+Starting a run after that fails:
+
+```text
+error [APPROVAL_EXPIRED]: The approval for plan <plan_id> expired at <time>; approve it again.
+```
+
+The check happens when a run starts and again when the worker claims it, not
+during the run, so a long installation is not cut off when the hour ends.
+To continue:
+
+1. Approve the same plan again: `gentoo-agent approve <plan_id>` (or
+   `approve_plan`). The plan does not change, so it keeps its id.
+2. Run `run start <plan_id>`, or `run resume <run_id>` for a run that failed.
+
+## TARGET_DRIFT after a reboot of the live ISO
+
+A plan is bound to the identity of one disk: path, size in bytes, model,
+serial, and WWN. At the start of every run the worker reads the live disk at
+the planned path again and stops if anything differs:
+
+```text
+Disk /dev/sda does not match the approved plan.
+```
+
+`error.details` holds `expected` and `actual`. After a reboot of the live ISO,
+the usual cause is that device names were assigned in a different order, for
+example because a USB stick was attached and the disk you planned for is now
+`/dev/sdb`. A missing path gives "Disk /dev/sda is no longer present on the
+target."
+
+A reboot also usually gives the live system a new SSH host key and can give it
+a new address. Those show up as `SSH_UNREACHABLE`, not as drift.
+
+1. Verify the new host key and update `config/target.json` if the address
+   changed.
+2. Run `gentoo-agent inspect` and find the disk by serial or WWN.
+3. Set the correct `disk` (and layout, through `init_config.py --overwrite` or
+   by hand) in `config/install.json`.
+4. Run `validate`, `plan create`, `approve`, and `run start` with the new plan.
+
+Do not edit the old plan; a modified plan is refused with `PLAN_HASH_MISMATCH`.
+
+## DISK_AMBIGUOUS with a USB stick
+
+How a USB stick is treated depends on the path:
+
+- **MCP (`resolve_config`, `create_plan`).** Disks that are removable, attached
+  over USB, read-only, or mounted are excluded from inference. With one
+  internal disk and the boot stick attached, the internal disk is inferred and
+  a warning names the excluded stick, for example
+  `excluded: /dev/sdb (removable; usb transport)`. `DISK_AMBIGUOUS` ("No single
+  eligible disk was found; choose one with the disk setting.") means none or
+  several disks remain. `details.candidates` lists the eligible disks and
+  `details.excluded` the others with the reason. Tell the AI which disk to
+  use; it passes it as the `disk` override. Choosing an excluded disk, such as
+  the USB stick itself, fails with `CONFIG_CONFLICT`: installing to a USB disk
+  is not supported on this path.
+- **CLI (`plan create`).** The disk comes from `config/install.json`; there is
+  no inference. `DISK_AMBIGUOUS` here means the chosen disk has no serial
+  number or WWN and another disk has the same size and model, so it cannot be
+  identified reliably (`details.twins`). This is typical of two identical
+  cheap USB sticks. Detach the twin, run `inspect` again, and create the plan
+  again.
+
+A disk without serial or WWN that has no twin is accepted, and the plan summary
+adds: "WARNING: this disk has no serial number or WWN; drift detection relies
+on path, size, and model only."
+
+## Run stuck in starting, or interrupted
+
+A run is `starting` from the launch until the worker claims it (then
+`running`). `run status` and `get_run_status` check whether the worker is
+still alive:
+
+- If the worker's process id is recorded and the process is gone, or no
+  process id was recorded and the run started more than 60 seconds ago, the
+  run is marked `interrupted` with "The worker process ended without recording
+  a result." and the run lock is released.
+- A run is also `interrupted` when the worker itself was interrupted during a
+  phase ("Installation was interrupted.").
+
+To continue:
+
+1. Read `runs/<run_id>/worker.err` for the worker's own error output (for
+   example an import error in the environment the worker was started with).
+2. Read the end of `run log <run_id>` to see which phase was in progress.
+3. Run `gentoo-agent run resume <run_id>`. Completed phases are detected by
+   their checks and skipped.
+
+A run that is stuck in `running` with a live worker is usually waiting for a
+long phase (`base-system`, `kernel`). The log gets an entry only when each step
+ends.
+
+## RUN_ALREADY_ACTIVE
+
+Only one run can be active at a time. The lock is `runs/active.lock` and holds
+the run id of the current run.
+
+```text
+error [RUN_ALREADY_ACTIVE]: Run <run_id> is still active.
+```
+
+1. Check the named run: `gentoo-agent run status <run_id>`. If its worker is
+   gone, this marks it `interrupted` and releases the lock.
+2. If it is really running, wait for it, or stop it with
+   `gentoo-agent run cancel <run_id>` (it stops before the next phase).
+3. "Another run holds the run lock." without a run id means the lock file is
+   empty; it is treated as active until it is 60 seconds old.
+4. A lock holder whose record is missing or unreadable also counts as active
+   until the lock file is 60 seconds old.
+
+`run resume` on a run that is still active fails with the same code.
+
+## Where the logs are
+
+All paths are relative to the repository root, or to `GENTOO_AGENT_HOME`.
+
+| Path | Content |
+|---|---|
+| `runs/<run_id>/run.json` | The run record: status, phase index, current phase, completed phases, last error. |
+| `runs/<run_id>/log.jsonl` | One JSON line per check, apply, and verify step: phase, kind, label, command, return code, output, finish time. Read it with `run log` or `get_run_log`. |
+| `runs/<run_id>/worker.err` | Standard error of the background worker. |
+| `runs/<run_id>/credentials.json` | Generated passwords until they are shown once (mode 0600). |
+| `plans/<plan_id>.json` | The frozen plan. |
+| `approvals/<plan_id>.json` | The signed approval record. |
+| `inventory/inventory-<time>.json` | Each read-only inventory. |
+| `inventory/handbook-<time>.html`, `.json` | Handbook snapshots with URL and retrieval time. |
+| `state/state.json` | Local workflow state (`gentoo-agent status`). |
+
+The MCP server logs to its standard error, which your MCP client captures.
+
+## Credentials not shown
+
+`run status` prints generated passwords once, and only in these conditions:
+
+- At least one password was generated. Passwords that came from your
+  environment variables or a prompt are never stored or shown.
+- The run has ended. While the run is `starting` or `running`, nothing is
+  shown.
+- Nobody has read them yet. The first `run status` call after the run ended
+  takes them and deletes the file. If an agent ran `run status` in its shell,
+  it received them; in [protected mode](guides/protected-mode.md) the agent's
+  shell cannot read `runs/`.
+- They are not older than 24 hours. Any `run status` call deletes credentials
+  that were written more than 24 hours earlier.
+- You use the same work directory. In protected mode, set
+  `GENTOO_AGENT_HOME` to the work directory and use the venv's
+  `gentoo-agent`.
+
+`get_run_status` never shows passwords. It reports `credentials_waiting` and
+`credentials_applied`, and a `credentials_hint` with the command to run in your
+terminal.
+
+If the passwords are lost, log in on the target's console or with the SSH key
+(the root key is always installed) and set new passwords with `passwd`.
+
+## Windows
+
+Native Windows is not supported for the steps that matter:
+
+- `approve` needs `/dev/tty` and fails with `APPROVAL_REQUIRED`.
+- `run start` and `run resume` need `fcntl` and fail with `CONFIG_INVALID`
+  ("Background runs need macOS or Linux; on Windows use WSL.").
+- The protected mode sandbox needs macOS or Linux/WSL2.
+
+Dry run, `validate`, `inspect`, and `plan create` work on any platform. Use
+WSL for the full workflow, with the repository, SSH key, and known hosts file
+inside the WSL file system.
