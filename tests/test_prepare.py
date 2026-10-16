@@ -57,11 +57,14 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class EraseAuthorizationTests(unittest.TestCase):
-    def build(self, erase_answer: str, machine: str = "x86_64") -> tuple[dict, dict]:
-        target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test"}
+    def build(self, erase_answer: str, machine: str = "x86_64", **target_fields) -> tuple[dict, dict]:
+        target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test",
+                  **target_fields}
+        self.erase_prompts = []
 
         def fake_ask(prompt, default=None):
             if prompt.startswith("Type ERASE"):
+                self.erase_prompts.append(prompt)
                 return erase_answer
             return default if default is not None else ""
 
@@ -90,10 +93,23 @@ class EraseAuthorizationTests(unittest.TestCase):
 
     def test_declined_confirmation_authorizes_nothing(self):
         target, install = self.build("CANCEL")
-        self.assertNotIn("target_is_disposable", target)
+        self.assertIs(target["target_is_disposable"], False)
+        self.assertIs(target["disk_erase_authorized"], False)
         self.assertIs(install["disk_must_be_erased"], False)
         self.assertIs(install["disk_erase_authorized"], False)
 
+    def test_earlier_authorization_does_not_skip_the_erase_prompt(self):
+        target, install = self.build("CANCEL", target_is_disposable=True, disk_erase_authorized=True)
+        self.assertEqual(self.erase_prompts, ["Type ERASE /dev/sda to record that decision"])
+        self.assertIs(target["target_is_disposable"], False)
+        self.assertIs(target["disk_erase_authorized"], False)
+        for field in ("disk_must_be_erased", "target_is_disposable", "disk_erase_authorized"):
+            self.assertIs(install[field], False, field)
+
+    def test_confirmation_for_a_different_disk_is_refused(self):
+        target, install = self.build("ERASE /dev/sdb", target_is_disposable=True, disk_erase_authorized=True)
+        self.assertIs(target["disk_erase_authorized"], False)
+        self.assertIs(install["disk_must_be_erased"], False)
 
     def test_architecture_comes_from_the_live_system(self):
         target, install = self.build("CANCEL")

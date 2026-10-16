@@ -253,9 +253,12 @@ What it does, in order:
    interface on the installed system (take the name from the `network` section
    of the inventory, or `ip -brief address` on the live system), the address in
    CIDR form, the gateway, and the DNS servers.
-4. Asks you to type `ERASE <disk>` unless the target is already marked
-   disposable and erase authorized. Either way, the decision is saved in
-   `target.json` as well as `install.json`.
+4. Asks you to type `ERASE <disk>` for the disk chosen in this run, every
+   time: an authorization saved by an earlier run never skips the question.
+   Only the exact line authorizes erasure; any other answer sets
+   `disk_must_be_erased`, `target_is_disposable`, and `disk_erase_authorized`
+   to `false`, so an earlier authorization does not linger. The decision is
+   saved in `target.json` as well as `install.json`.
 5. Saves a Handbook snapshot under `inventory/` for the live architecture (a
    failure is only a warning).
 6. Writes `config/install.json`, `config/target.json`, and `state/state.json`,

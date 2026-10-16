@@ -77,7 +77,9 @@ refused. Run `python tools/init_config.py --help` for every option.
 read-only over SSH, asks the installation questions, and writes
 `install.json`. It reads the architecture from the live system (it does not
 ask), sets `architecture` and `handbook_url` in `target.json` from it, and
-records the erase decision in `target.json` as well as `install.json`. It does
+records the erase decision in `target.json` as well as `install.json`. It
+asks for `ERASE <disk>` on every run, for the disk chosen in that run; any
+other answer sets the erase flags in both files to `false`. It does
 not start an installation. See the
 [CLI installation guide](guides/cli-install.md) for both.
 
