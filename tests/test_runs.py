@@ -1,4 +1,5 @@
 import datetime as dt
+import errno
 import os
 import signal
 import subprocess
@@ -397,6 +398,46 @@ class WorkerLockTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "RUN_ALREADY_ACTIVE")
             finally:
                 handle.close()
+
+    def test_held_worker_lock_keeps_a_run_without_pid_active_after_the_grace(self):
+        with temp_home():
+            run_id = runs.new_run_id()
+            long_ago = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=5)).isoformat(timespec="seconds")
+            runs.acquire_lock(run_id, {"run_id": run_id, "plan_id": "a" * 16, "status": "starting", "pid": None,
+                                       "started_at": long_ago})
+            handle = runs.hold_worker_lock(run_id)
+            try:
+                status = runs.run_status(run_id)["status"]
+            finally:
+                handle.close()
+        self.assertEqual(status, "starting")
+
+    def test_unusable_flock_falls_back_to_the_pid_probe(self):
+        real_flock = runs.fcntl.flock
+
+        def failing_probe(fd, operation):
+            if operation & runs.fcntl.LOCK_NB:
+                raise OSError(errno.ENOLCK, "No locks available")
+            return real_flock(fd, operation)
+
+        with temp_home():
+            alive = self.start(os.getpid())
+            dead = self.start_without_lock(dead_pid())
+            for run_id in (alive, dead):
+                runs.hold_worker_lock(run_id).close()
+            with patch.object(runs.fcntl, "flock", side_effect=failing_probe):
+                held = runs.worker_lock_held(alive)
+                alive_status = runs.run_status(alive)["status"]
+                dead_status = runs.run_status(dead)["status"]
+        self.assertIsNone(held)
+        self.assertEqual(alive_status, "running")
+        self.assertEqual(dead_status, "interrupted")
+
+    def start_without_lock(self, pid: int) -> str:
+        run_id = runs.new_run_id()
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": "a" * 16, "status": "running", "pid": pid,
+                                "started_at": runs.now()})
+        return run_id
 
     def test_without_a_lock_file_the_pid_probe_decides(self):
         with temp_home():

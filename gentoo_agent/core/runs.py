@@ -182,7 +182,12 @@ def worker_lock_held(run_id: str) -> bool | None:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return True
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            return None  # flock unusable here (for example ENOLCK): let the pid probe decide
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass  # closing the file below drops the probe's lock anyway
         return False
 
 
@@ -215,6 +220,10 @@ def _record_active(record: dict | None, fallback: bool) -> bool:
         return fallback
     if status not in ACTIVE_STATUSES:
         return False
+    run_id = record.get("run_id")
+    held = worker_lock_held(run_id) if isinstance(run_id, str) and RUN_ID_PATTERN.fullmatch(run_id) else None
+    if held:
+        return True  # a held worker lock means a live worker (or its ssh child), whatever the pid says
     pid = record.get("pid")
     if pid is None:
         started = _parse_aware(record.get("started_at"))
@@ -223,13 +232,10 @@ def _record_active(record: dict | None, fallback: bool) -> bool:
         return dt.datetime.now(dt.timezone.utc) - started < STARTING_GRACE
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return fallback
-    run_id = record.get("run_id")
-    held = worker_lock_held(run_id) if isinstance(run_id, str) and RUN_ID_PATTERN.fullmatch(run_id) else None
     if held is None:
         return pid_alive(pid)
-    if not held:
-        pid_alive(pid)  # reaps the worker if it was our child
-    return held
+    pid_alive(pid)  # the lock was let go; this reaps the worker if it was our child
+    return False
 
 
 def _holder_active(run_id: str) -> bool:

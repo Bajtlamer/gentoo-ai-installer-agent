@@ -143,9 +143,10 @@ Liveness is read from the worker's flock: while a worker is alive it holds
 `runs/<run_id>/worker.lock`, and the kernel drops the lock when the process
 ends (and the ssh process of the current phase, which inherits the
 descriptor, has ended too), so a reused process id cannot make a dead worker
-look alive. The recorded
-process id is the fallback only before the worker took the lock and for runs
-without the file. There is no startup scan.
+look alive. A held lock
+means the run is active even when no process id was recorded. The recorded
+process id is the fallback only before the worker took the lock, for runs
+without the file, and when `flock` itself fails on the lock file. There is no startup scan.
 
 ## What lives on disk
 
