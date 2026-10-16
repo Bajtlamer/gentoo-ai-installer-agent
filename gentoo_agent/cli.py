@@ -15,6 +15,7 @@ from gentoo_agent.core.approval import (
     approval_phrase,
     approval_status,
     approval_summary,
+    erase_phrase,
     record_approval,
 )
 from gentoo_agent.core.errors import APPROVAL_DECLINED, APPROVAL_REQUIRED, CONFIG_INVALID, AgentError
@@ -97,7 +98,8 @@ def cmd_approve(args: argparse.Namespace) -> int:
         answer = tty.readline().strip()
     if answer != phrase:
         raise AgentError(APPROVAL_DECLINED, "Approval not recorded.", {"plan_id": plan["plan_id"]})
-    record = record_approval(plan, "cli")
+    # The phrase already contains ERASE WINDOWS <disk> when the plan erases Windows.
+    record = record_approval(plan, "cli", erase_confirmed=erase_phrase(plan) is not None)
     print(f"Approved until {record['expires_at']}. Start with: gentoo-agent run start {plan['plan_id']}")
     return 0
 

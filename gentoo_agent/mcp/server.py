@@ -14,10 +14,16 @@ import subprocess
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, StrictBool
+from pydantic import BaseModel, StrictBool, StrictStr
 
 from gentoo_agent.core import paths, phases as core_phases
-from gentoo_agent.core.approval import APPROVAL_TTL_MINUTES, approval_status, approval_summary, record_approval
+from gentoo_agent.core.approval import (
+    APPROVAL_TTL_MINUTES,
+    approval_status,
+    approval_summary,
+    erase_phrase,
+    record_approval,
+)
 from gentoo_agent.core.config import load_json, load_plan, target_config
 from gentoo_agent.core.errors import (
     APPROVAL_DECLINED,
@@ -164,6 +170,12 @@ class ApprovalAnswer(BaseModel):
     approve: StrictBool
 
 
+class EraseWindowsApprovalAnswer(BaseModel):
+    """For a plan that erases a disk holding Windows: confirm must be exactly ERASE WINDOWS <disk>."""
+    approve: StrictBool
+    confirm: StrictStr
+
+
 @server.tool(annotations=LOCAL_WRITE)
 async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
     """Ask the human, in a dialog built by this server, to approve a stored plan for 60 minutes.
@@ -182,21 +194,30 @@ async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
     capabilities = ctx.client_capabilities
     if capabilities is None or capabilities.elicitation is None:
         return error_result(fallback)
+    required = erase_phrase(plan)
     message = (
         f"{summary}\n\nApprove this plan? The approval is valid for {APPROVAL_TTL_MINUTES} minutes "
         "and covers exactly the commands and disk above. Check 'approve' and accept only if you, "
         "the human operator, agree."
     )
+    if required is not None:
+        message += f" This plan erases a disk that holds Windows: type exactly {required} in 'confirm'."
+    declined = error_result(AgentError(APPROVAL_DECLINED, "Approval not recorded.", {"plan_id": plan_id}))
     try:
-        answer = await ctx.elicit(message, ApprovalAnswer)
+        answer = await ctx.elicit(message, ApprovalAnswer if required is None else EraseWindowsApprovalAnswer)
+    except ValueError:  # accepted with content that does not match the form (for example no confirm text)
+        logger.warning("elicitation answer for plan %s did not match the form", plan_id)
+        return declined
     except Exception:  # unsupported transport, client error, or timeout: fail closed
         logger.exception("elicitation failed for plan %s", plan_id)
         return error_result(fallback)
     data = getattr(answer, "data", None)
     if answer.action != "accept" or data is None or data.approve is not True:
-        return error_result(AgentError(APPROVAL_DECLINED, "Approval not recorded.", {"plan_id": plan_id}))
+        return declined
+    if required is not None and getattr(data, "confirm", None) != required:
+        return declined
     try:
-        record = record_approval(plan, "elicitation")
+        record = record_approval(plan, "elicitation", erase_confirmed=required is not None)
     except AgentError as error:
         return error_result(error)
     return ok_result({"approved": True, "plan_id": plan_id, "channel": "elicitation",

@@ -14,7 +14,15 @@ from gentoo_agent.core.errors import (
     PLAN_HASH_MISMATCH,
     AgentError,
 )
-from tests.helpers import fresh_inventory, identity_result, partitions_result, storage_result, temp_home
+from tests.helpers import (
+    fresh_inventory,
+    identity_result,
+    partitions_result,
+    save_dual_boot_plan,
+    storage_result,
+    temp_home,
+    windows_disk,
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -256,6 +264,67 @@ class ApprovalTests(unittest.TestCase):
         self.assertTrue(lines[3].startswith("Destructive phases: "))
         first_disk = next(index for index, line in enumerate(lines) if line.startswith("Disk: "))
         self.assertLess(2, first_disk)
+
+
+class DualBootApprovalTests(unittest.TestCase):
+    def test_phrase_names_the_windows_disk_when_it_is_erased(self):
+        self.assertEqual(approval.approval_phrase({"plan_id": "abc", "erases_existing_os": None}), "APPROVE abc")
+        plan = {"plan_id": "abc", "erases_existing_os": {"disk": "/dev/sdb", "os": "windows", "evidence": []}}
+        self.assertEqual(approval.erase_phrase(plan), "ERASE WINDOWS /dev/sdb")
+        self.assertEqual(approval.approval_phrase(plan), "APPROVE abc ERASE WINDOWS /dev/sdb")
+
+    def test_dialog_starts_with_the_windows_erase_warning(self):
+        with temp_home():
+            lines = approval.approval_summary(save_dual_boot_plan(nvme=windows_disk("/dev/nvme0n1"))).splitlines()
+        self.assertEqual(lines[0], "WARNING: /dev/nvme0n1 contains Windows (esp vfat /dev/nvme0n1p1, msr /dev/nvme0n1p2, "
+                                   "ntfs /dev/nvme0n1p3). It will be erased.")
+        self.assertTrue(lines[1].startswith("Plan: "))
+
+    def test_dialog_lists_the_dual_boot_entry_and_the_kept_disk(self):
+        with temp_home():
+            summary = approval.approval_summary(save_dual_boot_plan(sda=windows_disk("/dev/sda")))
+        self.assertIn("Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. "
+                      "Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.", summary)
+        self.assertIn("Windows disk (kept, not written): /dev/sda  size=256060514304 bytes", summary)
+        self.assertIn("Disk: /dev/nvme0n1", summary)
+        self.assertFalse(summary.startswith("WARNING"))
+
+    def test_dialog_shows_plan_warnings_after_the_destructive_line(self):
+        with temp_home():
+            lines = approval.approval_summary(save_dual_boot_plan(secure_boot="unknown")).splitlines()
+        self.assertTrue(lines[3].startswith("Destructive phases: "))
+        self.assertTrue(lines[4].startswith("WARNING: Secure Boot state is unknown"))
+
+    def test_ordinary_approval_does_not_satisfy_a_plan_that_erases_windows(self):
+        with temp_home():
+            plan = save_dual_boot_plan(nvme=windows_disk("/dev/nvme0n1"))
+            approval.record_approval(plan, "cli", at=START)
+            with self.assertRaises(AgentError) as caught:
+                approval.require_approved_plan(plan["plan_id"], at=START)
+            self.assertIn("ERASE WINDOWS /dev/nvme0n1", caught.exception.message)
+            self.assertFalse(approval.approval_status(plan["plan_id"], at=START)["approved"])
+            approval.record_approval(plan, "cli", at=START, erase_confirmed=True)
+            self.assertEqual(approval.require_approved_plan(plan["plan_id"], at=START)["plan_id"], plan["plan_id"])
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+
+    def test_record_stores_whether_the_extended_phrase_was_used(self):
+        with temp_home():
+            plan = make_plan()
+            self.assertIs(approval.record_approval(plan, "cli", at=START)["erase_confirmed"], False)
+            self.assertIs(approval.record_approval(plan, "cli", at=START, erase_confirmed=True)["erase_confirmed"], True)
+            with self.assertRaises(AgentError) as caught:
+                approval.record_approval(plan, "cli", at=START, erase_confirmed="yes")
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_record_with_a_non_boolean_flag_is_invalid(self):
+        with temp_home():
+            plan = make_plan()
+            record = approval.record_approval(plan, "cli", at=START)
+            save_signed(plan["plan_id"], {**record, "erase_confirmed": "true"})
+            with self.assertRaises(AgentError) as caught:
+                approval.require_approved_plan(plan["plan_id"], at=START)
+        self.assertEqual(caught.exception.code, APPROVAL_REQUIRED)
+        self.assertIn("is invalid", caught.exception.message)
 
 
 if __name__ == "__main__":

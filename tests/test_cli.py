@@ -10,7 +10,15 @@ from unittest.mock import patch
 from gentoo_agent import cli
 from gentoo_agent.core import approval, paths, phases, runs
 from gentoo_agent.core.config import save_json
-from tests.helpers import fresh_inventory, identity_result, partitions_result, storage_result, temp_home
+from tests.helpers import (
+    fresh_inventory,
+    identity_result,
+    partitions_result,
+    save_dual_boot_plan,
+    storage_result,
+    temp_home,
+    windows_disk,
+)
 from tests.test_launcher import approved_plan
 
 
@@ -95,6 +103,35 @@ class ApproveCommandTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("APPROVAL_DECLINED", stderr.getvalue())
         self.assertFalse(approved)
+
+
+class EraseWindowsApproveTests(unittest.TestCase):
+    def approve(self, answer_for) -> tuple[int, dict, dict, FakeTty]:
+        with temp_home():
+            plan = save_dual_boot_plan(nvme=windows_disk("/dev/nvme0n1"))
+            tty = FakeTty(answer_for(plan["plan_id"]))
+            with patch.object(cli, "open_tty", return_value=tty), redirect_stdout(io.StringIO()), \
+                    redirect_stderr(io.StringIO()):
+                code = cli.main(["approve", plan["plan_id"]])
+            status = approval.approval_status(plan["plan_id"])
+        return code, plan, status, tty
+
+    def test_extended_phrase_is_asked_for_and_recorded(self):
+        code, plan, status, tty = self.approve(lambda plan_id: f"APPROVE {plan_id} ERASE WINDOWS /dev/nvme0n1")
+        self.assertEqual(code, 0)
+        self.assertTrue(status["approved"])
+        written = "".join(tty.written)
+        self.assertTrue(written.startswith("WARNING: /dev/nvme0n1 contains Windows"))
+        self.assertIn(f"Type APPROVE {plan['plan_id']} ERASE WINDOWS /dev/nvme0n1 to approve", written)
+
+    def test_ordinary_or_wrong_phrase_records_nothing(self):
+        for answer in (lambda plan_id: f"APPROVE {plan_id}",
+                       lambda plan_id: f"APPROVE {plan_id} ERASE WINDOWS /dev/sda",
+                       lambda plan_id: f"APPROVE {plan_id} ERASE /dev/nvme0n1"):
+            with self.subTest(answer=answer("ID")):
+                code, _, status, _ = self.approve(answer)
+                self.assertEqual(code, 1)
+                self.assertFalse(status["approved"])
 
 
 class PlanAndRunCommandTests(unittest.TestCase):

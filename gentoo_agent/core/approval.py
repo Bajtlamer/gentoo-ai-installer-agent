@@ -30,15 +30,22 @@ from gentoo_agent.core.signing import load_key, load_or_create_key, sign, verify
 APPROVAL_TTL_MINUTES = 60
 CHANNELS = {"cli", "elicitation"}
 CLOCK_SKEW = dt.timedelta(seconds=60)
-RECORD_KEYS = {"plan_id", "plan_hash", "channel", "approved_at", "expires_at", "signature"}
+RECORD_KEYS = {"plan_id", "plan_hash", "channel", "approved_at", "expires_at", "erase_confirmed", "signature"}
 
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
+def erase_phrase(plan: dict) -> str | None:
+    """The extra words a human types when the plan erases a disk that holds Windows; None otherwise."""
+    erases = plan.get("erases_existing_os")
+    return f"ERASE WINDOWS {erases['disk']}" if erases else None
+
+
 def approval_phrase(plan: dict) -> str:
-    return f"APPROVE {plan['plan_id']}"
+    extra = erase_phrase(plan)
+    return f"APPROVE {plan['plan_id']}" + (f" {extra}" if extra else "")
 
 
 def _stored_plan(plan: dict) -> dict:
@@ -78,11 +85,17 @@ def approval_summary(plan: dict) -> str:
     erase = "YES, all data on the disk will be destroyed" if install.get("disk_must_be_erased") else "no"
     destructive = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]
     # Erase and destructive lines come before any value read from the target or inventory.
-    lines = [
+    lines = []
+    erases = plan.get("erases_existing_os")
+    if erases:
+        evidence = ", ".join(_shown(item) for item in erases["evidence"])
+        lines.append(f"WARNING: {_shown(erases['disk'])} contains Windows ({evidence}). It will be erased.")
+    lines += [
         f"Plan: {_shown(plan['plan_id'])}",
         f"Plan hash: {_shown(plan['plan_hash'])}",
         f"Disk erase: {erase}",
         "Destructive phases: " + ", ".join(destructive),
+        *(f"WARNING: {_shown(warning)}" for warning in plan.get("warnings", [])),
         (
             f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
             f"({_shown(target['name'])})"
@@ -103,6 +116,11 @@ def approval_summary(plan: dict) -> str:
         )
     else:
         lines.append(f"Network: {_shown(install.get('network_method', 'dhcp'))}")
+    for entry in install.get("dual_boot_entries", []):
+        lines.append(
+            f"Dual boot: Windows on {_shown(entry['disk'])} (EFI UUID {_shown(entry['esp_uuid'])}) will be added to "
+            "the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key."
+        )
     password_source = install.get("password_source", "environment")
     passwords = f"Passwords: source={_shown(password_source)}"
     if password_source == "environment":
@@ -121,9 +139,11 @@ def approval_summary(plan: dict) -> str:
         f"Access: allow_root_password_ssh={yes_no(install.get('allow_root_password_ssh', False))} "
         f"configure_sudo={yes_no(install.get('configure_sudo', True))} user_groups={_shown(groups)}"
     )
-    for disk in plan["disks"]:
+    for index, disk in enumerate(plan["disks"]):
+        # The install disk comes first; the others hold Windows and are only read.
+        label = "Disk" if index == 0 else "Windows disk (kept, not written)"
         lines.append(
-            f"Disk: {_shown(disk['path'])}  size={_shown(str(disk['size_bytes']))} bytes  "
+            f"{label}: {_shown(disk['path'])}  size={_shown(str(disk['size_bytes']))} bytes  "
             f"model={_shown(disk['model'] or 'unknown')}  "
             f"serial={_shown(disk['serial'] or 'none')}  wwn={_shown(disk['wwn'] or 'none')}"
         )
@@ -137,9 +157,12 @@ def approval_path(plan_id: str) -> Path:
     return paths.approval_dir() / f"{plan_id}.json"
 
 
-def record_approval(plan: dict, channel: str, *, at: dt.datetime | None = None) -> dict:
+def record_approval(plan: dict, channel: str, *, at: dt.datetime | None = None, erase_confirmed: bool = False) -> dict:
+    """erase_confirmed: the front end checked the typed ERASE WINDOWS <disk> confirmation."""
     if not isinstance(channel, str) or channel not in CHANNELS:
         raise AgentError(CONFIG_INVALID, f"Unknown approval channel: {channel!r}", {"channel": str(channel)})
+    if not isinstance(erase_confirmed, bool):
+        raise AgentError(CONFIG_INVALID, "erase_confirmed must be boolean.", {})
     if at is not None and at.tzinfo is None:
         raise AgentError(CONFIG_INVALID, "Approval time must be timezone-aware.", {})
     stored = _stored_plan(plan)
@@ -150,6 +173,7 @@ def record_approval(plan: dict, channel: str, *, at: dt.datetime | None = None) 
         "channel": channel,
         "approved_at": approved_at.isoformat(),
         "expires_at": (approved_at + dt.timedelta(minutes=APPROVAL_TTL_MINUTES)).isoformat(),
+        "erase_confirmed": erase_confirmed,
     }
     record["signature"] = sign(record, load_or_create_key())
     save_json(approval_path(stored["plan_id"]), record)
@@ -177,6 +201,8 @@ def _validated_record(plan: dict, at: dt.datetime) -> dict:
     if key is None or not verify(unsigned, record["signature"], key):
         raise invalid()
     if record["plan_id"] != plan_id or not isinstance(record["channel"], str) or record["channel"] not in CHANNELS:
+        raise invalid()
+    if not isinstance(record["erase_confirmed"], bool):
         raise invalid()
     moments = []
     for key in ("approved_at", "expires_at"):
@@ -214,7 +240,15 @@ def _check(plan_id: str, at: dt.datetime | None) -> tuple[dict, dict]:
             f"Plan {plan_id} is not approved. A human must run: gentoo-agent approve {plan_id}",
             {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
         )
-    return plan, _validated_record(plan, at or _utcnow())
+    record = _validated_record(plan, at or _utcnow())
+    if plan.get("erases_existing_os") and record["erase_confirmed"] is not True:
+        raise AgentError(
+            APPROVAL_REQUIRED,
+            f"Plan {plan_id} erases a disk that holds Windows; the approval must include the typed confirmation "
+            f"{erase_phrase(plan)}. A human must run: gentoo-agent approve {plan_id}",
+            {"plan_id": plan_id, "command": f"gentoo-agent approve {plan_id}"},
+        )
+    return plan, record
 
 
 def require_approved_plan(plan_id: str, *, at: dt.datetime | None = None) -> dict:

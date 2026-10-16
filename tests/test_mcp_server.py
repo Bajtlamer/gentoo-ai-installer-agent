@@ -302,6 +302,54 @@ class ApprovalTests(unittest.TestCase):
             self.assertTrue(result.is_error)
             self.assertFalse(status["approved"])
 
+    def make_erase_windows_plan(self, home):
+        from tests.helpers import partitions_result, windows_disk
+
+        with patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home, partitions=partitions_result(windows_disk("/dev/nvme0n1")))
+            created = call("create_plan", {"overrides": {"disk": "/dev/nvme0n1"}})
+        self.assertFalse(created.is_error, created.content[0].text)
+        return created.structured_content["plan_id"]
+
+    def test_erasing_windows_needs_the_typed_confirmation(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        seen = []
+
+        async def accept(context, params):
+            seen.append(params)
+            return ElicitResult(action="accept", content={"approve": True, "confirm": "ERASE WINDOWS /dev/nvme0n1"})
+
+        with temp_home() as home:
+            plan_id = self.make_erase_windows_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=accept)
+            status = approval_status(plan_id)
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertTrue(status["approved"])
+        self.assertTrue(seen[0].message.startswith("WARNING: /dev/nvme0n1 contains Windows"))
+        self.assertIn("type exactly ERASE WINDOWS /dev/nvme0n1 in 'confirm'", seen[0].message)
+        self.assertIn("confirm", seen[0].requested_schema["required"])
+
+    def test_missing_or_wrong_confirmation_records_nothing(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        for content in ({"approve": True}, {"approve": True, "confirm": "ERASE WINDOWS /dev/sda"},
+                        {"approve": True, "confirm": "erase windows /dev/nvme0n1"},
+                        {"approve": True, "confirm": " ERASE WINDOWS /dev/nvme0n1"},
+                        {"approve": False, "confirm": "ERASE WINDOWS /dev/nvme0n1"}):
+            async def reply(context, params, content=content):
+                return ElicitResult(action="accept", content=content)
+            with self.subTest(content=content), temp_home() as home:
+                plan_id = self.make_erase_windows_plan(home)
+                result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=reply)
+                status = approval_status(plan_id)
+            self.assertEqual(result.structured_content["code"], "APPROVAL_DECLINED")
+            self.assertFalse(status["approved"])
+
     def test_client_without_elicitation_gets_the_cli_command(self):
         from gentoo_agent.core.approval import approval_status
         from tests.helpers import temp_home
