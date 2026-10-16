@@ -8,12 +8,13 @@ import subprocess
 from gentoo_agent.core.errors import (
     CONFIG_INVALID,
     DISK_AMBIGUOUS,
+    HOST_KEY_UNKNOWN,
     INVENTORY_MISSING,
     SSH_UNREACHABLE,
     TARGET_DRIFT,
     AgentError,
 )
-from gentoo_agent.core.ssh import READ_ONLY_COMMANDS, run_ssh_readonly
+from gentoo_agent.core.ssh import HOST_KEY_MESSAGE, READ_ONLY_COMMANDS, host_key_failed, run_ssh_readonly
 
 
 IDENTITY_LABEL = "disk_identity"
@@ -178,6 +179,8 @@ def read_live_identity(target: dict, path: str) -> dict:
         raise AgentError(SSH_UNREACHABLE, f"Timed out reading disk identity from {target['host']}", {"host": target["host"]}) from exc
     except OSError as exc:
         raise AgentError(SSH_UNREACHABLE, f"Could not run ssh to read disk identity from {target['host']}: {exc}", {"host": target["host"]}) from exc
+    if host_key_failed(result):
+        raise AgentError(HOST_KEY_UNKNOWN, HOST_KEY_MESSAGE, {"host": target["host"]})
     if result["returncode"] != 0:
         raise AgentError(
             SSH_UNREACHABLE,

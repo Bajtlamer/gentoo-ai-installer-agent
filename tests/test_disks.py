@@ -121,6 +121,14 @@ class DiskIdentityTests(unittest.TestCase):
                 disks.read_live_identity(TARGET, "/dev/sda")
         self.assertEqual(caught.exception.code, SSH_UNREACHABLE)
 
+    def test_host_key_failure_during_drift_check(self):
+        refused = {"label": "disk_identity", "command": "", "returncode": 255, "stdout": "",
+                   "stderr": "Host key verification failed.\n"}
+        with patch.object(disks, "run_ssh_readonly", return_value=refused):
+            with self.assertRaises(AgentError) as caught:
+                disks.read_live_identity(TARGET, "/dev/sda")
+        self.assertEqual(caught.exception.code, "HOST_KEY_UNKNOWN")
+
     def test_ssh_launch_failure_is_reported_as_unreachable(self):
         with patch.object(disks, "run_ssh_readonly", side_effect=FileNotFoundError("ssh")):
             with self.assertRaises(AgentError) as caught:

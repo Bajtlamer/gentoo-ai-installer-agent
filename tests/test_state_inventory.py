@@ -67,6 +67,19 @@ class InventoryTests(unittest.TestCase):
                              "Could not reach the target over SSH; check the address, key, and host key.")
             self.assertEqual(saved, [])
 
+    def test_host_key_failure_is_reported_as_host_key_unknown(self):
+        def refused(target, label, command):
+            return {"label": label, "command": command, "returncode": 255, "stdout": "",
+                    "stderr": "No ED25519 host key is known for 192.0.2.10 and you have requested strict checking.\r\n"
+                              "Host key verification failed.\r\n"}
+
+        with temp_home(), patch.object(inventory, "run_ssh_readonly", refused):
+            with self.assertRaises(AgentError) as caught:
+                inventory.collect_inventory(TARGET)
+            self.assertEqual(list(paths.inventory_dir().glob("*.json")), [])
+        self.assertEqual(caught.exception.code, "HOST_KEY_UNKNOWN")
+        self.assertEqual(caught.exception.details["host"], TARGET["host"])
+
     def test_one_reachable_command_still_saves(self):
         def partly(target, label, command):
             code = 0 if label == "boot_mode" else 255
