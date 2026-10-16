@@ -39,7 +39,7 @@ def render(install: dict) -> str:
 class GoldenCommandTests(unittest.TestCase):
     def test_generated_commands_match_golden_files(self):
         configs = sorted((GOLDEN / "configs").glob("*.json"))
-        self.assertEqual(len(configs), 5)
+        self.assertEqual(len(configs), 6)
         for config_path in configs:
             with self.subTest(config=config_path.stem):
                 install = json.loads(config_path.read_text(encoding="utf-8"))

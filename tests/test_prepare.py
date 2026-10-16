@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from gentoo_agent import prepare
 from gentoo_agent.core.config import load_json, save_json
-from tests.helpers import temp_home
+from tests.helpers import identity_result, temp_home
 
 
 class PrepareInventoryTests(unittest.TestCase):
@@ -57,7 +57,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class EraseAuthorizationTests(unittest.TestCase):
-    def build(self, erase_answer: str) -> tuple[dict, dict]:
+    def build(self, erase_answer: str, machine: str = "x86_64") -> tuple[dict, dict]:
         target = {"name": "gentoo", "host": "192.0.2.10", "user": "root", "identity_file": "~/.ssh/id_test"}
 
         def fake_ask(prompt, default=None):
@@ -65,14 +65,20 @@ class EraseAuthorizationTests(unittest.TestCase):
                 return erase_answer
             return default if default is not None else ""
 
+        self.choices = []
+
+        def fake_choice(prompt, choices, default):
+            self.choices.append(prompt)
+            return default
+
         with temp_home() as home:
             save_json(home / "config" / "install.default.json", load_json(REPO / "config" / "install.default.json"))
             with patch.object(prepare, "choose_disk", return_value={"path": "/dev/sda", "model": "QEMU HARDDISK", "size": None}), \
                     patch.object(prepare, "ask", fake_ask), \
-                    patch.object(prepare, "ask_choice", lambda prompt, choices, default: default), \
+                    patch.object(prepare, "ask_choice", fake_choice), \
                     patch.object(prepare, "ask_int", lambda prompt, default: default), \
                     redirect_stdout(io.StringIO()):
-                install = prepare.build_install_config(target, {"results": []})
+                install = prepare.build_install_config(target, {"results": [identity_result(machine)]})
         return target, install
 
     def test_typed_erase_confirmation_authorizes_both_files(self):
@@ -87,6 +93,25 @@ class EraseAuthorizationTests(unittest.TestCase):
         self.assertNotIn("target_is_disposable", target)
         self.assertIs(install["disk_must_be_erased"], False)
         self.assertIs(install["disk_erase_authorized"], False)
+
+
+    def test_architecture_comes_from_the_live_system(self):
+        target, install = self.build("CANCEL")
+        self.assertEqual(install["architecture"], "amd64")
+        self.assertEqual(install["profile"], "gentoo-amd64-openrc")
+        self.assertIn("Boot mode", self.choices)
+        target, install = self.build("CANCEL", machine="aarch64")
+        self.assertEqual(install["architecture"], "arm64")
+        self.assertEqual(install["boot_mode"], "uefi")
+        self.assertEqual(install["profile"], "gentoo-arm64-openrc")
+        self.assertEqual(target["architecture"], "arm64")
+        self.assertEqual(target["handbook_url"], "https://wiki.gentoo.org/wiki/Handbook:ARM64")
+        self.assertNotIn("Boot mode", self.choices)
+
+    def test_unknown_architecture_stops_preparation(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.build("CANCEL", machine="riscv64")
+        self.assertIn("CONFIG_INVALID", str(caught.exception))
 
 
 if __name__ == "__main__":

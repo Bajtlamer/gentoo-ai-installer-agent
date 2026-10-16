@@ -157,6 +157,29 @@ class ApplyProgramStrictnessTests(unittest.TestCase):
             self.assertFalse(touched.exists())
 
 
+class ArchitectureProgramTests(unittest.TestCase):
+    def render(self, name: str, phase: str, check: bool = False) -> str:
+        install = fixture(name)
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            generate = phases.check_command_for if check else phases.command_for
+            return generate(phase, TARGET, install)
+
+    def test_preflight_checks_the_live_machine(self):
+        self.assertIn('test "$(uname -m)" = x86_64', self.render("uefi_gpt_user_sudo", "preflight"))
+        self.assertIn('test "$(uname -m)" = aarch64', self.render("uefi_gpt_arm64_user_sudo", "preflight"))
+
+    def test_arm64_stage_and_bootloader(self):
+        stage = self.render("uefi_gpt_arm64_user_sudo", "base-system")
+        self.assertIn("https://distfiles.gentoo.org/releases/arm64/autobuilds/latest-stage3-arm64-openrc.txt", stage)
+        self.assertNotIn("amd64", stage)
+        self.assertIn("--target=arm64-efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader"))
+        self.assertIn("/mnt/gentoo/boot/EFI/Gentoo/grubaa64.efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader", check=True))
+
+    def test_amd64_programs_are_unchanged_apart_from_the_machine_check(self):
+        self.assertIn("--target=x86_64-efi", self.render("uefi_gpt_user_sudo", "bootloader"))
+        self.assertIn("grubx64.efi", self.render("uefi_gpt_user_sudo", "bootloader", check=True))
+
+
 if __name__ == "__main__":
     unittest.main()
 

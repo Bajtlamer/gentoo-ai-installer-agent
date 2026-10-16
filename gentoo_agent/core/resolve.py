@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 
+from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.disks import disk_candidates, inventory_results
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
@@ -28,11 +29,11 @@ from gentoo_agent.core.validate import ENV_NAME_MESSAGE, password_env_name_ok, v
 SETTABLE = {
     "username", "hostname", "timezone", "boot_mode", "init_system", "swap_mb", "disk",
     "network_method", "network_static", "create_user", "configure_sudo", "set_root_password",
-    "allow_root_password_ssh", "install_user_ssh_key", "bootloader", "user_groups",
+    "allow_root_password_ssh", "install_user_ssh_key", "bootloader", "user_groups", "architecture",
 }
 TYPES = {
     "username": str, "hostname": str, "timezone": str, "boot_mode": str, "init_system": str,
-    "network_method": str, "disk": str, "bootloader": str,
+    "network_method": str, "disk": str, "bootloader": str, "architecture": str,
     "swap_mb": int,
     "create_user": bool, "configure_sudo": bool, "set_root_password": bool,
     "allow_root_password_ssh": bool, "install_user_ssh_key": bool,
@@ -44,9 +45,9 @@ DERIVED = {
     "disk", "partition_layout", "partition_table", "disk_must_be_erased", "target_is_disposable",
     "disk_erase_authorized", "expected_disk_model", "expected_disk_size_gib",
 }
-# Fallbacks fill gaps the user left open; the disk to erase and the boot
-# mode must come from the user, the profile, or the hardware.
-NOT_FALLBACK = ("boot_mode", "disk")
+# Fallbacks fill gaps the user left open; the disk to erase, the boot mode,
+# and the architecture must come from the user, the profile, or the hardware.
+NOT_FALLBACK = ("boot_mode", "disk", "architecture")
 SUPPORTED_BOOTLOADERS = {"grub"}
 # Version 1 generates OpenRC programs only; validated_settings() refuses
 # systemd as well. Checking here gives the model a clearer early error.
@@ -123,8 +124,9 @@ def resolve_config(
     results = inventory_results(inventory)
     eligible, excluded = disk_candidates(inventory)
     live_boot = _live_boot_mode(results)
+    live_arch = live_architecture(inventory)
 
-    inferred: dict = {"boot_mode": live_boot}
+    inferred: dict = {"boot_mode": live_boot, "architecture": live_arch}
     if len(eligible) == 1:
         inferred["disk"] = eligible[0]["path"]
 
@@ -150,6 +152,14 @@ def resolve_config(
             f"boot_mode {install['boot_mode']} was requested but the live system booted in {live_boot} mode.",
             {"requested": install["boot_mode"], "live": live_boot},
         )
+    if install["architecture"] != live_arch:
+        raise AgentError(
+            CONFIG_CONFLICT,
+            f"architecture {install['architecture']} was requested but the live system is {live_arch}.",
+            {"requested": install["architecture"], "live": live_arch},
+        )
+    install["profile"] = f"gentoo-{install['architecture']}-{install.get('init_system', SUPPORTED_INIT_SYSTEM)}"
+    sources["profile"] = "derived"
 
     excluded_details = [{"path": item["path"], "reason": item["reason"]} for item in excluded]
     if "disk" not in install:

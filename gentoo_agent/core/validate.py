@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 
+from gentoo_agent.core.arch import architecture_spec, live_architecture
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
 
 
@@ -113,6 +114,10 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         device = item.get("device", "")
         if not re.fullmatch(r"/dev/[A-Za-z0-9._+/-]+", device):
             raise AgentError(CONFIG_INVALID, f"Unsafe partition path in configuration: {device!r}", {"field": "partition_layout"})
+    spec = architecture_spec(install.get("architecture"))
+    if install.get("boot_mode") == "bios" and not spec["bios"]:
+        raise AgentError(CONFIG_CONFLICT, f"{install['architecture']} supports UEFI boot only.",
+                         {"fields": ["architecture", "boot_mode"]})
     if target.get("user") != "root":
         raise AgentError(CONFIG_INVALID, "The installation executor currently requires SSH user root.", {"field": "user"})
     if install.get("boot_mode") == "uefi" and install.get("partition_table") != "gpt":
@@ -192,7 +197,7 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
     warnings: list[str] = []
 
     required = [
-        "profile", "boot_mode", "partition_table", "disk", "partition_layout",
+        "architecture", "profile", "boot_mode", "partition_table", "disk", "partition_layout",
         "root_filesystem", "swap_mb", "bootloader", "init_system", "hostname",
         "timezone", "network_method",
     ]
@@ -258,6 +263,13 @@ def validate_installation(target: dict, install: dict, plan: dict, inventory: di
         results = {item.get("label"): item for item in inventory.get("results", [])}
         storage = results.get("storage", {}).get("stdout", "")
         boot_mode = results.get("boot_mode", {}).get("stdout", "").strip()
+        try:
+            live = live_architecture(inventory)
+        except AgentError as error:
+            errors.append(error.message)
+        else:
+            if install.get("architecture") != live:
+                errors.append(f"architecture {install.get('architecture')} does not match the live system ({live})")
         disk = install.get("disk", "")
         if disk and disk not in storage:
             errors.append(f"configured disk {disk} was not found in the latest inventory")

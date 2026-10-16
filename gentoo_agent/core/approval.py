@@ -88,6 +88,7 @@ def approval_summary(plan: dict) -> str:
             f"({_shown(target['name'])})"
         ),
         f"Created: {_shown(plan['created_at'])}",
+        f"Architecture: {_shown(install.get('architecture'))}",
         (
             f"Install: boot={_shown(install.get('boot_mode'))} table={_shown(install.get('partition_table'))} "
             f"hostname={_shown(install.get('hostname'))} user={_shown(user)} init={_shown(install.get('init_system'))}"

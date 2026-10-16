@@ -10,6 +10,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.resolve import SETTABLE, resolve_config
+from tests.helpers import identity_result
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -19,7 +20,7 @@ DEFAULTS = json.loads((REPO / "config" / "install.default.json").read_text(encod
 
 
 def inventory(boot: str = "uefi", disks: tuple[str, ...] = ("/dev/nvme0n1",), extra: dict | None = None,
-              storage: dict | None = None) -> dict:
+              storage: dict | None = None, machine: str = "x86_64") -> dict:
     """extra maps a disk path to additional lsblk fields (rm, tran, ro, size)."""
     devices = [{"path": path, "type": "disk", "size": 512110190592, "model": "NVMe", "serial": f"S{index}", "wwn": None,
                 **(extra or {}).get(path, {})}
@@ -27,6 +28,7 @@ def inventory(boot: str = "uefi", disks: tuple[str, ...] = ("/dev/nvme0n1",), ex
     results = [
         {"label": "boot_mode", "returncode": 0, "stdout": boot if boot == "uefi" else "bios-or-unknown"},
         {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})},
+        identity_result(machine),
     ]
     if storage is not None:
         results.append({"label": "storage_json", "returncode": 0, "stdout": json.dumps(storage)})
@@ -148,7 +150,7 @@ class ResolveTests(unittest.TestCase):
             "network_method": None, "disk": ["/dev/sda"], "bootloader": {}, "swap_mb": "2048",
             "create_user": "yes", "configure_sudo": 1, "set_root_password": None,
             "allow_root_password_ssh": "false", "install_user_ssh_key": [], "user_groups": "wheel",
-            "network_static": "10.0.0.2/24",
+            "network_static": "10.0.0.2/24", "architecture": 64,
         }
         for key, value in cases.items():
             for layer in ("overrides", "profile"):
@@ -205,6 +207,22 @@ class ResolveTests(unittest.TestCase):
                     resolve_config(TARGET, layer_value, layer_value, DEFAULTS, inventory(), profile=layer_value)
                 except AgentError:
                     pass
+
+    def test_architecture_is_inferred_from_the_live_system(self):
+        result = resolve_config(TARGET, {}, {}, DEFAULTS, inventory(machine="aarch64"))
+        self.assertEqual(result["install"]["architecture"], "arm64")
+        self.assertEqual(result["sources"]["architecture"], "inferred")
+        self.assertEqual(result["install"]["profile"], "gentoo-arm64-openrc")
+
+    def test_architecture_override_must_match_the_live_system(self):
+        with self.assertRaises(AgentError) as caught:
+            resolve_config(TARGET, {"architecture": "arm64"}, {}, DEFAULTS, inventory(machine="x86_64"))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+
+    def test_architecture_cannot_be_a_fallback(self):
+        with self.assertRaises(AgentError) as caught:
+            resolve_config(TARGET, {}, {"architecture": "amd64"}, DEFAULTS, inventory())
+        self.assertEqual(caught.exception.details, {"layer": "fallbacks", "field": "architecture"})
 
     def test_fallbacks_cannot_choose_disk_or_boot_mode(self):
         for key, value in (("disk", "/dev/nvme0n1"), ("boot_mode", "uefi")):

@@ -1,4 +1,5 @@
 {
+  "architecture": "amd64",
   "profile": "gentoo-amd64-openrc",
   "bootloader": "grub",
   "swap_mb": 0,

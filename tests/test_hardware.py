@@ -2,6 +2,7 @@ import json
 import unittest
 
 from gentoo_agent.core.hardware import summarize_inventory
+from tests.helpers import identity_result
 
 
 class HardwareSummaryTests(unittest.TestCase):
@@ -32,6 +33,19 @@ class HardwareSummaryTests(unittest.TestCase):
         for results, expected in cases:
             with self.subTest(results=results):
                 self.assertEqual(summarize_inventory({"results": results})["boot_mode"], expected)
+
+
+    def test_architecture_comes_from_a_supported_machine_only(self):
+        cases = [
+            ([identity_result("aarch64")], "arm64"),
+            ([identity_result("x86_64")], "amd64"),
+            ([], "unknown"),
+            ([identity_result("riscv64")], "unknown"),
+            ([{**identity_result("aarch64"), "returncode": 255}], "unknown"),
+        ]
+        for results, expected in cases:
+            with self.subTest(results=results):
+                self.assertEqual(summarize_inventory({"results": results})["architecture"], expected)
 
 
 if __name__ == "__main__":

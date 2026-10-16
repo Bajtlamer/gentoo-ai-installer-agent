@@ -9,6 +9,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+from gentoo_agent.core.arch import STAGE_BASE, STAGE_LIST, architecture_spec
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.validate import validated_settings
 
@@ -83,6 +84,7 @@ def preflight_commands(target: dict, install: dict) -> list[str]:
         "set -eu",
         f"disk={q(disk)}",
         "test \"$(id -u)\" -eq 0",
+        f"test \"$(uname -m)\" = {q(architecture_spec(install.get('architecture'))['machine'])}",
         "test -b \"$disk\"",
         "test \"$(lsblk -dn -o TYPE \"$disk\")\" = disk",
         f"test \"$(if [ -d /sys/firmware/efi ]; then printf uefi; else printf bios; fi)\" = {q(expected_boot)}",
@@ -175,8 +177,10 @@ def chroot(command: str) -> str:
 
 
 def base_system_command(install: dict) -> str:
-    stage_list = "https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt"
-    stage_base = "https://distfiles.gentoo.org/releases/amd64/autobuilds/"
+    architecture = install.get("architecture")
+    architecture_spec(architecture)
+    stage_list = STAGE_LIST.format(arch=architecture)
+    stage_base = STAGE_BASE.format(arch=architecture)
     inside = "\n".join([
         "mkdir -p /var/db/repos/gentoo",
         "emerge-webrsync",
@@ -377,9 +381,10 @@ def bootloader_command(target: dict, install: dict) -> str:
             "grub-mkconfig -o /boot/grub/grub.cfg",
         ])
     else:
+        spec = architecture_spec(install.get("architecture"))
         inside = "\n".join([
             "emerge --noreplace --verbose sys-boot/grub",
-            "grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo",
+            f"grub-install --target={q(spec['grub_efi_target'])} --efi-directory=/boot --bootloader-id=Gentoo",
             "grub-mkconfig -o /boot/grub/grub.cfg",
         ])
     return "\n".join(["set -eu", chroot(inside)])
@@ -496,7 +501,8 @@ def bootloader_check_command(install: dict) -> str:
     if install["boot_mode"] == "bios":
         lines.append(f"test -e {q(MOUNT_ROOT + '/boot/grub/i386-pc/core.img')}")
     else:
-        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/grubx64.efi')}")
+        binary = architecture_spec(install.get("architecture"))["grub_efi_binary"]
+        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/' + binary)}")
     lines.append("printf 'bootloader-ok\\n'")
     return "\n".join(lines)
 

@@ -6,13 +6,14 @@ from unittest.mock import patch
 from gentoo_agent.core import install_plan, paths, phases
 from gentoo_agent.core.config import load_json, save_json
 from gentoo_agent.core.errors import (
+    CONFIG_CONFLICT,
     CONFIG_INVALID,
     INVENTORY_MISSING,
     PLAN_HASH_MISMATCH,
     PLAN_NOT_FOUND,
     AgentError,
 )
-from tests.helpers import fresh_inventory, storage_result, temp_home
+from tests.helpers import fresh_inventory, identity_result, storage_result, temp_home
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def project_plan() -> dict:
     return json.loads((REPO / "config" / "plan.json").read_text(encoding="utf-8"))
 
 
-def inventory(serial: str = "QM00001", collected_at: str | None = None) -> dict:
+def inventory(serial: str = "QM00001", collected_at: str | None = None, machine: str = "x86_64") -> dict:
     stdout = json.dumps({"blockdevices": [
         {"path": "/dev/sda", "type": "disk", "size": 42949672960, "model": "QEMU HARDDISK", "serial": serial, "wwn": None},
     ]})
@@ -41,6 +42,7 @@ def inventory(serial: str = "QM00001", collected_at: str | None = None) -> dict:
         {"label": "boot_mode", "returncode": 0, "stdout": "bios-or-unknown"},
         storage_result("/dev/sda"),
         {"label": "disk_identity", "returncode": 0, "stdout": stdout},
+        identity_result(machine),
     )
     if collected_at is not None:
         data["collected_at"] = collected_at
@@ -58,6 +60,11 @@ class CreatePlanTests(unittest.TestCase):
     def create(self, **changes):
         install = {**install_fixture(), **changes.pop("install", {})}
         return install_plan.create_install_plan(TARGET, install, project_plan(), changes.pop("inventory", inventory()))
+
+    def test_architecture_must_match_the_inventory(self):
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=inventory(machine="aarch64"))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
 
     def test_review_errors_block_the_plan(self):
         # validated_settings() does not check the boot_mode value for BIOS tables; the review does.

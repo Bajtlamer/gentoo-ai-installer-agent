@@ -37,7 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--name", default="gentoo")
     parser.add_argument("--user", default="root")
     parser.add_argument("--port", type=int, default=22)
-    parser.add_argument("--architecture", default="amd64")
+    parser.add_argument("--architecture", choices=("amd64", "arm64"), default="amd64",
+                        help="Gentoo architecture of the target (uname -m x86_64 is amd64, aarch64 is arm64)")
     parser.add_argument("--boot-mode", choices=("uefi", "bios"), default="uefi")
     parser.add_argument("--root-filesystem", choices=("ext4",), default="ext4")
     parser.add_argument("--swap-mb", type=int, default=2048)
@@ -69,6 +70,9 @@ def main() -> int:
             "after confirming the exact target disk."
         )
 
+    if args.architecture == "arm64" and args.boot_mode != "uefi":
+        raise SystemExit("arm64 supports UEFI boot only; use --boot-mode uefi")
+
     partition_table, layout = build_layout(args.disk, args.boot_mode, args.swap_mb, args.root_filesystem)
 
     target = load_json(paths.config_dir() / "target.default.json")
@@ -86,6 +90,7 @@ def main() -> int:
     })
     install = load_json(paths.config_dir() / "install.default.json")
     install.update({
+        "architecture": args.architecture,
         "profile": f"gentoo-{args.architecture}-{args.init_system}",
         "boot_mode": args.boot_mode,
         "partition_table": partition_table,

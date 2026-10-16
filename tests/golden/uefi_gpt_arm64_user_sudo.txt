@@ -1,0 +1,259 @@
+===== preflight apply =====
+set -eu
+disk=/dev/nvme0n1
+test "$(id -u)" -eq 0
+test "$(uname -m)" = aarch64
+test -b "$disk"
+test "$(lsblk -dn -o TYPE "$disk")" = disk
+test "$(if [ -d /sys/firmware/efi ]; then printf uefi; else printf bios; fi)" = uefi
+command -v lsblk >/dev/null
+command -v fdisk >/dev/null
+command -v sfdisk >/dev/null
+command -v wipefs >/dev/null
+command -v mkfs.ext4 >/dev/null
+command -v mkswap >/dev/null
+command -v mount >/dev/null
+command -v tar >/dev/null
+command -v wget >/dev/null
+command -v sha256sum >/dev/null
+command -v chroot >/dev/null
+ip route | grep -q default
+printf 'preflight-ok boot=uefi disk=/dev/nvme0n1\n'
+===== preflight check =====
+set -eu
+disk=/dev/nvme0n1
+test "$(id -u)" -eq 0
+test "$(uname -m)" = aarch64
+test -b "$disk"
+test "$(lsblk -dn -o TYPE "$disk")" = disk
+test "$(if [ -d /sys/firmware/efi ]; then printf uefi; else printf bios; fi)" = uefi
+command -v lsblk >/dev/null
+command -v fdisk >/dev/null
+command -v sfdisk >/dev/null
+command -v wipefs >/dev/null
+command -v mkfs.ext4 >/dev/null
+command -v mkswap >/dev/null
+command -v mount >/dev/null
+command -v tar >/dev/null
+command -v wget >/dev/null
+command -v sha256sum >/dev/null
+command -v chroot >/dev/null
+ip route | grep -q default
+printf 'preflight-ok boot=uefi disk=/dev/nvme0n1\n'
+===== storage apply =====
+set -eu
+disk=/dev/nvme0n1
+test -b "$disk"
+if lsblk -nr -o MOUNTPOINTS "$disk" | grep -q '[^[:space:]]' || swapon --show=NAME --noheadings | awk -v disk="$disk" '$1 != disk && index($1, disk) == 1 && substr($1, length(disk) + 1) ~ /^p?[0-9]+$/ {found=1} END {exit found ? 0 : 1}'; then
+  test "$(findmnt -rn -o SOURCE -T /mnt/gentoo)" = /dev/nvme0n1p3
+swapon --show=NAME --noheadings | awk -v expected=/dev/nvme0n1p2 '$1 == expected {found=1} END {exit found ? 0 : 1}'
+  printf %s 'label: gpt
+unit: sectors
+/dev/nvme0n1p1 : size=512M, type=U
+/dev/nvme0n1p2 : size=2048M, type=S
+/dev/nvme0n1p3 : type=L
+' | sfdisk --no-reread --force "$disk"
+else
+  wipefs -a -f "$disk"
+  printf %s 'label: gpt
+unit: sectors
+/dev/nvme0n1p1 : size=512M, type=U
+/dev/nvme0n1p2 : size=2048M, type=S
+/dev/nvme0n1p3 : type=L
+' | sfdisk --wipe always "$disk"
+fi
+partprobe "$disk" || true
+udevadm settle || true
+lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINTS "$disk"
+===== storage check =====
+set -eu
+disk=/dev/nvme0n1
+test -b "$disk"
+test "$(lsblk -dn -o TYPE "$disk")" = disk
+fdisk -l "$disk" | grep -Eq 'Disklabel type: gpt$'
+lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p1 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
+lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p2 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
+lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p3 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
+printf 'storage-ok\n'
+===== filesystems apply =====
+set -eu
+root_device=/dev/nvme0n1p3
+mount_root=/mnt/gentoo
+mkdir -p "$mount_root"
+if ! blkid -o value -s TYPE "$root_device" 2>/dev/null | grep -qx ext4; then mkfs.ext4 -F "$root_device"; fi
+if ! findmnt -rn -S "$root_device" >/dev/null; then mount "$root_device" "$mount_root"; fi
+swap_device=/dev/nvme0n1p2
+if ! blkid -o value -s TYPE "$swap_device" 2>/dev/null | grep -qx swap; then mkswap -f "$swap_device"; fi
+swapon "$swap_device" || true
+efi_device=/dev/nvme0n1p1
+mkdir -p "$mount_root/boot"
+if ! blkid -o value -s TYPE "$efi_device" 2>/dev/null | grep -Eq 'vfat|fat32'; then mkfs.vfat -F 32 "$efi_device"; fi
+if ! findmnt -rn -T "$mount_root/boot" >/dev/null; then mount "$efi_device" "$mount_root/boot"; fi
+findmnt -D "$mount_root"
+blkid
+===== filesystems check =====
+set -eu
+test "$(blkid -o value -s TYPE /dev/nvme0n1p3)" = ext4
+test "$(findmnt -rn -o SOURCE -T /mnt/gentoo)" = /dev/nvme0n1p3
+test "$(blkid -o value -s TYPE /dev/nvme0n1p2)" = swap
+test "$(blkid -o value -s TYPE /dev/nvme0n1p1)" = vfat
+test "$(findmnt -rn -o SOURCE -T /mnt/gentoo/boot)" = /dev/nvme0n1p1
+printf 'filesystems-ok\n'
+===== base-system apply =====
+set -eu
+mkdir -p /mnt/gentoo/dev /mnt/gentoo/proc /mnt/gentoo/sys /mnt/gentoo/run
+stage_list=https://distfiles.gentoo.org/releases/arm64/autobuilds/latest-stage3-arm64-openrc.txt
+stage_base=https://distfiles.gentoo.org/releases/arm64/autobuilds/
+if [ ! -e /mnt/gentoo/etc/gentoo-release ]; then
+  stage_path=$(wget -qO- "$stage_list" | awk '$1 ~ /\.tar\.xz$/ {print $1; exit}')
+  test -n "$stage_path"
+  stage_name=${stage_path##*/}
+  stage_file=/mnt/gentoo/$stage_name
+  wget -O "$stage_file" "${stage_base}${stage_path}"
+  wget -O "${stage_file}.sha256" "${stage_base}${stage_path}.sha256"
+  (cd /mnt/gentoo && sha256sum -c "${stage_name}.sha256")
+  tar -xpf "$stage_file" -C /mnt/gentoo --xattrs-include='*.*' --numeric-owner
+  rm -f "$stage_file" "${stage_file}.sha256"
+fi
+rm -f /mnt/gentoo/etc/resolv.conf
+cp -L /etc/resolv.conf /mnt/gentoo/etc/resolv.conf
+mount --rbind /dev /mnt/gentoo/dev
+mount --make-rslave /mnt/gentoo/dev
+mount -t proc /proc /mnt/gentoo/proc || true
+mount --rbind /sys /mnt/gentoo/sys
+mount --make-rslave /mnt/gentoo/sys
+mount --rbind /run /mnt/gentoo/run || true
+mount --make-rslave /mnt/gentoo/run || true
+chroot /mnt/gentoo /bin/bash -c 'set -e
+mkdir -p /var/db/repos/gentoo
+emerge-webrsync'
+touch /mnt/gentoo/.gentoo-agent-base-complete
+===== base-system check =====
+set -eu
+test -x /mnt/gentoo/bin/bash
+test -e /mnt/gentoo/etc/gentoo-release
+test -e /mnt/gentoo/.gentoo-agent-base-complete
+printf 'base-system-ok\n'
+===== configuration apply =====
+set -eu
+chroot /mnt/gentoo /bin/bash -c 'set -e
+printf '"'"'%s\n'"'"' gentoo-arm > /etc/hostname
+ln -snf /usr/share/zoneinfo/Europe/Prague /etc/localtime
+printf '"'"'%s\n'"'"' '"'"'en_US.UTF-8 UTF-8'"'"' > /etc/locale.gen
+locale-gen
+eselect locale set en_US.utf8 || true
+root_uuid=$(blkid -s UUID -o value /dev/nvme0n1p3)
+swap_uuid=$(blkid -s UUID -o value /dev/nvme0n1p2 2>/dev/null || true)
+printf '"'"'%s\n'"'"' "UUID=$root_uuid / ext4 noatime 0 1" > /etc/fstab
+if [ -n "$swap_uuid" ]; then printf '"'"'%s\n'"'"' "UUID=$swap_uuid none swap sw 0 0" >> /etc/fstab; fi
+emerge --noreplace --verbose net-misc/dhcpcd
+rc-update add dhcpcd default
+emerge --noreplace --verbose net-misc/openssh
+install -d -m 700 /root/.ssh
+printf '"'"'%s\n'"'"' '"'"'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden'"'"' > /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+printf '"'"'%s\n'"'"' '"'"'PermitRootLogin prohibit-password'"'"' '"'"'PubkeyAuthentication yes'"'"' '"'"'PasswordAuthentication yes'"'"' '"'"'UsePAM yes'"'"' > /etc/ssh/sshd_config.d/gentoo-agent.conf
+rc-update add sshd default
+env-update
+source /etc/profile || true'
+touch /mnt/gentoo/.gentoo-agent-configuration-complete
+===== configuration check =====
+set -eu
+test -e /mnt/gentoo/.gentoo-agent-configuration-complete
+test -s /mnt/gentoo/etc/fstab
+test -s /mnt/gentoo/etc/hostname
+test -x /mnt/gentoo/usr/sbin/sshd
+test -s /mnt/gentoo/root/.ssh/authorized_keys
+grep -Fqx 'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden' /mnt/gentoo/root/.ssh/authorized_keys
+grep -Fqx 'PermitRootLogin prohibit-password' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
+grep -Fqx 'PasswordAuthentication yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
+grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
+test -e /mnt/gentoo/etc/runlevels/default/sshd
+test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+printf 'configuration-ok\n'
+===== authentication apply =====
+set -eu
+records=$(cat)
+exec </dev/null
+chroot /mnt/gentoo /bin/bash -c 'set -e
+set -eu
+if ! getent passwd gentoo >/dev/null; then useradd -m -s /bin/bash -G wheel gentoo; else usermod -s /bin/bash gentoo; fi
+usermod -aG wheel gentoo
+install -d -m 700 -o gentoo -g gentoo /home/gentoo/.ssh
+printf '"'"'%s\n'"'"' '"'"'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden'"'"' > /home/gentoo/.ssh/authorized_keys
+chown gentoo:gentoo /home/gentoo/.ssh/authorized_keys
+chmod 600 /home/gentoo/.ssh/authorized_keys
+emerge --noreplace --verbose app-admin/sudo
+sudo_rule='"'"'%wheel ALL=(ALL:ALL) ALL'"'"'
+if ! grep -Fqx "$sudo_rule" /etc/sudoers; then printf '"'"'%s\n'"'"' "$sudo_rule" >> /etc/sudoers; fi
+/usr/sbin/visudo -cf /etc/sudoers'
+printf '%s\n' "$records" | chroot /mnt/gentoo chpasswd
+touch /mnt/gentoo/.gentoo-agent-authentication-complete
+===== authentication check =====
+set -eu
+test -e /mnt/gentoo/.gentoo-agent-authentication-complete
+test -x /mnt/gentoo/usr/sbin/sshd
+test -s /mnt/gentoo/root/.ssh/authorized_keys
+grep -Fqx 'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden' /mnt/gentoo/root/.ssh/authorized_keys
+grep -Fqx 'PermitRootLogin prohibit-password' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
+test -e /mnt/gentoo/etc/runlevels/default/sshd
+test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+awk -F: '$1 == "root" && $2 !~ /^(!|\*|$)/ {found=1} END {exit found ? 0 : 1}' /mnt/gentoo/etc/shadow
+awk -F: -v user=gentoo '$1 == user {found=1} END {exit found ? 0 : 1}' /mnt/gentoo/etc/passwd
+test -d /mnt/gentoo/home/gentoo
+awk -F: -v user=gentoo '$1 == user && $2 !~ /^(!|\*|$)/ {found=1} END {exit found ? 0 : 1}' /mnt/gentoo/etc/shadow
+test -s /mnt/gentoo/home/gentoo/.ssh/authorized_keys
+grep -Fqx 'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden' /mnt/gentoo/home/gentoo/.ssh/authorized_keys
+test -x /mnt/gentoo/usr/bin/sudo
+grep -Fqx '%wheel ALL=(ALL:ALL) ALL' /mnt/gentoo/etc/sudoers
+printf 'authentication-ok\n'
+===== kernel apply =====
+set -eu
+chroot /mnt/gentoo /bin/bash -c 'set -e
+mkdir -p /etc/portage/package.use
+printf '"'"'%s\n'"'"' '"'"'sys-kernel/installkernel dracut'"'"' > /etc/portage/package.use/gentoo-agent-installkernel
+emerge --noreplace --verbose sys-kernel/gentoo-kernel-bin
+test -n "$(find /boot -maxdepth 1 -type f -name '"'"'vmlinuz*'"'"' -print -quit)"'
+===== kernel check =====
+set -eu
+test -n "$(find /mnt/gentoo/boot -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)"
+printf 'kernel-ok\n'
+===== bootloader apply =====
+set -eu
+chroot /mnt/gentoo /bin/bash -c 'set -e
+emerge --noreplace --verbose sys-boot/grub
+grub-install --target=arm64-efi --efi-directory=/boot --bootloader-id=Gentoo
+grub-mkconfig -o /boot/grub/grub.cfg'
+===== bootloader check =====
+set -eu
+test -s /mnt/gentoo/boot/grub/grub.cfg
+test -e /mnt/gentoo/boot/EFI/Gentoo/grubaa64.efi
+printf 'bootloader-ok\n'
+===== validation apply =====
+set -eu
+test -b /dev/nvme0n1p3
+test -f /mnt/gentoo/etc/fstab
+test -f /mnt/gentoo/etc/hostname
+test -e /mnt/gentoo/.gentoo-agent-authentication-complete
+test -x /mnt/gentoo/usr/sbin/sshd
+test -e /mnt/gentoo/etc/runlevels/default/sshd
+test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+test -s /mnt/gentoo/boot/grub/grub.cfg
+test -n "$(find /mnt/gentoo/boot -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)"
+lsblk /dev/nvme0n1
+findmnt -D /mnt/gentoo
+printf 'validation-ok\n'
+===== validation check =====
+set -eu
+test -b /dev/nvme0n1p3
+test -f /mnt/gentoo/etc/fstab
+test -f /mnt/gentoo/etc/hostname
+test -e /mnt/gentoo/.gentoo-agent-authentication-complete
+test -x /mnt/gentoo/usr/sbin/sshd
+test -e /mnt/gentoo/etc/runlevels/default/sshd
+test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+test -s /mnt/gentoo/boot/grub/grub.cfg
+test -n "$(find /mnt/gentoo/boot -maxdepth 1 -type f -name 'vmlinuz*' -print -quit)"
+lsblk /dev/nvme0n1
+findmnt -D /mnt/gentoo
+printf 'validation-ok\n'
