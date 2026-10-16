@@ -15,6 +15,7 @@ the background stores the same object in `error` (and the message in
 - [Approval expired](#approval-expired)
 - [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso)
 - [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick)
+- [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)
 - [Run stuck in starting, or interrupted](#run-stuck-in-starting-or-interrupted)
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
@@ -26,7 +27,7 @@ the background stores the same object in `error` (and the message in
 | Code | Typical causes | What to do |
 |---|---|---|
 | `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network including a missing or invalid `interface`). A missing `architecture` in an older `config/install.json`. The configuration does not pass review at `plan create` (`details.errors` lists the findings of `validate`). The disk model or size differs from `expected_disk_model` or `expected_disk_size_gib`, or one of them has the wrong type (`expected_disk_size_gib` must be a number greater than 0, `expected_disk_model` a string). A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` (in any front end or in `install.json`), or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
-| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A configured `architecture` that differs from the live system, or `arm64` with BIOS boot. A chosen disk that is excluded (removable, USB, read-only, or mounted), whether it comes from `resolve_config` or from `config/install.json` at `plan create`. | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
+| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A configured `architecture` that differs from the live system, or `arm64` with BIOS boot. A chosen disk that is excluded (removable, USB, read-only, or mounted), whether it comes from `resolve_config` or from `config/install.json` at `plan create`. After a failed run the disk is usually still mounted at `/mnt/gentoo` (see [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
 | `APPROVAL_REQUIRED` | The plan has no approval yet. The approval record is malformed, unsigned, or signed with another key. `approve` run without an interactive terminal. The signing key `secrets/approval.key` is not a private regular file you own, or is malformed. `install --execute` (replaced by plans). An MCP client without elicitation support, or a failed dialog. | Approve the plan yourself in your own terminal: `gentoo-agent approve <plan_id>`. For a bad key, remove `secrets/approval.key` and approve again (existing approvals become invalid). |
 | `APPROVAL_DECLINED` | The typed phrase was not exactly `APPROVE <plan_id>`, or the dialog was declined, cancelled, or accepted without checking `approve`. | Nothing was recorded. Approve again if you meant to. |
 | `APPROVAL_EXPIRED` | More than 60 minutes passed between the approval and `run start`, `run resume`, `start_install`, `run_phase`, or `resume_run`. | Approve the same plan again, then start or resume. See [Approval expired](#approval-expired). |
@@ -163,6 +164,26 @@ How a USB stick is treated depends on the path:
 A disk without serial or WWN that has no twin is accepted, and the plan summary
 adds: "WARNING: this disk has no serial number or WWN; drift detection relies
 on path, size, and model only."
+
+## Disk mounted after a failed run
+
+`plan create` (and `resolve_config` and `create_plan` over MCP) fails with
+`CONFIG_CONFLICT` "Disk /dev/sda cannot be installed to: mounted at
+/mnt/gentoo, ..." after a run that stopped partway. The `filesystems` phase
+mounted the new partitions under `/mnt/gentoo` and turned on swap, and they
+stay that way after a failure. A mounted disk is never offered for a new plan,
+and this rule has no exception for `/mnt/gentoo`: the tool cannot tell its own
+mounts from someone else's.
+
+Choose one:
+
+- Keep the configuration: run `gentoo-agent run resume <run_id>` (MCP:
+  `resume_run`). A resume runs the already approved plan, which needs no new
+  plan; approve it again first if the 60 minutes have passed. Completed phases
+  are checked and skipped.
+- Change the configuration first: on the live system run
+  `umount -R /mnt/gentoo` and `swapoff -a`, or reboot the live ISO (then
+  verify the new host key). Then run `inspect` again and `plan create`.
 
 ## Run stuck in starting, or interrupted
 
