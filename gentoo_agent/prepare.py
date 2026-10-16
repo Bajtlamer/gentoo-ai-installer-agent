@@ -204,21 +204,18 @@ def build_install_config(target: dict, inventory: dict) -> dict:
     partition_table, layout = build_layout(disk_path, boot_mode, swap_mb, root_filesystem)
 
     print(f"\nThe selected disk is {disk_path}. This plan will erase it during a future storage phase.")
-    preauthorized = bool(target.get("target_is_disposable") and target.get("disk_erase_authorized"))
-    if preauthorized:
-        print("Disk erasure is pre-authorized by the disposable-target configuration.")
-        disk_must_be_erased = True
-    else:
-        erase_confirmation = ask(f"Type ERASE {disk_path} to record that decision", "CANCEL")
-        disk_must_be_erased = erase_confirmation == f"ERASE {disk_path}"
-        if not disk_must_be_erased:
-            print("Disk erasure was not confirmed; execution will remain blocked.")
+    # The typed line is the decision for the disk chosen in this run. An
+    # authorization saved by an earlier run never skips it, because that run
+    # may have chosen a different disk.
+    erase_confirmation = ask(f"Type ERASE {disk_path} to record that decision", "CANCEL")
+    disk_must_be_erased = erase_confirmation == f"ERASE {disk_path}"
+    if not disk_must_be_erased:
+        print("Disk erasure was not confirmed; execution will remain blocked.")
 
-    if disk_must_be_erased:
-        # Plan creation requires the authorization in target.json as well; the
-        # typed ERASE line (or the existing pre-authorization) is that decision.
-        target["target_is_disposable"] = True
-        target["disk_erase_authorized"] = True
+    # Plan creation requires the authorization in target.json as well. A
+    # declined answer clears it so an earlier authorization does not linger.
+    target["target_is_disposable"] = disk_must_be_erased
+    target["disk_erase_authorized"] = disk_must_be_erased
 
     install = dict(defaults)
     install.update({
@@ -228,8 +225,8 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "partition_table": partition_table,
         "disk": disk_path,
         "disk_must_be_erased": disk_must_be_erased,
-        "target_is_disposable": bool(target.get("target_is_disposable")),
-        "disk_erase_authorized": bool(target.get("disk_erase_authorized")),
+        "target_is_disposable": disk_must_be_erased,
+        "disk_erase_authorized": disk_must_be_erased,
         "partition_layout": layout,
         "root_filesystem": root_filesystem,
         "swap_mb": swap_mb,
