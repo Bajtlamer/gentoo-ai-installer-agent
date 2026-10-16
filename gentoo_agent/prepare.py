@@ -150,7 +150,8 @@ def build_install_config(target: dict, inventory: dict) -> dict:
     boot_mode = ask_choice("Boot mode", ["uefi", "bios"], "uefi")
     root_filesystem = ask_choice("Root filesystem", ["ext4"], defaults["root_filesystem"])
     swap_mb = ask_int("Swap size in MiB", defaults["swap_mb"])
-    init_system = ask_choice("Init system", ["openrc", "systemd"], defaults["init_system"])
+    init_system = "openrc"
+    print("Init system: openrc (systemd is not supported in this version)")
     hostname = ask("Hostname", defaults["hostname"])
     timezone = ask("Timezone", defaults["timezone"])
     network_method = ask_choice("Network method", ["dhcp", "static"], defaults["network_method"])

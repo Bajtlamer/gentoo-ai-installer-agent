@@ -138,3 +138,17 @@ class ApplyProgramStrictnessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitSystemTests(unittest.TestCase):
+    def test_base_system_always_uses_the_openrc_stage(self):
+        program = phases.base_system_command(fixture("uefi_gpt_user_sudo"))
+        self.assertIn("latest-stage3-amd64-openrc.txt", program)
+        self.assertNotIn("systemd", program)
+
+    def test_systemd_is_refused_by_the_gate(self):
+        install = fixture("uefi_gpt_user_sudo")
+        install["init_system"] = "systemd"
+        with self.assertRaises(AgentError) as caught:
+            phases.validated_settings(TARGET, install)
+        self.assertEqual(caught.exception.details, {"field": "init_system"})
