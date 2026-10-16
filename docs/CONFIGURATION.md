@@ -158,8 +158,8 @@ Fields with a default when absent:
 | `generate_missing_passwords` | boolean | `true` | Generate a password when an environment variable is unset or empty |
 | `root_password_env` | string | none | Variable holding the root password |
 | `user_password_env` | string | none | Variable holding the regular-user password |
-| `expected_disk_model` | string | none | When set, plan creation requires the inventory to report exactly this model, and `preflight` requires `lsblk` to report it on the live target |
-| `expected_disk_size_gib` | number | none | When set, plan creation and `preflight` require the disk size to be within 1 GiB of this value |
+| `expected_disk_model` | string | none | When set, plan creation requires the inventory to report exactly this model, and `preflight` requires `lsblk` to report it on the live target. Must be a string or `null` |
+| `expected_disk_size_gib` | number | none | When set, plan creation and `preflight` require the disk size to be within 1 GiB of this value. Must be a number greater than 0 (not a boolean) or `null`. `prepare_install.py` derives it from the exact byte count in the `disk_identity` inventory, falling back to the rounded `lsblk` size only when that is missing |
 | `schema_version` | integer | none | Configuration schema version; currently `1` |
 
 `prepare_install.py` also writes `detected_live_boot_mode`,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 
 from gentoo_agent.core.arch import architecture_spec, live_architecture
@@ -143,6 +144,15 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         swap_mb = install["swap_mb"]
         if not isinstance(swap_mb, int) or isinstance(swap_mb, bool) or not 0 <= swap_mb <= MAX_SWAP_MB:
             raise _invalid("swap_mb", f"swap_mb must be an integer from 0 to {MAX_SWAP_MB}")
+    expected_size = install.get("expected_disk_size_gib")
+    if expected_size is not None and (
+        not isinstance(expected_size, (int, float)) or isinstance(expected_size, bool)
+        or not math.isfinite(expected_size) or expected_size <= 0
+    ):
+        raise _invalid("expected_disk_size_gib", "expected_disk_size_gib must be a number greater than 0")
+    expected_model = install.get("expected_disk_model")
+    if expected_model is not None and not isinstance(expected_model, str):
+        raise _invalid("expected_disk_model", "expected_disk_model must be a string")
     create_user = install.get("create_user", True)
     set_root_password = install.get("set_root_password", True)
     install_user_ssh_key = install.get("install_user_ssh_key", True)

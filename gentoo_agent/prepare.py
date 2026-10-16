@@ -15,6 +15,7 @@ import shutil
 
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, load_plan, save_json
+from gentoo_agent.core.disks import IDENTITY_LABEL, parse_disk_identities
 from gentoo_agent.core.errors import AgentError
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
@@ -108,6 +109,21 @@ def size_gib(value: str | None) -> float | None:
         return None
     units = {"K": 1 / (1024 * 1024), "M": 1 / 1024, "G": 1, "T": 1024}
     return round(float(match.group(1)) * units[match.group(2)], 2)
+
+
+def identity_size_gib(inventory: dict, disk_path: str | None) -> float | None:
+    """Exact size of the chosen disk from the disk_identity inventory, in GiB."""
+    item = result_map(inventory).get(IDENTITY_LABEL)
+    if not item or item.get("returncode") != 0:
+        return None
+    try:
+        identities = parse_disk_identities(item.get("stdout", ""))
+    except AgentError:
+        return None
+    for identity in identities:
+        if identity["path"] == disk_path and identity["size_bytes"] > 0:
+            return round(identity["size_bytes"] / 1024 ** 3, 3)
+    return None
 
 
 def choose_disk(inventory: dict) -> dict:
@@ -249,7 +265,8 @@ def build_install_config(target: dict, inventory: dict) -> dict:
         "user_password_env": user_password_env,
         "detected_live_boot_mode": detected_boot,
         "expected_disk_model": disk.get("model"),
-        "expected_disk_size_gib": size_gib(disk.get("size")),
+        # lsblk's human size is rounded (2 TB prints as 1.8T); prefer the exact byte count.
+        "expected_disk_size_gib": identity_size_gib(inventory, disk_path) or size_gib(disk.get("size")),
     })
     return install
 

@@ -122,6 +122,14 @@ INVALID = [
     ("swap huge", changed("uefi_gpt_user_sudo", swap_mb=131073), "swap_mb"),
     ("root btrfs", changed("uefi_gpt_user_sudo", root_filesystem="btrfs"), "root_filesystem"),
     ("systemd", changed("uefi_gpt_user_sudo", init_system="systemd"), "init_system"),
+    ("size string", changed("uefi_gpt_user_sudo", expected_disk_size_gib="40"), "expected_disk_size_gib"),
+    ("size bool", changed("uefi_gpt_user_sudo", expected_disk_size_gib=True), "expected_disk_size_gib"),
+    ("size zero", changed("uefi_gpt_user_sudo", expected_disk_size_gib=0), "expected_disk_size_gib"),
+    ("size negative", changed("uefi_gpt_user_sudo", expected_disk_size_gib=-1.5), "expected_disk_size_gib"),
+    ("size nan", changed("uefi_gpt_user_sudo", expected_disk_size_gib=float("nan")), "expected_disk_size_gib"),
+    ("size list", changed("uefi_gpt_user_sudo", expected_disk_size_gib=[40]), "expected_disk_size_gib"),
+    ("model int", changed("uefi_gpt_user_sudo", expected_disk_model=5), "expected_disk_model"),
+    ("model list", changed("uefi_gpt_user_sudo", expected_disk_model=["QEMU"]), "expected_disk_model"),
 ]
 
 VALID = [
@@ -135,6 +143,11 @@ VALID = [
     ("static ipv6 dns", static(dns=["2001:db8::53"])),
     ("static prefix 8", static(address="10.1.2.3/8", gateway="10.200.0.1")),
     ("static prefix 30", static(address="192.168.10.21/30", gateway="192.168.10.22")),
+    ("size int", changed("uefi_gpt_user_sudo", expected_disk_size_gib=40)),
+    ("size float", changed("uefi_gpt_user_sudo", expected_disk_size_gib=1863.017)),
+    ("size none", changed("uefi_gpt_user_sudo", expected_disk_size_gib=None)),
+    ("model none", changed("uefi_gpt_user_sudo", expected_disk_model=None)),
+    ("model text", changed("uefi_gpt_user_sudo", expected_disk_model="QEMU HARDDISK")),
 ]
 
 # Names a model could pick to exfiltrate an unrelated variable as a password.
