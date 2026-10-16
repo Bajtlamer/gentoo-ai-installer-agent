@@ -14,6 +14,9 @@ from gentoo_agent.core.validate import validated_settings
 
 
 MOUNT_ROOT = "/mnt/gentoo"
+DHCPCD_CONF = "/etc/dhcpcd.conf"
+DHCPCD_BEGIN = "# gentoo-agent static network begin"
+DHCPCD_END = "# gentoo-agent static network end"
 PHASES = [
     "preflight",
     "storage",
@@ -227,20 +230,25 @@ def configuration_command(target: dict, install: dict) -> str:
         network_setup = "emerge --noreplace --verbose net-misc/dhcpcd\nrc-update add dhcpcd default"
     else:
         static = install.get("network_static") or {}
+        interface = str(static.get("interface", ""))
         address = str(static.get("address", ""))
         gateway = str(static.get("gateway", ""))
         dns = " ".join(str(item) for item in static.get("dns", []))
         # Quote each dhcpcd.conf line exactly once, as a whole.
-        dhcpcd_lines = " ".join(q(line) for line in (
-            "interface ens33",
+        block = " ".join(q(line) for line in (
+            DHCPCD_BEGIN,
+            "interface " + interface,
             "static ip_address=" + address,
             "static routers=" + gateway,
             "static domain_name_servers=" + dns,
+            DHCPCD_END,
         ))
         network_setup = "\n".join([
             "emerge --noreplace --verbose net-misc/dhcpcd",
-            "install -d /etc/dhcpcd.conf.d",
-            f"printf '%s\\n' {dhcpcd_lines} > /etc/dhcpcd.conf.d/gentoo-agent.conf",
+            f"touch {DHCPCD_CONF}",
+            # Drop the block a previous attempt wrote, so a rerun leaves exactly one.
+            f"sed -i {q('/^' + DHCPCD_BEGIN + '$/,/^' + DHCPCD_END + '$/d')} {DHCPCD_CONF}",
+            f"printf '%s\\n' {block} >> {DHCPCD_CONF}",
             "rc-update add dhcpcd default",
         ])
     inside = "\n".join([
@@ -450,7 +458,7 @@ def base_system_check_command() -> str:
 def configuration_check_command(target: dict, install: dict) -> str:
     public_key = public_key_for_target(target)
     root_login_policy = "yes" if install.get("allow_root_password_ssh", False) else "prohibit-password"
-    return "\n".join([
+    lines = [
         "set -eu",
         f"test -e {q(MOUNT_ROOT + '/.gentoo-agent-configuration-complete')}",
         f"test -s {q(MOUNT_ROOT + '/etc/fstab')}",
@@ -463,8 +471,16 @@ def configuration_check_command(target: dict, install: dict) -> str:
         f"grep -Fqx 'UsePAM yes' {q(MOUNT_ROOT + '/etc/ssh/sshd_config.d/gentoo-agent.conf')}",
         f"test -e {q(MOUNT_ROOT + '/etc/runlevels/default/sshd')}",
         f"test -e {q(MOUNT_ROOT + '/etc/runlevels/default/dhcpcd')}",
-        "printf 'configuration-ok\\n'",
-    ])
+    ]
+    if install.get("network_method", "dhcp") == "static":
+        static = install.get("network_static") or {}
+        conf = q(MOUNT_ROOT + DHCPCD_CONF)
+        lines += [
+            f"grep -Fqx {q('interface ' + str(static.get('interface', '')))} {conf}",
+            f"grep -Fqx {q('static ip_address=' + str(static.get('address', '')))} {conf}",
+        ]
+    lines.append("printf 'configuration-ok\\n'")
+    return "\n".join(lines)
 
 
 def kernel_check_command() -> str:

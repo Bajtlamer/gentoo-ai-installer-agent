@@ -69,32 +69,53 @@ class ConfigurationQuotingTests(unittest.TestCase):
             return chroot_lines(phases.configuration_command(TARGET, install))
 
     def network_tokens(self, lines: list[str]) -> list[str]:
-        line = next(line for line in lines if line.startswith("printf") and "dhcpcd.conf.d/gentoo-agent.conf" in line)
+        line = next(line for line in lines if line.startswith("printf") and line.endswith(">> /etc/dhcpcd.conf"))
         return shlex.split(line)
 
     def test_static_network_lines_are_quoted_once(self):
         tokens = self.network_tokens(self.configuration())
-        self.assertEqual(tokens[2:6], [
-            "interface ens33",
+        self.assertEqual(tokens[2:8], [
+            "# gentoo-agent static network begin",
+            "interface enp1s0",
             "static ip_address=192.168.10.20/24",
             "static routers=192.168.10.1",
             "static domain_name_servers=1.1.1.1 9.9.9.9",
+            "# gentoo-agent static network end",
         ])
+
+    def test_previous_block_is_removed_before_the_new_one_is_written(self):
+        lines = self.configuration()
+        sed = next(index for index, line in enumerate(lines) if line.startswith("sed -i"))
+        write = next(index for index, line in enumerate(lines) if line.endswith(">> /etc/dhcpcd.conf"))
+        self.assertLess(sed, write)
+        self.assertEqual(shlex.split(lines[sed]), [
+            "sed", "-i", "/^# gentoo-agent static network begin$/,/^# gentoo-agent static network end$/d",
+            "/etc/dhcpcd.conf",
+        ])
+        self.assertFalse(any("dhcpcd.conf.d" in line for line in lines))
 
     def test_hostile_static_values_stay_single_arguments(self):
         hostile = "10.0.0.2/24 x; touch /PWNED"
-        for static in (
-            {"address": hostile, "gateway": "10.0.0.1", "dns": ["1.1.1.1"]},
-            {"address": "10.0.0.2/24", "gateway": "a'b; touch /PWNED", "dns": ["1.1.1.1"]},
-            {"address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1'; touch /PWNED; '"]},
+        base = {"interface": "enp1s0", "address": "10.0.0.2/24", "gateway": "10.0.0.1", "dns": ["1.1.1.1"]}
+        for change in (
+            {"address": hostile},
+            {"gateway": "a'b; touch /PWNED"},
+            {"dns": ["1.1.1.1'; touch /PWNED; '"]},
+            {"interface": "eth0'; touch /PWNED; '"},
         ):
-            with self.subTest(static=static):
-                tokens = self.network_tokens(self.configuration(network_static=static))
+            with self.subTest(change=change):
+                tokens = self.network_tokens(self.configuration(network_static={**base, **change}))
                 self.assertNotIn("touch", tokens)
-                self.assertEqual(len(tokens), 8)
-        tokens = self.network_tokens(self.configuration(
-            network_static={"address": hostile, "gateway": "10.0.0.1", "dns": ["1.1.1.1"]}))
+                self.assertEqual(len(tokens), 10)
+        tokens = self.network_tokens(self.configuration(network_static={**base, "address": hostile}))
         self.assertIn("static ip_address=" + hostile, tokens)
+
+    def test_static_check_reads_dhcpcd_conf(self):
+        install = fixture("uefi_gpt_root_only_static")
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            check = phases.configuration_check_command(TARGET, install)
+        self.assertIn("grep -Fqx 'interface enp1s0' /mnt/gentoo/etc/dhcpcd.conf", check)
+        self.assertIn("grep -Fqx 'static ip_address=192.168.10.20/24' /mnt/gentoo/etc/dhcpcd.conf", check)
 
     def test_zoneinfo_path_is_quoted(self):
         lines = self.configuration(timezone="UTC; touch /PWNED")

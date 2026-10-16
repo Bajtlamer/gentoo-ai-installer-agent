@@ -97,8 +97,8 @@ def approval_summary(plan: dict) -> str:
         static = install.get("network_static") or {}
         dns = ",".join(str(item) for item in static.get("dns") or [])
         lines.append(
-            f"Network: static address={_shown(static.get('address'))} gateway={_shown(static.get('gateway'))} "
-            f"dns={_shown(dns)}"
+            f"Network: static interface={_shown(static.get('interface'))} address={_shown(static.get('address'))} "
+            f"gateway={_shown(static.get('gateway'))} dns={_shown(dns)}"
         )
     else:
         lines.append(f"Network: {_shown(install.get('network_method', 'dhcp'))}")

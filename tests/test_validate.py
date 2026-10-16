@@ -42,7 +42,7 @@ class ValidatedSettingsTests(unittest.TestCase):
 
 
 DROP = object()
-STATIC = {"address": "192.168.10.20/24", "gateway": "192.168.10.1", "dns": ["1.1.1.1"]}
+STATIC = {"interface": "enp1s0", "address": "192.168.10.20/24", "gateway": "192.168.10.1", "dns": ["1.1.1.1"]}
 
 
 def changed(name: str, **changes) -> dict:
@@ -83,7 +83,12 @@ INVALID = [
     ("network list", changed("uefi_gpt_user_sudo", network_method=["dhcp"]), "network_method"),
     ("static missing", changed("uefi_gpt_root_only_static", network_static=DROP), "network_static"),
     ("static string", changed("uefi_gpt_root_only_static", network_static="10.0.0.2/24"), "network_static"),
-    ("static extra key", static(interface="eth0"), "network_static"),
+    ("static extra key", static(extra="x"), "network_static"),
+    ("interface missing", static(interface=DROP), "network_static"),
+    ("interface with space", static(interface="enp1s0 x"), "network_static"),
+    ("interface injection", static(interface="eth0;reboot"), "network_static"),
+    ("interface too long", static(interface="a" * 16), "network_static"),
+    ("interface not a string", static(interface=1), "network_static"),
     ("static no dns", static(dns=DROP), "network_static"),
     ("address injection", static(address="10.0.0.2/24 x; touch /PWNED"), "network_static"),
     ("address quote", static(address="10.0.0.2/24'"), "network_static"),
@@ -122,6 +127,7 @@ VALID = [
     ("nested timezone", changed("uefi_gpt_user_sudo", timezone="America/Argentina/Buenos_Aires")),
     ("etc timezone", changed("uefi_gpt_user_sudo", timezone="Etc/GMT+5")),
     ("static ipv4", static()),
+    ("static interface with dot", static(interface="eth0.10")),
     ("static three dns", static(dns=["1.1.1.1", "9.9.9.9", "2606:4700:4700::1111"])),
     ("static ipv6 dns", static(dns=["2001:db8::53"])),
     ("static prefix 8", static(address="10.1.2.3/8", gateway="10.200.0.1")),

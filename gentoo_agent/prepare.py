@@ -158,6 +158,7 @@ def build_install_config(target: dict, inventory: dict) -> dict:
     static_network = None
     if network_method == "static":
         static_network = {
+            "interface": ask("Network interface on the installed system (see the inventory network section), for example enp1s0"),
             "address": ask("Static address in CIDR notation"),
             "gateway": ask("Default gateway"),
             "dns": [item.strip() for item in ask("DNS servers, comma separated").split(",") if item.strip()],
