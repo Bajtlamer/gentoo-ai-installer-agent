@@ -157,8 +157,7 @@ Implemented in `core/errors.py`: `CONFIG_INVALID`, `CONFIG_CONFLICT`,
 `APPROVAL_DECLINED`, `RUN_NOT_FOUND`, `RUN_ALREADY_ACTIVE`, and
 `INTERNAL_ERROR` (an unexpected failure, reported without a traceback).
 
-Reserved for later, not yet raised by the code: `HOST_KEY_UNKNOWN` and
-`PHASE_PRECONDITION_FAILED`.
+Reserved for later, not yet raised by the code: `PHASE_PRECONDITION_FAILED`.
 
 Errors are returned as `isError: true` results with `code`, `message`, and
 structured `details`, never as raw exceptions.

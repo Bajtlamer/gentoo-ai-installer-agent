@@ -25,7 +25,9 @@ object raises `CONFIG_INVALID`.
 - [Disk erase authorization](#disk-erase-authorization)
 - [Passwords](#passwords)
 - [Installed login access](#installed-login-access)
+- [Architecture](#architecture)
 - [Static network](#static-network)
+- [Plan creation requirements](#plan-creation-requirements)
 - [Partition layout and swap](#partition-layout-and-swap)
 - [Approval records and the signing key](#approval-records-and-the-signing-key)
 - [MCP configuration resolution](#mcp-configuration-resolution)
@@ -67,11 +69,16 @@ It requires `--host` and `--disk`, refuses to run without `--allow-disk-erase`,
 and refuses to overwrite existing files unless `--overwrite` is given. With
 `--allow-disk-erase` it sets `target_is_disposable` and
 `disk_erase_authorized` in both files and `disk_must_be_erased` in
-`install.json`. Run `python tools/init_config.py --help` for every option.
+`install.json`. `--architecture amd64|arm64` (default `amd64`) sets
+`install.architecture` and the profile; `arm64` with `--boot-mode bios` is
+refused. Run `python tools/init_config.py --help` for every option.
 
 `python tools/prepare_install.py` is the interactive alternative: it connects
 read-only over SSH, asks the installation questions, and writes
-`install.json`. It does not start an installation. See the
+`install.json`. It reads the architecture from the live system (it does not
+ask), sets `architecture` and `handbook_url` in `target.json` from it, and
+records the erase decision in `target.json` as well as `install.json`. It does
+not start an installation. See the
 [CLI installation guide](guides/cli-install.md) for both.
 
 `python tools/gentoo_agent.py validate` checks the configuration locally
@@ -86,7 +93,7 @@ against the latest inventory. It exits with status 2 when it finds errors.
 | `port` | integer | No | SSH port; omitted means the ssh default (22) |
 | `user` | string | Yes | SSH user; plan creation and dry runs require `root` |
 | `identity_file` | string | Yes | Path to the SSH private key; `~` is expanded |
-| `architecture` | string | Yes | Gentoo architecture, for example `amd64` |
+| `architecture` | string | Yes | Gentoo architecture, `amd64` or `arm64`; informational, the install configuration decides (see [Architecture](#architecture)) |
 | `handbook_url` | string | Yes | Official Handbook URL for that architecture, used by `handbook` |
 | `install_config` | string | No | Path of the install file relative to the root; default `config/install.json` |
 | `known_hosts_file` | string | No | Dedicated known-hosts file; empty uses the ssh default |
@@ -115,7 +122,8 @@ Fields that `validate` reports as missing when absent:
 
 | Field | Type | Allowed values |
 |---|---|---|
-| `profile` | string | Descriptive label such as `gentoo-amd64-openrc`; not used by the generated commands |
+| `architecture` | string | `amd64` or `arm64`; see [Architecture](#architecture) |
+| `profile` | string | Descriptive label such as `gentoo-amd64-openrc` (`resolve_config` derives it as `gentoo-<architecture>-<init_system>`); not used by the generated commands |
 | `boot_mode` | string | `uefi` or `bios` |
 | `partition_table` | string | `gpt` (required for UEFI) or `mbr` |
 | `disk` | string | Disk path such as `/dev/sda` |
@@ -135,7 +143,7 @@ Fields with a default when absent:
 | `disk_must_be_erased` | boolean | none | Explicit destructive decision; see [Disk erase authorization](#disk-erase-authorization) |
 | `target_is_disposable` | boolean | none | Must match the target file for erasure |
 | `disk_erase_authorized` | boolean | none | Must match the target file for erasure |
-| `network_static` | object | none | Required when `network_method` is `static` |
+| `network_static` | object | none | Required when `network_method` is `static`; see [Static network](#static-network) |
 | `create_user` | boolean | `true` | Create a regular login account |
 | `username` | string | none | Regular account name; required when `create_user` is true |
 | `user_groups` | array of strings | `["wheel"]` | Supplementary groups |
@@ -148,8 +156,8 @@ Fields with a default when absent:
 | `generate_missing_passwords` | boolean | `true` | Generate a password when an environment variable is unset or empty |
 | `root_password_env` | string | none | Variable holding the root password |
 | `user_password_env` | string | none | Variable holding the regular-user password |
-| `expected_disk_model` | string | none | When set, `preflight` requires `lsblk` to report exactly this model |
-| `expected_disk_size_gib` | number | none | When set, `preflight` requires the disk size to be within 1 GiB of this value |
+| `expected_disk_model` | string | none | When set, plan creation requires the inventory to report exactly this model, and `preflight` requires `lsblk` to report it on the live target |
+| `expected_disk_size_gib` | number | none | When set, plan creation and `preflight` require the disk size to be within 1 GiB of this value |
 | `schema_version` | integer | none | Configuration schema version; currently `1` |
 
 `prepare_install.py` also writes `detected_live_boot_mode`,
@@ -157,11 +165,18 @@ Fields with a default when absent:
 code reads them.
 
 Note on `init_system`: the generated `configuration`, `authentication`, and
-`validation` commands use OpenRC (`rc-update`, `/etc/runlevels`), so `openrc`
-is the only supported value. The MCP `resolve_config` tool refuses anything
-else with `CONFIG_INVALID`. The CLI validation still accepts `systemd` (the
-golden test fixtures use it), but a systemd installation is out of scope for
-this version and is not expected to boot correctly.
+`validation` commands use OpenRC (`rc-update`, `/etc/runlevels`), and the
+stage 3 archive is the OpenRC one, so `openrc` is the only supported value.
+`validated_settings()`, `init_config.py`, `prepare_install.py`, and the MCP
+`resolve_config` tool all refuse anything else (`CONFIG_INVALID`). systemd is
+out of scope for this version.
+
+Note on `architecture`: a private `config/install.json` written before this
+field existed has none, and now fails `validate`, `install --dry-run`, and
+`plan create`. Add `"architecture": "amd64"` (or `"arm64"`) to it, or write the
+file again with `init_config.py --overwrite` or `prepare_install.py`.
+`config/install.default.json` does not carry the field, so the architecture is
+always an explicit decision; `config/install.example.json` shows `"amd64"`.
 
 ## Validation rules
 
@@ -178,7 +193,8 @@ in `gentoo_agent/core/validate.py`). A violation raises `CONFIG_INVALID`, or
 | `root_filesystem` | `ext4` |
 | `hostname` | Starts with a letter or digit, then letters, digits, `.`, `_`, `-`; at most 63 characters |
 | `timezone` | Letters, digits, `.`, `_`, `+`, `/`, `-`; not absolute and no `..` component |
-| `init_system` | `openrc` or `systemd` (see the note above) |
+| `init_system` | `openrc` only (see the note above) |
+| `architecture` | `amd64` or `arm64`; `arm64` with `boot_mode: bios` is `CONFIG_CONFLICT` |
 | `network_method` | `dhcp` or `static`; `static` requires a valid `network_static` |
 | `swap_mb` | Integer from 0 to 131072 (booleans are refused) |
 | Boolean flags | `create_user`, `set_root_password`, `install_user_ssh_key`, `configure_sudo`, `allow_root_password_ssh`, `generate_missing_passwords` must be JSON booleans |
@@ -193,8 +209,9 @@ in `gentoo_agent/core/validate.py`). A violation raises `CONFIG_INVALID`, or
 `validate` additionally reports missing required fields, requires a
 non-negative `swap_mb`, checks the erase authorization, and compares the
 configuration with the latest inventory: the configured disk must appear in
-it, and a UEFI install needs a UEFI live boot (a BIOS install conflicts with a
-UEFI live boot). Without an inventory it warns and skips those checks.
+it, the configured architecture must match the live system, and a UEFI install
+needs a UEFI live boot (a BIOS install conflicts with a UEFI live boot).
+Without an inventory it warns and skips those checks.
 
 ## Disk erase authorization
 
@@ -210,11 +227,32 @@ The `storage` phase always erases the target disk. `plan create` (and the MCP
 | `target.json` | `target_is_disposable` |
 | `target.json` | `disk_erase_authorized` |
 
-The error lists the missing flags. Plan creation also requires an inventory
-(`INVENTORY_MISSING`) and refuses a target disk without a serial number or WWN
-when another disk has the same size and model (`DISK_AMBIGUOUS`). Before any
-change, a run re-reads the disk path, size, model, serial, and WWN and stops
-with `TARGET_DRIFT` if they differ from the plan.
+The error lists the missing flags. Plan creation has further requirements; see
+[Plan creation requirements](#plan-creation-requirements). Before any change,
+and again before every destructive phase, a run re-reads the disk path, size,
+model, serial, and WWN and stops with `TARGET_DRIFT` if they differ from the
+plan.
+
+## Plan creation requirements
+
+`plan create` and the MCP `create_plan` tool refuse to write a plan unless
+all of these hold, in this order:
+
+1. The configuration passes `validated_settings()` and the erase authorization
+   above is complete (`CONFIG_INVALID`).
+2. An inventory exists (`INVENTORY_MISSING`) and is younger than 24 hours. An
+   undated or older inventory is also `INVENTORY_MISSING`: run `inspect` again.
+3. `architecture` matches the live system's `uname -m` from the inventory
+   (`CONFIG_CONFLICT`).
+4. The `validate` review (`validate_installation()`) reports no errors
+   (`CONFIG_INVALID`; `details.errors` lists them). This includes a missing
+   required field, a configured disk that is not in the inventory, and a UEFI
+   install on a BIOS-booted live system.
+5. The disk is in the inventory, and a disk without a serial number or WWN has
+   no twin of the same size and model (`DISK_AMBIGUOUS`).
+6. When set, `expected_disk_model` equals the inventory's model and
+   `expected_disk_size_gib` is within 1 GiB of the inventory's size
+   (`CONFIG_INVALID`).
 
 ## Passwords
 
@@ -271,6 +309,33 @@ control the installed system:
 - The tracked `install.default.json` creates user `bajt`; the example file and
   `init_config.py` (without `--username`) create `gentoo`.
 
+## Architecture
+
+`architecture` is required in `install.json` and is `amd64` or `arm64`. The
+table behind it is `gentoo_agent/core/arch.py`:
+
+| Architecture | `uname -m` | GRUB EFI target | EFI binary | BIOS |
+|---|---|---|---|---|
+| `amd64` | `x86_64` | `x86_64-efi` | `grubx64.efi` | supported |
+| `arm64` | `aarch64` | `arm64-efi` | `grubaa64.efi` | not supported |
+
+- The architecture selects the stage 3 archive (`releases/<arch>/autobuilds/`,
+  OpenRC variant), the `grub-install` target, and the file the `bootloader`
+  check looks for.
+- It is inferred from the identity probe of the inventory (`uname -m`). The
+  MCP `resolve_config` tool infers it, accepts an `architecture` override, and
+  refuses a value that differs from the live system (`CONFIG_CONFLICT`); a
+  fallback cannot set it. `detect_hardware` reports it, or `unknown` when the
+  probe failed or the machine is not supported.
+- The `preflight` program also checks `uname -m` on the live target.
+- arm64 is UEFI only: `boot_mode: bios` with `arm64` is `CONFIG_CONFLICT`.
+  `grub-install` is not run with `--removable` yet, so firmware that only boots
+  `/EFI/BOOT/BOOTAA64.EFI` will not find the installed system (see the
+  [roadmap](ROADMAP.md#known-limitations)).
+- `target.json` `architecture` is informational and is not compared with the
+  live system; `prepare_install.py` sets it from the live system, together with
+  `handbook_url`.
+
 ## Static network
 
 `network_static` is required when `network_method` is `static` and must have
@@ -278,13 +343,32 @@ exactly these keys:
 
 | Key | Rule |
 |---|---|
+| `interface` | Name of the network interface on the installed system: letters, digits, `_`, `.`, `-`, at most 15 characters, first character a letter or digit, for example `enp1s0` |
 | `address` | IPv4 address in CIDR form, for example `192.168.10.20/24`, with a prefix from /8 to /30 |
 | `gateway` | IPv4 address inside the subnet of `address` |
 | `dns` | List of 1 to 3 IP addresses |
 
-Known limitations: the generated dhcpcd snippet hardcodes the interface name
-`ens33`, and it is written to `/etc/dhcpcd.conf.d/gentoo-agent.conf`, a
-location Gentoo's dhcpcd may not read. Treat static networking as unverified.
+Find the interface name in the `network` section of the latest inventory, or
+run `ip -brief address` on the live system. The installed system usually names
+the interface the same way as the live ISO, but check it on the target console
+before you rely on it.
+
+The configuration phase writes the settings to `/etc/dhcpcd.conf`, between the
+marker lines `# gentoo-agent static network begin` and
+`# gentoo-agent static network end`:
+
+```text
+# gentoo-agent static network begin
+interface enp1s0
+static ip_address=192.168.10.20/24
+static routers=192.168.10.1
+static domain_name_servers=192.168.10.1
+# gentoo-agent static network end
+```
+
+A rerun removes a block it wrote earlier and appends a new one, so the file
+holds exactly one. The phase check looks for the `interface` and
+`static ip_address` lines. `dhcpcd` is enabled for both network methods.
 
 ## Partition layout and swap
 
@@ -335,8 +419,8 @@ these layers, highest priority first:
 1. `overrides`: values the user asked for.
 2. Profile: supported by `core/resolve.py`, but the MCP tools do not expose a
    profile argument, so it is empty through MCP.
-3. Inferred from the latest inventory: the live boot mode and, when exactly
-   one disk is eligible, the disk.
+3. Inferred from the latest inventory: the live boot mode, the live
+   architecture, and, when exactly one disk is eligible, the disk.
 4. `fallbacks`: values used only where nothing above decided.
 5. Defaults from `config/install.default.json`, without its disk-specific
    fields.
@@ -348,7 +432,7 @@ Settable keys and types:
 
 | Key | Type |
 |---|---|
-| `username`, `hostname`, `timezone`, `boot_mode`, `init_system`, `disk`, `network_method`, `bootloader` | string |
+| `username`, `hostname`, `timezone`, `boot_mode`, `init_system`, `disk`, `network_method`, `bootloader`, `architecture` | string |
 | `swap_mb` | integer |
 | `create_user`, `configure_sudo`, `set_root_password`, `allow_root_password_ssh`, `install_user_ssh_key` | boolean |
 | `user_groups` | list of strings |
@@ -358,7 +442,7 @@ Settable keys and types:
 Rules:
 
 - Any other key, or a value of the wrong type, raises `CONFIG_INVALID`.
-- Fallbacks may not set `disk`, `boot_mode`, or passwords.
+- Fallbacks may not set `disk`, `boot_mode`, `architecture`, or passwords.
 - A password reference sets `root_password_env` or `user_password_env`, and
   sets `password_source: "environment"` and `generate_missing_passwords: true`.
 - `bootloader` must be `grub` and `init_system` must be `openrc`
@@ -374,8 +458,8 @@ Rules:
 - A chosen disk that is not in the inventory returns `CONFIG_INVALID`; an
   excluded disk returns `CONFIG_CONFLICT` with the reason.
 - An uppercase `username` is lowercased, with a warning.
-- Derived values: `partition_table` and `partition_layout` from the layout
-  rules, `disk_must_be_erased: true`, and `target_is_disposable` and
+- Derived values: `profile` as `gentoo-<architecture>-<init_system>`,
+  `partition_table` and `partition_layout` from the layout rules, `disk_must_be_erased: true`, and `target_is_disposable` and
   `disk_erase_authorized` copied from `target.json`.
 - The result then passes the same [validation rules](#validation-rules).
 

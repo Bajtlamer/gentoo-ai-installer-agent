@@ -82,7 +82,7 @@ writing into the checkout.
 ## Golden command files
 
 `tests/test_golden_commands.py` renders the apply and check program of every
-phase for the five configurations in `tests/golden/configs/` and compares them
+phase for the six configurations in `tests/golden/configs/` and compares them
 byte for byte with the matching files in `tests/golden/`. These files are the
 exact shell programs a target receives, so any difference is a change in
 behavior on real hardware.
@@ -95,6 +95,8 @@ behavior on real hardware.
   GOLDEN_UPDATE=1 .venv/bin/python -m unittest tests.test_golden_commands
   ```
 
+- Adding an architecture needs a table entry in `gentoo_agent/core/arch.py`, a
+  golden fixture for it, and a real test installation.
 - Every golden diff must be reviewed line by line in the pull request, and
   the pull request must say why each changed line changed.
 
@@ -108,6 +110,10 @@ behavior on real hardware.
 - Errors are `AgentError(code, message, details)` with a code from
   `gentoo_agent/core/errors.py`. Reuse an existing code where it fits; a new
   code is part of the interface that the CLI and MCP clients see.
+- The stdio smoke test (`tests/test_mcp_stdio.py`) also fails on warnings from
+  the `mcp.client.stdio` logger, because the MCP SDK skips non-JSON lines on
+  stdout silently. Re-run it, and the pollution check in it, after every MCP
+  SDK upgrade.
 - Front ends (`cli.py`, `prepare.py`, `init_config.py`, `mcp/server.py`) turn
   errors into text or MCP results. Prompts reach `core/` only as callbacks.
 

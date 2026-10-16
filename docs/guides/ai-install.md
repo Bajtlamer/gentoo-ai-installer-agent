@@ -48,6 +48,10 @@ python3 -m venv .venv
 This provides two commands in `.venv/bin/`: `gentoo-agent` (the CLI) and
 `gentoo-agent-mcp` (the stdio MCP server).
 
+Supported targets: amd64 (BIOS or UEFI) and arm64 (UEFI only). The server
+infers the architecture from the live system and refuses an `architecture`
+override that differs from it.
+
 ## Step 2: Prepare the target configuration
 
 The MCP tools read `config/target.json`, `config/plan.json`, and
@@ -158,10 +162,10 @@ The tools in workflow order:
 
 | Tool | What it does |
 |---|---|
-| `detect_hardware(refresh)` | Summarizes the firmware boot mode (`uefi`, `bios`, or `unknown`) and the disks with serial and WWN. `refresh=true` first runs the read-only SSH inventory; otherwise the latest saved inventory is used. |
+| `detect_hardware(refresh)` | Summarizes the firmware boot mode (`uefi`, `bios`, or `unknown`), the architecture (`amd64`, `arm64`, or `unknown`), and the disks with serial and WWN. `refresh=true` first runs the read-only SSH inventory; otherwise the latest saved inventory is used. |
 | `list_phases()` | Lists the runnable phases in order, with description, whether each changes the target, and its Handbook sections. |
 | `resolve_config(overrides, fallbacks)` | Previews the merged install configuration (overrides, then inferred values, then fallbacks, then defaults) with the source of every value. Writes nothing. |
-| `create_plan(overrides, fallbacks)` | Same inputs as `resolve_config`. Freezes the configuration, the disk identity, and every command into a plan; returns `plan_id`, `plan_hash`, and the summary. |
+| `create_plan(overrides, fallbacks)` | Same inputs as `resolve_config`. Freezes the configuration, the disk identity, and every command into a plan; returns `plan_id`, `plan_hash`, and the summary. It refuses an inventory older than 24 hours, a configuration that fails the `validate` review, and a disk that does not match `expected_disk_model` or `expected_disk_size_gib`. |
 | `get_plan(plan_id)` | Shows a stored plan, its summary, and its approval status. |
 | `approve_plan(plan_id)` | Asks you, in a dialog built by the server, to approve the plan for 60 minutes. The model cannot answer it. |
 | `start_install(plan_id)` | Starts the approved plan in the background. Erases the target disk. Returns `run_id`. |
@@ -229,6 +233,11 @@ detect_hardware({"refresh": true})
 Two disks are listed, but `/dev/sdb` is the USB stick the live system booted
 from. The AI may ask you which disk to use; here it lets `resolve_config`
 infer the only eligible disk and shows you the result.
+
+For static networking, the AI passes `network_method: "static"` and a
+`network_static` object with `interface`, `address`, `gateway`, and `dns`
+(see [Static network](../CONFIGURATION.md#static-network)); it must take the
+interface name from the `network` section of the inventory, not guess it.
 
 ### 2. Preview the configuration
 
