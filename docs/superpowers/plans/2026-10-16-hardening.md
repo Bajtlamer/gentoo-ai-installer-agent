@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the known safety and correctness gaps found in plans 1-3 before the first full installation on a real virtual machine.
+**Goal:** Close the known safety and correctness gaps found in plans 1-3, and support amd64 and arm64 targets, before the first full installation on a real virtual machine (the operator's test VM is arm64).
 
-**Architecture:** Each task is a focused change to one area: generated shell programs (`core/phases.py`), configuration validation (`core/validate.py`), plan creation (`core/install_plan.py`), execution (`core/runner.py`), SSH error mapping (`core/ssh.py`, `core/inventory.py`, `core/disks.py`), run liveness (`core/runs.py`, `jobs/`), and a stdio smoke test of the MCP server. Tasks 1 to 3 change generated commands and therefore the golden files; every other task leaves them byte-identical.
+**Architecture:** Each task is a focused change to one area: generated shell programs (`core/phases.py`), configuration validation (`core/validate.py`), plan creation (`core/install_plan.py`), execution (`core/runner.py`), SSH error mapping (`core/ssh.py`, `core/inventory.py`, `core/disks.py`), run liveness (`core/runs.py`, `jobs/`), a stdio smoke test of the MCP server, and a single architecture table (`core/arch.py`). Tasks 1 to 3 and 10 change generated commands and therefore the golden files; every other task leaves them byte-identical.
 
 **Tech Stack:** Python 3.12+ standard library (`unittest`, `fcntl`, `shlex`), optional `mcp==2.2.0` for the MCP tests (run them with `.venv/bin/python`).
 
@@ -34,8 +34,9 @@
 | `gentoo_agent/core/errors.py`, `ssh.py`, `inventory.py`, `disks.py` | 7 | `HOST_KEY_UNKNOWN` |
 | `gentoo_agent/core/runs.py`, `jobs/worker.py`, `jobs/launcher.py` | 8 | per-run worker flock; reaper thread |
 | `tests/test_mcp_stdio.py` | 9 | new stdio smoke test |
-| `tests/golden/configs/*.json`, `tests/golden/*.txt` | 1, 2, 3, 5 | fixtures and regenerated programs |
-| docs | 10 | reference, guides, roadmap, troubleshooting |
+| `gentoo_agent/core/arch.py` (new), `resolve.py`, `hardware.py` | 10 | architecture table, inference, checks |
+| `tests/golden/configs/*.json`, `tests/golden/*.txt` | 1, 2, 3, 5, 10 | fixtures and regenerated programs; arm64 fixture added |
+| docs | 11 | reference, guides, roadmap, troubleshooting |
 
 ---
 
@@ -1268,9 +1269,454 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: Documentation
+### Task 10: Multiple architectures (amd64 and arm64)
 
-Bring the docs in line with Tasks 1 to 9. No em dashes, no emoji. Verify every command and field you write against the code.
+The generated programs are amd64 only (amd64 stage3 URL, `grub-install --target=x86_64-efi`, a `grubx64.efi` check), and nothing compares the configuration with the live machine. On the operator's ARM64 VMware VM (`uname -m` = `aarch64`), a run would erase the disk and then fail inside the chroot. Make the architecture an explicit, required, verified install setting, driven by one table so a later architecture is one entry plus golden fixtures.
+
+Verified 2026-10-16:
+- `https://distfiles.gentoo.org/releases/arm64/autobuilds/latest-stage3-arm64-openrc.txt` lists `20261013T064549Z/stage3-arm64-openrc-20261013T064549Z.tar.xz`, which the existing awk in `base_system_command` selects unchanged.
+- `sys-kernel/gentoo-kernel-bin` 6.18.57 is stable on arm64 (packages.gentoo.org).
+- Handbook:AMD64/Installation/Bootloader: `GRUB_PLATFORMS="efi-64"` is the default for UEFI; `--removable` is advised for firmware that only reads `/EFI/BOOT`. With `--target=arm64-efi`, GRUB writes `EFI/<bootloader-id>/grubaa64.efi`.
+
+Rules:
+- `install.architecture` is required and is the only source the generators use (`amd64` or `arm64`). `target.architecture` stays informational (handbook URL).
+- `arm64` supports UEFI only.
+- `resolve_config` infers it from the inventory and never accepts it from fallbacks; an override that differs from the live machine is `CONFIG_CONFLICT`.
+- Plan creation refuses a configuration whose architecture differs from the inventory; preflight refuses a live machine whose `uname -m` differs.
+
+**Files:**
+- Create: `gentoo_agent/core/arch.py`, `tests/test_arch.py`, `tests/golden/configs/uefi_gpt_arm64_user_sudo.json`, `tests/golden/uefi_gpt_arm64_user_sudo.txt` (generated)
+- Modify: `gentoo_agent/core/validate.py`, `gentoo_agent/core/phases.py`, `gentoo_agent/core/resolve.py`, `gentoo_agent/core/install_plan.py`, `gentoo_agent/core/approval.py`, `gentoo_agent/core/hardware.py`, `gentoo_agent/init_config.py`, `gentoo_agent/prepare.py`, `tests/helpers.py`, the existing golden configs, `tests/test_golden_commands.py` (5 configs to 6)
+- Test: `tests/test_arch.py`, `tests/test_validate.py`, `tests/test_phases.py`, `tests/test_resolve.py`, `tests/test_install_plan.py`, `tests/test_hardware.py`, `tests/test_approval.py`
+
+- [ ] **Step 1: Write the failing tests for the table**
+
+Create `tests/test_arch.py`:
+
+```python
+import unittest
+
+from gentoo_agent.core import arch
+from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentError
+from tests.helpers import identity_result
+
+
+def inventory(*results):
+    return {"results": list(results)}
+
+
+class ArchitectureTests(unittest.TestCase):
+    def test_live_architecture_is_read_from_the_identity_probe(self):
+        self.assertEqual(arch.live_architecture(inventory(identity_result("aarch64"))), "arm64")
+        self.assertEqual(arch.live_architecture(inventory(identity_result("x86_64"))), "amd64")
+
+    def test_missing_or_failed_probe_is_inventory_missing(self):
+        failed = {**identity_result("x86_64"), "returncode": 1}
+        no_line = {"label": "identity", "returncode": 0, "stdout": "hostname=livecd\n"}
+        for data in (inventory(), inventory(failed), inventory(no_line)):
+            with self.subTest(data=data):
+                with self.assertRaises(AgentError) as caught:
+                    arch.live_architecture(data)
+                self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_unsupported_machine_is_refused(self):
+        with self.assertRaises(AgentError) as caught:
+            arch.live_architecture(inventory(identity_result("riscv64")))
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        self.assertEqual(caught.exception.details, {"machine": "riscv64"})
+
+    def test_spec_rejects_unknown_names(self):
+        for name in ("x86", "", None, "AMD64"):
+            with self.subTest(name=name):
+                with self.assertRaises(AgentError) as caught:
+                    arch.architecture_spec(name)
+                self.assertEqual(caught.exception.details, {"field": "architecture"})
+
+    def test_every_architecture_has_the_fields_the_generators_use(self):
+        for name, spec in arch.ARCHITECTURES.items():
+            with self.subTest(name=name):
+                self.assertEqual(set(spec), {"machine", "grub_efi_target", "grub_efi_binary", "bios"})
+        self.assertFalse(arch.ARCHITECTURES["arm64"]["bios"])
+```
+
+Append to `tests/helpers.py`:
+
+```python
+def identity_result(machine: str = "x86_64") -> dict:
+    """The identity inventory result as the live system prints it (uname -m in the arch= line)."""
+    return {"label": "identity", "returncode": 0,
+            "stdout": f"hostname=livecd\n\narch={machine}\n\nkernel=6.18.54-gentoo-dist\n"}
+```
+
+Run: `.venv/bin/python -m unittest tests.test_arch -v`
+Expected: FAIL with `ImportError` (no `gentoo_agent.core.arch`).
+
+- [ ] **Step 2: Implement `core/arch.py`**
+
+```python
+"""Supported CPU architectures: the one table the generators, validation, and discovery read.
+
+Adding an architecture means one entry here plus a golden fixture. Gentoo
+names (amd64, arm64) are the configuration values; machine is what uname -m
+prints on the live system.
+"""
+
+from __future__ import annotations
+
+from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentError
+
+
+ARCHITECTURES = {
+    "amd64": {"machine": "x86_64", "grub_efi_target": "x86_64-efi", "grub_efi_binary": "grubx64.efi", "bios": True},
+    "arm64": {"machine": "aarch64", "grub_efi_target": "arm64-efi", "grub_efi_binary": "grubaa64.efi", "bios": False},
+}
+MACHINES = {spec["machine"]: name for name, spec in ARCHITECTURES.items()}
+STAGE_BASE = "https://distfiles.gentoo.org/releases/{arch}/autobuilds/"
+STAGE_LIST = STAGE_BASE + "latest-stage3-{arch}-openrc.txt"
+
+
+def architecture_spec(name: object) -> dict:
+    if not isinstance(name, str) or name not in ARCHITECTURES:
+        raise AgentError(CONFIG_INVALID, f"architecture must be one of: {', '.join(sorted(ARCHITECTURES))}",
+                         {"field": "architecture"})
+    return ARCHITECTURES[name]
+
+
+def live_architecture(inventory: dict) -> str:
+    """The Gentoo architecture of the live system, from the identity probe's arch= line."""
+    results = {item.get("label"): item for item in inventory.get("results", []) if isinstance(item, dict)}
+    item = results.get("identity") or {}
+    stdout = item.get("stdout") if item.get("returncode") == 0 else None
+    machine = None
+    if isinstance(stdout, str):
+        machine = next((line[len("arch="):].strip() for line in stdout.splitlines() if line.startswith("arch=")), None)
+    if not machine:
+        raise AgentError(INVENTORY_MISSING, "The live architecture is unknown; refresh the inventory.", {"label": "identity"})
+    if machine not in MACHINES:
+        raise AgentError(CONFIG_INVALID, f"The live system is {machine}, which this installer does not support.",
+                         {"machine": machine})
+    return MACHINES[machine]
+```
+
+Run: `.venv/bin/python -m unittest tests.test_arch -v`
+Expected: PASS.
+
+- [ ] **Step 3: Require the architecture in the gate**
+
+Add `"architecture": "amd64",` to each of the existing golden configs in `tests/golden/configs/` (all are amd64). Create `tests/golden/configs/uefi_gpt_arm64_user_sudo.json`, matching the operator's VM:
+
+```json
+{
+  "architecture": "arm64",
+  "profile": "gentoo-arm64-openrc",
+  "bootloader": "grub",
+  "disk": "/dev/nvme0n1",
+  "boot_mode": "uefi",
+  "partition_table": "gpt",
+  "root_filesystem": "ext4",
+  "swap_mb": 2048,
+  "partition_layout": [
+    {"device": "/dev/nvme0n1p1", "size_mib": 512, "type": "efi-system", "filesystem": "vfat", "mount": "/boot"},
+    {"device": "/dev/nvme0n1p2", "size_mib": 2048, "type": "linux-swap", "mount": null},
+    {"device": "/dev/nvme0n1p3", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"}
+  ],
+  "init_system": "openrc",
+  "hostname": "gentoo-arm",
+  "timezone": "Europe/Prague",
+  "network_method": "dhcp",
+  "create_user": true,
+  "username": "gentoo",
+  "install_user_ssh_key": true,
+  "user_groups": ["wheel"],
+  "configure_sudo": true,
+  "user_shell": "/bin/bash",
+  "set_root_password": true,
+  "allow_root_password_ssh": false,
+  "password_source": "environment",
+  "generate_missing_passwords": true,
+  "root_password_env": "GENTOO_ROOT_PASSWORD",
+  "user_password_env": "GENTOO_USER_PASSWORD"
+}
+```
+
+In `tests/test_golden_commands.py` change `self.assertEqual(len(configs), 5)` to `6`.
+
+Add to `tests/test_validate.py`, in the invalid list:
+
+```python
+    ("architecture missing", changed("uefi_gpt_user_sudo", architecture=DROP), "architecture"),
+    ("architecture unknown", changed("uefi_gpt_user_sudo", architecture="x86"), "architecture"),
+```
+
+and a separate test class:
+
+```python
+class ArchitectureGateTests(unittest.TestCase):
+    def test_arm64_needs_uefi(self):
+        install = changed("bios_mbr_user_sudo", architecture="arm64")
+        with self.assertRaises(AgentError) as caught:
+            validate.validated_settings(TARGET, install)
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+        self.assertEqual(caught.exception.details, {"fields": ["architecture", "boot_mode"]})
+
+    def test_review_reports_an_architecture_mismatch(self):
+        install = fixture("uefi_gpt_user_sudo")
+        inventory = {"results": [identity_result("aarch64"), {"label": "boot_mode", "returncode": 0, "stdout": "uefi"},
+                                 storage_result("/dev/sda")]}
+        review = validate.validate_installation(TARGET, install, {}, inventory)
+        self.assertIn("architecture amd64 does not match the live system (arm64)", review["errors"])
+```
+
+(Use the module alias, `TARGET`, and error imports `tests/test_validate.py` already has; add `CONFIG_CONFLICT`, `identity_result`, and `storage_result` imports if missing.)
+
+Run: `.venv/bin/python -m unittest tests.test_validate -v`
+Expected: the new cases FAIL.
+
+`gentoo_agent/core/validate.py`: import `from gentoo_agent.core.arch import architecture_spec, live_architecture`. In `validated_settings`, right after the partition-path loop:
+
+```python
+    spec = architecture_spec(install.get("architecture"))
+    if install.get("boot_mode") == "bios" and not spec["bios"]:
+        raise AgentError(CONFIG_CONFLICT, f"{install['architecture']} supports UEFI boot only.",
+                         {"fields": ["architecture", "boot_mode"]})
+```
+
+In `validate_installation`, add `"architecture"` to `required`, and inside `if inventory is not None:` before the storage check:
+
+```python
+        try:
+            live = live_architecture(inventory)
+        except AgentError as error:
+            errors.append(error.message)
+        else:
+            if install.get("architecture") != live:
+                errors.append(f"architecture {install.get('architecture')} does not match the live system ({live})")
+```
+
+Run: `.venv/bin/python -m unittest tests.test_validate -v`
+Expected: PASS.
+
+- [ ] **Step 4: Architecture-driven programs**
+
+Append to `tests/test_phases.py`:
+
+```python
+class ArchitectureProgramTests(unittest.TestCase):
+    def render(self, name: str, phase: str, check: bool = False) -> str:
+        install = fixture(name)
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            generate = phases.check_command_for if check else phases.command_for
+            return generate(phase, TARGET, install)
+
+    def test_preflight_checks_the_live_machine(self):
+        self.assertIn('test "$(uname -m)" = x86_64', self.render("uefi_gpt_user_sudo", "preflight"))
+        self.assertIn('test "$(uname -m)" = aarch64', self.render("uefi_gpt_arm64_user_sudo", "preflight"))
+
+    def test_arm64_stage_and_bootloader(self):
+        stage = self.render("uefi_gpt_arm64_user_sudo", "base-system")
+        self.assertIn("https://distfiles.gentoo.org/releases/arm64/autobuilds/latest-stage3-arm64-openrc.txt", stage)
+        self.assertNotIn("amd64", stage)
+        self.assertIn("--target=arm64-efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader"))
+        self.assertIn("/mnt/gentoo/boot/EFI/Gentoo/grubaa64.efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader", check=True))
+
+    def test_amd64_programs_are_unchanged_apart_from_the_machine_check(self):
+        self.assertIn("--target=x86_64-efi", self.render("uefi_gpt_user_sudo", "bootloader"))
+        self.assertIn("grubx64.efi", self.render("uefi_gpt_user_sudo", "bootloader", check=True))
+```
+
+Run: `.venv/bin/python -m unittest tests.test_phases.ArchitectureProgramTests -v`
+Expected: FAIL.
+
+`gentoo_agent/core/phases.py`: import `from gentoo_agent.core.arch import STAGE_BASE, STAGE_LIST, architecture_spec`.
+
+`preflight_commands`, after `test "$(id -u)" -eq 0`:
+
+```python
+        f"test \"$(uname -m)\" = {q(architecture_spec(install.get('architecture'))['machine'])}",
+```
+
+(`validated_settings` at the top of the function has already checked the value; insert it as the fourth element of the list literal.)
+
+`base_system_command` (after Task 2 it has a fixed openrc URL):
+
+```python
+def base_system_command(install: dict) -> str:
+    architecture = install.get("architecture")
+    architecture_spec(architecture)
+    stage_list = STAGE_LIST.format(arch=architecture)
+    stage_base = STAGE_BASE.format(arch=architecture)
+```
+
+(delete the two old `stage_list` / `stage_base` assignments; keep the rest).
+
+`bootloader_command`, the UEFI branch:
+
+```python
+    else:
+        spec = architecture_spec(install.get("architecture"))
+        inside = "\n".join([
+            "emerge --noreplace --verbose sys-boot/grub",
+            f"grub-install --target={spec['grub_efi_target']} --efi-directory=/boot --bootloader-id=Gentoo",
+            "grub-mkconfig -o /boot/grub/grub.cfg",
+        ])
+```
+
+`bootloader_check_command`, the UEFI branch:
+
+```python
+    else:
+        binary = architecture_spec(install.get("architecture"))["grub_efi_binary"]
+        lines.append(f"test -e {q(MOUNT_ROOT + '/boot/EFI/Gentoo/' + binary)}")
+```
+
+Run: `.venv/bin/python -m unittest tests.test_phases -v`
+Expected: PASS.
+
+Run: `GOLDEN_UPDATE=1 .venv/bin/python -m unittest tests.test_golden_commands && git diff tests/golden`
+Expected: in the five amd64 files only one added line, `test "$(uname -m)" = x86_64`, in the preflight apply and check; the new `uefi_gpt_arm64_user_sudo.txt` is created. Read the arm64 file end to end and confirm: `aarch64` in preflight, the arm64 stage URL, `/dev/nvme0n1p1..p3` partitions, `--target=arm64-efi`, and `grubaa64.efi`.
+
+- [ ] **Step 5: Resolve infers the architecture**
+
+Add to the resolve tests (`tests/test_resolve.py`; read its `inventory()` helper first and add `identity_result(...)` to the results it builds, with `x86_64` as the default):
+
+```python
+    def test_architecture_is_inferred_from_the_live_system(self):
+        result = resolve_config(TARGET, {}, {}, DEFAULTS, inventory(machine="aarch64"))
+        self.assertEqual(result["install"]["architecture"], "arm64")
+        self.assertEqual(result["sources"]["architecture"], "inferred")
+        self.assertEqual(result["install"]["profile"], "gentoo-arm64-openrc")
+
+    def test_architecture_override_must_match_the_live_system(self):
+        with self.assertRaises(AgentError) as caught:
+            resolve_config(TARGET, {"architecture": "arm64"}, {}, DEFAULTS, inventory(machine="x86_64"))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+
+    def test_architecture_cannot_be_a_fallback(self):
+        with self.assertRaises(AgentError) as caught:
+            resolve_config(TARGET, {}, {"architecture": "amd64"}, DEFAULTS, inventory())
+        self.assertEqual(caught.exception.details, {"layer": "fallbacks", "field": "architecture"})
+```
+
+(If the helper is shaped differently, give it a `machine` keyword with default `"x86_64"` that adds `identity_result(machine)`. The arm64 inventory needs `boot_mode` `uefi`; reuse the helper's boot option.)
+
+`gentoo_agent/core/resolve.py`:
+- add `"architecture"` to `SETTABLE`, `"architecture": str` to `TYPES`, and `NOT_FALLBACK = ("boot_mode", "disk", "architecture")`; update the comment above it to name the architecture.
+- import `live_architecture`, and after `live_boot = _live_boot_mode(results)`:
+
+```python
+    live_arch = live_architecture(inventory)
+    inferred: dict = {"boot_mode": live_boot, "architecture": live_arch}
+```
+
+(replacing the existing `inferred` line).
+- after the boot mode conflict check:
+
+```python
+    if install["architecture"] != live_arch:
+        raise AgentError(
+            CONFIG_CONFLICT,
+            f"architecture {install['architecture']} was requested but the live system is {live_arch}.",
+            {"requested": install["architecture"], "live": live_arch},
+        )
+    install["profile"] = f"gentoo-{install['architecture']}-{install.get('init_system', SUPPORTED_INIT_SYSTEM)}"
+    sources["profile"] = "derived"
+```
+
+Make sure `config/install.default.json` has no `architecture` key (it must come from the hardware or the user).
+
+Run: `.venv/bin/python -m unittest tests.test_resolve -v`
+Expected: PASS.
+
+- [ ] **Step 6: Plan creation, dialog, discovery**
+
+Add to `CreatePlanTests` in `tests/test_install_plan.py` (the fixture is amd64; extend `inventory()` from Task 5 with a `machine` keyword that adds `identity_result(machine)`, default `"x86_64"`):
+
+```python
+    def test_architecture_must_match_the_inventory(self):
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=inventory(machine="aarch64"))
+        self.assertEqual(caught.exception.code, CONFIG_CONFLICT)
+```
+
+`gentoo_agent/core/install_plan.py`: import `CONFIG_CONFLICT` and `live_architecture`; in `create_install_plan`, right after `_check_inventory_fresh(inventory)`:
+
+```python
+    live = live_architecture(inventory)
+    if install.get("architecture") != live:
+        raise AgentError(CONFIG_CONFLICT, f"The configuration is for {install.get('architecture')}, "
+                         f"but the live system is {live}.", {"configured": install.get("architecture"), "live": live})
+```
+
+`gentoo_agent/core/approval.py`: add a line `Architecture: <value>` (through `_shown`) to the summary next to the boot mode line, and in `tests/test_approval.py` assert `"Architecture: amd64"` in the summary text the existing summary test builds.
+
+`gentoo_agent/core/hardware.py`: add `"architecture"` to the summary, `"unknown"` unless the probe gives a supported machine:
+
+```python
+    try:
+        architecture = live_architecture(inventory)
+    except AgentError:
+        architecture = "unknown"
+```
+
+with a test in `tests/test_hardware.py` for `arm64` (identity `aarch64`), `unknown` (no identity result), and `unknown` (`riscv64`).
+
+Then fix every remaining fixture that builds an inventory for `resolve_config`, `create_install_plan`, or the MCP tools (`tests/test_cli.py`, `tests/test_launcher.py`, `tests/test_mcp_server.py` `write_home`, and others the suite reports) by adding `identity_result("x86_64")`. The MCP `write_home` fixture uses `/dev/nvme0n1` with UEFI; it can stay amd64.
+
+Run: `.venv/bin/python -m unittest discover -s tests`
+Expected: OK.
+
+- [ ] **Step 7: Front ends**
+
+`gentoo_agent/init_config.py`:
+
+```python
+    parser.add_argument("--architecture", choices=("amd64", "arm64"), default="amd64",
+                        help="Gentoo architecture of the target (uname -m x86_64 is amd64, aarch64 is arm64)")
+```
+
+and in `main`, before `build_layout`:
+
+```python
+    if args.architecture == "arm64" and args.boot_mode != "uefi":
+        raise SystemExit("arm64 supports UEFI boot only; use --boot-mode uefi")
+```
+
+and add `"architecture": args.architecture,` to the `install.update({...})` block.
+
+`gentoo_agent/prepare.py`, in `build_install_config` before the boot mode question:
+
+```python
+    try:
+        architecture = live_architecture(inventory)
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
+    print(f"Architecture: {architecture} (from the live system)")
+    target["architecture"] = architecture
+    target["handbook_url"] = f"https://wiki.gentoo.org/wiki/Handbook:{architecture.upper()}"
+```
+
+For `arm64`, skip the boot mode question and use `"uefi"`. In the `install.update({...})` block add `"architecture": architecture,` and set `"profile": f"gentoo-{architecture}-{init_system}"`. Extend `EraseAuthorizationTests.build` from Task 4 so its inventory is `{"results": [identity_result("x86_64")]}`, and add one test that an `aarch64` inventory yields `install["architecture"] == "arm64"` and `install["boot_mode"] == "uefi"`.
+
+- [ ] **Step 8: Full suite and commit**
+
+Run: `.venv/bin/python -m unittest discover -s tests && python3 -m unittest discover -s tests`
+Expected: OK in both (MCP tests skip in the system Python).
+
+```bash
+git add -A gentoo_agent tests config
+git commit -m "Support amd64 and arm64 from one architecture table
+
+The architecture is a required install setting, inferred from uname -m
+on the live system, checked at plan creation and again in preflight.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11: Documentation
+
+Bring the docs in line with Tasks 1 to 10. No em dashes, no emoji. Verify every command and field you write against the code.
 
 **Files:**
 - Modify: `docs/CONFIGURATION.md`, `docs/TROUBLESHOOTING.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/guides/cli-install.md`, `docs/guides/ai-install.md`, `docs/superpowers/specs/2026-10-15-mcp-server-design.md`, `CLAUDE.md`
@@ -1280,7 +1726,8 @@ Bring the docs in line with Tasks 1 to 9. No em dashes, no emoji. Verify every c
 `docs/CONFIGURATION.md`:
 - `init_system`: only `openrc`; systemd is refused by validation, `init_config.py`, and `prepare_install.py`.
 - `network_static`: four required keys `interface`, `address`, `gateway`, `dns`; interface rules (letters, digits, `_`, `.`, `-`, at most 15 characters, first character a letter or digit); where to find the name (the `network` section of the inventory, `ip -brief address` on the live system); the block is written to `/etc/dhcpcd.conf` between `# gentoo-agent static network begin` and `# gentoo-agent static network end`. Remove the paragraph about `ens33` and `dhcpcd.conf.d`.
-- Plan creation requirements: inventory younger than 24 hours, the `validate` review passing, and `expected_disk_model` / `expected_disk_size_gib` (within 1 GiB) matching the inventory when set.
+- Plan creation requirements: inventory younger than 24 hours, the `validate` review passing, `architecture` matching the live system, and `expected_disk_model` / `expected_disk_size_gib` (within 1 GiB) matching the inventory when set.
+- `architecture`: required, `amd64` or `arm64`, inferred from `uname -m` (`x86_64`, `aarch64`); arm64 is UEFI only; `target.architecture` is informational. Name the supported architectures in `README.md` and in the requirements of both install guides.
 
 - [ ] **Step 2: Troubleshooting**
 
@@ -1294,7 +1741,9 @@ Bring the docs in line with Tasks 1 to 9. No em dashes, no emoji. Verify every c
 
 `docs/ARCHITECTURE.md`: drift check before every destructive apply; the worker flock (`runs/<run_id>/worker.lock`) and the pid fallback; plan creation runs the review; the error code table gains `HOST_KEY_UNKNOWN`.
 
-`docs/ROADMAP.md`: move the fixed items (static networking, `set -e`, systemd consistency, prepare authorization, plan-time review, per-phase drift, worker liveness, MCP smoke test, `HOST_KEY_UNKNOWN`) to "Done". Keep as known limitations: cancel cannot interrupt a running phase or the drift read; `PHASE_PRECONDITION_FAILED` reserved; MCP SDK argument errors are unstructured; Plan 4 hardware.
+`docs/ARCHITECTURE.md` also gets a short section on `core/arch.py`: the table, how the architecture is inferred and checked, and what adding one takes (table entry, golden fixture, a real test install).
+
+`docs/ROADMAP.md`: move the fixed items (static networking, `set -e`, systemd consistency, prepare authorization, plan-time review, per-phase drift, worker liveness, MCP smoke test, `HOST_KEY_UNKNOWN`, amd64 and arm64 support) to "Done". Add as a known risk: arm64 UEFI firmware that only boots `/EFI/BOOT/BOOTAA64.EFI` needs `grub-install --removable`, which is not generated yet. Keep as known limitations: cancel cannot interrupt a running phase or the drift read; `PHASE_PRECONDITION_FAILED` reserved; MCP SDK argument errors are unstructured; Plan 4 hardware.
 
 - [ ] **Step 4: Guides, spec, and CLAUDE.md**
 
