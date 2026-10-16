@@ -74,7 +74,7 @@ Rules that hold across the code:
    `CONFIG_CONFLICT` instead of guessing.
 3. **Create the plan.** `core/install_plan.create_install_plan()` runs
    `validated_settings()`, requires full disk-erase authorization and an
-   inventory younger than 24 hours, checks the configured architecture against
+   inventory younger than 24 hours and not dated more than 5 minutes ahead, checks the configured architecture against
    the live one, runs the `validate_installation()` review and refuses on any
    error, takes the disk identity from the latest inventory, checks
    `expected_disk_model` and `expected_disk_size_gib` against it, and generates

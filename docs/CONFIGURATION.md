@@ -243,7 +243,8 @@ all of these hold, in this order:
 1. The configuration passes `validated_settings()` and the erase authorization
    above is complete (`CONFIG_INVALID`).
 2. An inventory exists (`INVENTORY_MISSING`) and is younger than 24 hours. An
-   undated or older inventory is also `INVENTORY_MISSING`: run `inspect` again.
+   undated or older inventory, or one dated more than 5 minutes in the future,
+   is also `INVENTORY_MISSING`: run `inspect` again.
 3. `architecture` matches the live system's `uname -m` from the inventory
    (`CONFIG_CONFLICT`).
 4. The `validate` review (`validate_installation()`) reports no errors

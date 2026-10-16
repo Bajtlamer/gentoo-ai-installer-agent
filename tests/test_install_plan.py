@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 import unittest
 from pathlib import Path
@@ -87,6 +88,17 @@ class CreatePlanTests(unittest.TestCase):
                 with self.assertRaises(AgentError) as caught:
                     self.create(inventory=inventory(collected_at=collected_at))
                 self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_inventory_dated_in_the_future_is_refused(self):
+        ahead = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat(timespec="seconds")
+        with self.assertRaises(AgentError) as caught:
+            self.create(inventory=inventory(collected_at=ahead))
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+        self.assertEqual(caught.exception.details["collected_at"], ahead)
+
+    def test_inventory_a_little_ahead_is_accepted(self):
+        ahead = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).isoformat(timespec="seconds")
+        self.create(inventory=inventory(collected_at=ahead))
 
     def test_expected_disk_model_must_match_the_inventory(self):
         with self.assertRaises(AgentError) as caught:
