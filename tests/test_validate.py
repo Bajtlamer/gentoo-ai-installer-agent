@@ -113,12 +113,12 @@ INVALID = [
     ("swap negative", changed("uefi_gpt_user_sudo", swap_mb=-1), "swap_mb"),
     ("swap huge", changed("uefi_gpt_user_sudo", swap_mb=131073), "swap_mb"),
     ("root btrfs", changed("uefi_gpt_user_sudo", root_filesystem="btrfs"), "root_filesystem"),
+    ("systemd", changed("uefi_gpt_user_sudo", init_system="systemd"), "init_system"),
 ]
 
 VALID = [
     ("swap zero", changed("uefi_gpt_user_sudo", swap_mb=0)),
     ("swap max", changed("uefi_gpt_user_sudo", swap_mb=131072)),
-    ("systemd", changed("uefi_gpt_user_sudo", init_system="systemd")),
     ("nested timezone", changed("uefi_gpt_user_sudo", timezone="America/Argentina/Buenos_Aires")),
     ("etc timezone", changed("uefi_gpt_user_sudo", timezone="Etc/GMT+5")),
     ("static ipv4", static()),

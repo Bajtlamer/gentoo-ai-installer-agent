@@ -100,7 +100,7 @@ printf 'filesystems-ok\n'
 ===== base-system apply =====
 set -eu
 mkdir -p /mnt/gentoo/dev /mnt/gentoo/proc /mnt/gentoo/sys /mnt/gentoo/run
-stage_list=https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt
+stage_list=https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt
 stage_base=https://distfiles.gentoo.org/releases/amd64/autobuilds/
 if [ ! -e /mnt/gentoo/etc/gentoo-release ]; then
   stage_path=$(wget -qO- "$stage_list" | awk '$1 ~ /\.tar\.xz$/ {print $1; exit}')

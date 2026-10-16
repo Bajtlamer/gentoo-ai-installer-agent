@@ -172,8 +172,7 @@ def chroot(command: str) -> str:
 
 
 def base_system_command(install: dict) -> str:
-    variant = "openrc" if install.get("init_system") == "openrc" else "systemd"
-    stage_list = f"https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-{variant}.txt"
+    stage_list = "https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-openrc.txt"
     stage_base = "https://distfiles.gentoo.org/releases/amd64/autobuilds/"
     inside = "\n".join([
         "mkdir -p /var/db/repos/gentoo",

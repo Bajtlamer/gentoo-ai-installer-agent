@@ -8,7 +8,7 @@
     {"device": "/dev/sdc2", "size_mib": 2048, "type": "linux-swap", "mount": null},
     {"device": "/dev/sdc3", "size": "remaining", "type": "linux-root", "filesystem": "ext4", "mount": "/"}
   ],
-  "init_system": "systemd",
+  "init_system": "openrc",
   "hostname": "builder",
   "timezone": "Europe/Prague",
   "network_method": "dhcp",

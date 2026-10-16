@@ -8,7 +8,8 @@ import re
 from gentoo_agent.core.errors import CONFIG_CONFLICT, CONFIG_INVALID, AgentError
 
 
-INIT_SYSTEMS = {"openrc", "systemd"}
+# Version 1 generates OpenRC programs only (rc-update, /etc/runlevels).
+INIT_SYSTEMS = {"openrc"}
 NETWORK_METHODS = {"dhcp", "static"}
 MAX_SWAP_MB = 131072
 IP_TEXT = re.compile(r"[0-9A-Fa-f:./]+")
@@ -126,7 +127,7 @@ def validated_settings(target: dict, install: dict) -> tuple[str, list[dict]]:
         raise _invalid("timezone", "timezone must be a relative zoneinfo name such as Europe/Prague")
     init_system = install.get("init_system")
     if not isinstance(init_system, str) or init_system not in INIT_SYSTEMS:
-        raise _invalid("init_system", "init_system must be 'openrc' or 'systemd'")
+        raise _invalid("init_system", "init_system must be 'openrc'; systemd is not supported in this version")
     _check_network(install)
     if "swap_mb" in install:
         swap_mb = install["swap_mb"]

@@ -48,8 +48,8 @@ DERIVED = {
 # mode must come from the user, the profile, or the hardware.
 NOT_FALLBACK = ("boot_mode", "disk")
 SUPPORTED_BOOTLOADERS = {"grub"}
-# Version 1 generates OpenRC commands only. validate.py still accepts systemd so
-# hand-written configurations and the golden fixtures keep rendering.
+# Version 1 generates OpenRC programs only; validated_settings() refuses
+# systemd as well. Checking here gives the model a clearer early error.
 SUPPORTED_INIT_SYSTEM = "openrc"
 LIVE_BOOT_MODES = {"uefi": "uefi", "bios-or-unknown": "bios"}
 

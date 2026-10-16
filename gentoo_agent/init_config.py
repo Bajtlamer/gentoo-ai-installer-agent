@@ -41,7 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--boot-mode", choices=("uefi", "bios"), default="uefi")
     parser.add_argument("--root-filesystem", choices=("ext4",), default="ext4")
     parser.add_argument("--swap-mb", type=int, default=2048)
-    parser.add_argument("--init-system", choices=("openrc", "systemd"), default="openrc")
+    parser.add_argument("--init-system", choices=("openrc",), default="openrc",
+                        help="Only openrc is supported in this version")
     parser.add_argument("--hostname", default="gentoo")
     parser.add_argument("--timezone", default="Europe/Prague")
     parser.add_argument("--network-method", default="dhcp")
