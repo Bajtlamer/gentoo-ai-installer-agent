@@ -1,7 +1,9 @@
 import datetime as dt
 import os
+import signal
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 import unittest
@@ -12,6 +14,9 @@ from gentoo_agent.core import runs
 from gentoo_agent.core.config import load_json, save_json
 from gentoo_agent.core.errors import CONFIG_INVALID, RUN_ALREADY_ACTIVE, RUN_NOT_FOUND, AgentError
 from tests.helpers import temp_home
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def dead_pid() -> int:
@@ -421,6 +426,39 @@ class WorkerLockTests(unittest.TestCase):
             finally:
                 for handle in handles:
                     handle.close()
+
+    @unittest.skipUnless(os.name == "posix", "flock and SIGKILL are POSIX only")
+    def test_lock_outlives_a_killed_worker_while_its_ssh_child_runs(self):
+        # The child takes the worker lock, starts a remote program the way the worker does
+        # (ssh replaced by `sleep 3`), and SIGKILLs itself while the program runs.
+        child_code = textwrap.dedent("""
+            import os, signal, sys, threading, time
+            from unittest.mock import patch
+            from gentoo_agent.core import runs, ssh
+            handle = runs.hold_worker_lock(sys.argv[1])
+            with patch.object(ssh, "ssh_base", lambda target: ["sh", "-c", "sleep 3", "sleep"]):
+                threading.Thread(target=ssh.remote_shell, daemon=True, args=({}, "label", "true"),
+                                 kwargs={"stream": True, "keep_fds": (handle.fileno(),)}).start()
+                time.sleep(0.5)
+                os.kill(os.getpid(), signal.SIGKILL)
+        """)
+        with temp_home() as home:
+            run_id = runs.new_run_id()
+            env = {**os.environ, "GENTOO_AGENT_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}
+            started = time.monotonic()
+            child = subprocess.Popen([sys.executable, "-c", child_code, run_id], env=env, cwd=str(REPO_ROOT))
+            self.assertEqual(child.wait(timeout=10), -signal.SIGKILL)
+            held_after_kill = runs.worker_lock_held(run_id)
+            released = False
+            while time.monotonic() - started < 8:
+                if runs.worker_lock_held(run_id) is False:
+                    released = True
+                    break
+                time.sleep(0.1)
+            elapsed = time.monotonic() - started
+        self.assertIs(held_after_kill, True)
+        self.assertTrue(released)
+        self.assertGreater(elapsed, 2.5)
 
 
 if __name__ == "__main__":
