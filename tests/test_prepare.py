@@ -150,5 +150,79 @@ class EraseAuthorizationTests(unittest.TestCase):
         self.assertIn("CONFIG_INVALID", str(caught.exception))
 
 
+
+def disk_inventory(*, mounted_sdc: bool = True, usb_sdb: bool = True) -> dict:
+    identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": [
+        {"path": "/dev/sdb", "type": "disk", "size": 16 * 1024 ** 3, "model": "Flash", "serial": "u1", "wwn": "",
+         "tran": "usb" if usb_sdb else "sata", "rm": usb_sdb, "ro": False},
+        {"path": "/dev/sdc", "type": "disk", "size": 80 * 1024 ** 3, "model": "Data", "serial": "d1", "wwn": "",
+         "tran": "sata", "rm": False, "ro": False},
+        {"path": "/dev/sda", "type": "disk", "size": 40 * 1024 ** 3, "model": "QEMU HARDDISK", "serial": "q1",
+         "wwn": "", "tran": "sata", "rm": False, "ro": False},
+    ]})}
+    storage = {"label": "storage_json", "returncode": 0, "stdout": json.dumps({"blockdevices": [
+        {"path": "/dev/sdb", "type": "disk", "size": "16G", "mountpoints": [None]},
+        {"path": "/dev/sdc", "type": "disk", "size": "80G", "mountpoints": [None],
+         "children": [{"path": "/dev/sdc1", "type": "part",
+                       "mountpoints": ["/mnt/data"] if mounted_sdc else [None]}]},
+        {"path": "/dev/sda", "type": "disk", "size": "40G", "model": "QEMU HARDDISK", "mountpoints": [None]},
+    ]})}
+    return {"results": [identity, storage]}
+
+
+class ChooseDiskTests(unittest.TestCase):
+    def choose(self, inventory: dict, answers: list[str] | None = None) -> tuple[dict, list, str]:
+        asked = []
+
+        def fake_ask(prompt, default=None):
+            asked.append((prompt, default))
+            return answers.pop(0) if answers else default
+
+        output = io.StringIO()
+        with patch.object(prepare, "ask", fake_ask), redirect_stdout(output):
+            disk = prepare.choose_disk(inventory)
+        return disk, asked, output.getvalue()
+
+    def test_only_eligible_disks_are_offered_and_excluded_ones_listed_with_reasons(self):
+        disk, asked, output = self.choose(disk_inventory())
+        self.assertEqual(disk["path"], "/dev/sda")
+        self.assertEqual(disk["model"], "QEMU HARDDISK")
+        self.assertEqual(asked, [("Disk to use", "/dev/sda")])
+        eligible_part, excluded_part = output.split("Excluded disks")
+        self.assertIn("/dev/sda", eligible_part)
+        self.assertNotIn("/dev/sdb", eligible_part)
+        self.assertNotIn("/dev/sdc", eligible_part)
+        self.assertIn("/dev/sdb: removable; usb transport", excluded_part)
+        self.assertIn("/dev/sdc: mounted at /mnt/data", excluded_part)
+
+    def test_default_is_the_first_eligible_disk(self):
+        disk, asked, _ = self.choose(disk_inventory(usb_sdb=False))
+        self.assertEqual(asked[0], ("Disk to use", "/dev/sdb"))
+        self.assertEqual(disk["path"], "/dev/sdb")
+
+    def test_an_excluded_or_unknown_disk_is_refused_and_asked_again(self):
+        disk, asked, output = self.choose(disk_inventory(), ["/dev/sdc", "/dev/nvme9n1", "/dev/sda"])
+        self.assertEqual(disk["path"], "/dev/sda")
+        self.assertEqual(len(asked), 3)
+        self.assertIn("/dev/sdc cannot be installed to: mounted at /mnt/data", output)
+        self.assertIn("/dev/nvme9n1 is not an eligible disk", output)
+
+    def test_no_eligible_disk_stops_preparation(self):
+        identity = disk_inventory()["results"][0]
+        data = json.loads(identity["stdout"])
+        data["blockdevices"] = [device for device in data["blockdevices"] if device["path"] != "/dev/sda"]
+        identity["stdout"] = json.dumps(data)
+        inventory = {"results": [identity, disk_inventory()["results"][1]]}
+        with self.assertRaises(SystemExit) as caught:
+            self.choose(inventory)
+        self.assertIn("No eligible disk", str(caught.exception))
+        self.assertIn("/dev/sdb (removable; usb transport)", str(caught.exception))
+
+    def test_missing_disk_identity_stops_preparation(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.choose({"results": [disk_inventory()["results"][1]]})
+        self.assertIn("INVENTORY_MISSING", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
