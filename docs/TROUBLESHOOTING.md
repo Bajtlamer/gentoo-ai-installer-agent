@@ -25,17 +25,18 @@ the background stores the same object in `error` (and the message in
 
 | Code | Typical causes | What to do |
 |---|---|---|
-| `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network). A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
-| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A chosen disk that is excluded (removable, USB, read-only, or mounted). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
+| `CONFIG_INVALID` | A missing or unreadable `config/target.json`, `config/install.json`, or `config/plan.json`. A value fails validation (unsafe disk path, SSH user other than `root`, non-ext4 root, bad hostname, timezone, username, groups, or static network including a missing or invalid `interface`). A missing `architecture` in an older `config/install.json`. The configuration does not pass review at `plan create` (`details.errors` lists the findings of `validate`). The disk model or size differs from `expected_disk_model` or `expected_disk_size_gib`. A password variable name that does not end in `_PASSWORD` or `_PW`, or a password passed as text. Missing public key next to `identity_file`. Disk erasure not fully authorized at `plan create` (`details.missing` lists the flags). A missing password variable with `generate_missing_passwords: false`. `password_source: "prompt"` without a terminal, or through MCP. `init_system` other than `openrc` (in any front end or in `install.json`), or a bootloader other than `grub` in `resolve_config`. A disk not in the latest inventory. An invalid plan id or run id. Background runs on native Windows. `runs/active.lock` that is not a regular file. | Read the message and `details.field`; fix the named file or value; see the [configuration reference](CONFIGURATION.md). Run `gentoo-agent validate` before `plan create`. |
+| `CONFIG_CONFLICT` | UEFI requested with a partition table other than GPT. A requested `boot_mode` that differs from how the live system booted. A configured `architecture` that differs from the live system, or `arm64` with BIOS boot. A chosen disk that is excluded (removable, USB, read-only, or mounted). | Boot the VM in the firmware mode you want (or request the mode it booted in) and inspect again. Choose an eligible disk. |
 | `APPROVAL_REQUIRED` | The plan has no approval yet. The approval record is malformed, unsigned, or signed with another key. `approve` run without an interactive terminal. The signing key `secrets/approval.key` is not a private regular file you own, or is malformed. `install --execute` (replaced by plans). An MCP client without elicitation support, or a failed dialog. | Approve the plan yourself in your own terminal: `gentoo-agent approve <plan_id>`. For a bad key, remove `secrets/approval.key` and approve again (existing approvals become invalid). |
 | `APPROVAL_DECLINED` | The typed phrase was not exactly `APPROVE <plan_id>`, or the dialog was declined, cancelled, or accepted without checking `approve`. | Nothing was recorded. Approve again if you meant to. |
 | `APPROVAL_EXPIRED` | More than 60 minutes passed between the approval and `run start`, `run resume`, `start_install`, `run_phase`, or `resume_run`. | Approve the same plan again, then start or resume. See [Approval expired](#approval-expired). |
 | `PLAN_NOT_FOUND` | No `plans/<plan_id>.json` for that id (typo, or a different `GENTOO_AGENT_HOME`). | Check the id from `plan create` and the work directory. |
 | `PLAN_HASH_MISMATCH` | A plan file was edited after creation. The approval is for a different plan hash. The plan changed after the run started. `verify_install` found a stored check that does not match what the code generates now, for example after the SSH key changed. | Never edit `plans/` or `approvals/`. Create a new plan, approve it, and start it. |
-| `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
+| `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. At `plan create`: the latest inventory is older than 24 hours or has no valid `collected_at`. The identity probe did not report the live architecture. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
 | `DISK_AMBIGUOUS` | In `resolve_config` and `create_plan`: none or several disks are eligible, so no disk can be inferred (`details.candidates`, `details.excluded`). At `plan create`: the disk has no serial or WWN and another disk has the same size and model (`details.twins`). | Name the disk explicitly (the `disk` override, or `disk` in `install.json`), or detach the twin disk and inspect again. See [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick). |
-| `TARGET_DRIFT` | At the start of a run, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
-| `SSH_UNREACHABLE` | Every inventory command failed (wrong address, key, user, or untrusted host key); nothing was saved. `ssh` could not be executed. The disk identity could not be read at the start of a run. `verify_install` could not reach the target. | Test the connection by hand with `BatchMode=yes` and `StrictHostKeyChecking=yes`. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
+| `TARGET_DRIFT` | At the start of a run, and again before each destructive phase, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
+| `HOST_KEY_UNKNOWN` | ssh exited with 255 and "Host key verification failed": the target's host key is not in the known hosts file, or has changed. Raised by `inspect` and `detect_hardware` (inventory), by the disk identity read at the start of a run and before each destructive phase, and by `verify_install`. | Verify the fingerprint on the target console, then add the key to the configured known hosts file. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
+| `SSH_UNREACHABLE` | Every inventory command failed (wrong address, key, or user); nothing was saved. `ssh` could not be executed. The disk identity could not be read at the start of a run. `verify_install` could not reach the target. | Test the connection by hand with `BatchMode=yes` and `StrictHostKeyChecking=yes`. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
 | `HANDBOOK_UNAVAILABLE` | `gentoo-agent handbook` could not download `handbook_url`. | Check the network and the URL in `config/target.json`. `prepare_install.py` only warns about this. |
 | `PHASE_FAILED` | A phase's apply or verification returned non-zero (`details.phase`, `details.returncode`). An unexpected exception during the run. The worker could not be started, or exited before receiving its payload. The worker ended without recording a result (status `interrupted`). | Read the end of the log for that phase, fix the cause (often network, mirrors, or a console fix), then `run resume <run_id>`. |
 | `RUN_NOT_FOUND` | No `runs/<run_id>/run.json` for that id. | Check the run id and `GENTOO_AGENT_HOME`. |
@@ -44,9 +45,12 @@ the background stores the same object in `error` (and the message in
 
 ## SSH host key not trusted
 
-Symptoms: `inspect` fails with `SSH_UNREACHABLE` ("Could not reach the target
-over SSH; check the address, key, and host key."), or a run fails at the start
-with `SSH_UNREACHABLE` ("Could not read disk identity from ...").
+Symptoms: `inspect`, the disk identity read of a run, or `verify_install` fails
+with `HOST_KEY_UNKNOWN` ("The target's SSH host key is unknown or has
+changed."). The code means ssh exited with 255 and printed "Host key
+verification failed". Other connection failures stay `SSH_UNREACHABLE`
+("Could not reach the target over SSH; check the address, key, and host
+key.").
 
 Every connection uses `BatchMode=yes` and `StrictHostKeyChecking=yes`, so ssh
 never asks whether to trust a key; an unknown or changed key simply fails.
@@ -64,8 +68,9 @@ never asks whether to trust a key; an unknown or changed key simply fails.
 3. Verify the key out of band: print the fingerprint on the live console
    (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) and compare it with
    the key fetched over the network (`ssh-keyscan -t ed25519 <host>`).
-4. Only if they match, remove a stale entry (`ssh-keygen -R <host>`) and add
-   the verified key. The [CLI guide](guides/cli-install.md#step-2-verify-and-trust-the-host-key)
+4. Only if the fingerprints match, remove a stale entry
+   (`ssh-keygen -R <host>`) and add the verified key with `ssh-keyscan` to the
+   known hosts file named by `known_hosts_file` (or your default file). The [CLI guide](guides/cli-install.md#step-2-verify-and-trust-the-host-key)
    has the full procedure.
 
 "Permission denied (publickey)" means the key is not in the live system's
@@ -107,8 +112,9 @@ To continue:
 ## TARGET_DRIFT after a reboot of the live ISO
 
 A plan is bound to the identity of one disk: path, size in bytes, model,
-serial, and WWN. At the start of every run the worker reads the live disk at
-the planned path again and stops if anything differs:
+serial, and WWN. At the start of every run, and again before every destructive
+phase, the worker reads the live disk at the planned path again and stops if
+anything differs:
 
 ```text
 Disk /dev/sda does not match the approved plan.
@@ -164,9 +170,10 @@ A run is `starting` from the launch until the worker claims it (then
 `running`). `run status` and `get_run_status` check whether the worker is
 still alive:
 
-- If the worker's process id is recorded and the process is gone, or no
-  process id was recorded and the run started more than 60 seconds ago, the
-  run is marked `interrupted` with "The worker process ended without recording
+- If the worker's lock file `runs/<run_id>/worker.lock` exists and no
+  process holds it, or (before the worker took the lock, or for a run without
+  the file) the recorded process id is gone, or no process id was recorded and
+  the run started more than 60 seconds ago, the run is marked `interrupted` with "The worker process ended without recording
   a result." and the run lock is released.
 - A run is also `interrupted` when the worker itself was interrupted during a
   phase ("Installation was interrupted.").

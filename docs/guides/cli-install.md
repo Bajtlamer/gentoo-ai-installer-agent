@@ -37,7 +37,7 @@ You need:
 | OpenSSH client | `ssh` on `PATH` (and `ssh-keygen`, `ssh-keyscan` for the host key steps). |
 | SSH key | A dedicated key pair for the live session. The public key must sit next to the private key as `<private key>.pub`, because the installer copies it into the installed system. |
 | Live medium | A current Gentoo live ISO (for example the minimal installation CD) attached to the VM. |
-| Target | A VM with one disk you are willing to erase, and network access from the operator machine. |
+| Target | A VM with one disk you are willing to erase, and network access from the operator machine. Supported architectures: amd64 (BIOS or UEFI) and arm64 (UEFI only). |
 
 Get the code and, optionally, install the `gentoo-agent` command:
 
@@ -142,6 +142,12 @@ A live ISO usually creates new host keys every time it boots. After a reboot of
 the live system, remove the old entry (`ssh-keygen -R <live-ip>`) and repeat
 this step.
 
+If you skip this step, or the key changed, `inspect` and the other commands
+that connect fail with `HOST_KEY_UNKNOWN` ("The target's SSH host key is
+unknown or has changed."). Do not add the key blindly: compare the fingerprints
+as above, then add it. See
+[SSH host key not trusted](../TROUBLESHOOTING.md#ssh-host-key-not-trusted).
+
 ## Step 3: Create the configuration
 
 The installer reads two private files, both ignored by Git:
@@ -202,8 +208,19 @@ What it writes:
 Run `python3 tools/init_config.py --help` for every option (`--no-create-user`,
 `--no-sudo`, `--no-root-password`, `--allow-root-password-ssh`,
 `--password-source`, `--root-password-env`, `--user-password-env`, and more).
-Keep `--init-system openrc`, the default: the generated commands are written
-for OpenRC, and the MCP path refuses systemd outright.
+`--architecture amd64|arm64` (default `amd64`) must match the live system:
+`inspect` and `plan create` refuse a different one, and arm64 needs
+`--boot-mode uefi`. `--init-system` accepts only `openrc`: the generated
+commands are written for OpenRC and systemd is refused everywhere.
+
+For static networking, `network_method` and `network_static` (with the
+`interface`, `address`, `gateway`, and `dns` keys) are edited in
+`config/install.json` afterwards; see
+[Static network](../CONFIGURATION.md#static-network).
+
+An `install.json` written before the `architecture` field existed fails
+`validate`, the dry run, and `plan create`. Add `"architecture": "amd64"` (or
+`"arm64"`) to it.
 
 ### Option B: prepare_install.py (interactive, read-only discovery)
 
@@ -211,17 +228,9 @@ for OpenRC, and the MCP path refuses systemd outright.
 read-only command set, and writes `config/install.json`. It never partitions,
 formats, installs, or reboots.
 
-Before you run it, mark the target as disposable. The tool does not ask about
-this, and without it `plan create` refuses the plan later. Copy
-`config/target.default.json` to `config/target.json` (the tool does this itself
-when the file is missing) and set:
-
-```json
-"target_is_disposable": true,
-"disk_erase_authorized": true
-```
-
-Then run:
+The tool asks for the erase decision itself (see below) and saves it in both
+`config/target.json` and `config/install.json`, so you do not edit
+`target.json` by hand. Run:
 
 ```sh
 python3 tools/prepare_install.py
@@ -234,14 +243,24 @@ What it does, in order:
    saves them.
 2. Runs the read-only inventory over SSH (`Read-only check: identity`,
    `Read-only check: boot_mode`, and so on) and saves it under `inventory/`.
-3. Saves a Handbook snapshot under `inventory/` (a failure is only a warning).
-4. Lists the detected disks and asks which one to use, then asks for boot mode,
-   filesystem, swap, init system, hostname, timezone, network, user, sudo,
-   root password, root password SSH login, and password source.
-5. If the target is marked disposable, it records the erase decision
-   automatically. Otherwise it asks you to type `ERASE <disk>`.
-6. Writes `config/install.json` and `state/state.json`, prints the complete
-   configuration and the result of local validation, and stops.
+3. Lists the detected disks and asks which one to use. It reads the
+   architecture from the live system (it does not ask) and sets `architecture`
+   and `handbook_url` in `target.json` from it. On arm64 the boot mode is
+   `uefi` without a question. It then asks for boot mode (amd64 only),
+   filesystem, swap, hostname, timezone, network, user, sudo, root password,
+   root password SSH login, and password source. The init system is `openrc`
+   without a question. For static networking it asks for the network
+   interface on the installed system (take the name from the `network` section
+   of the inventory, or `ip -brief address` on the live system), the address in
+   CIDR form, the gateway, and the DNS servers.
+4. Asks you to type `ERASE <disk>` unless the target is already marked
+   disposable and erase authorized. Either way, the decision is saved in
+   `target.json` as well as `install.json`.
+5. Saves a Handbook snapshot under `inventory/` for the live architecture (a
+   failure is only a warning).
+6. Writes `config/install.json`, `config/target.json`, and `state/state.json`,
+   prints the complete configuration and the result of local validation, and
+   stops.
 
 The boot mode question defaults to `uefi` whatever the live system reports, so
 check the validation output for a boot mode conflict.
@@ -315,7 +334,8 @@ Inspecting errors...
 
 If none of the commands reached the target, nothing is saved and the command
 fails with `SSH_UNREACHABLE` ("Could not reach the target over SSH; check the
-address, key, and host key."). Read the inventory file and confirm that the
+address, key, and host key."), or with `HOST_KEY_UNKNOWN` when ssh reports
+"Host key verification failed". Read the inventory file and confirm that the
 disk you plan to erase is the one you expect: size, model, serial, and WWN.
 
 Optionally record the Handbook source as well:

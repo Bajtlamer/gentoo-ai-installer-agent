@@ -63,18 +63,22 @@ Rules that hold across the code:
    over SSH and saves `inventory/inventory-<stamp>.json`. One of those
    commands, `disk_identity`, runs `lsblk -J -b -d` and records each disk's
    path, size, model, serial, and WWN. If every command fails with ssh exit
-   255 or a timeout, nothing is saved and `SSH_UNREACHABLE` is raised.
+   255 or a timeout, nothing is saved and `SSH_UNREACHABLE` is raised (or
+   `HOST_KEY_UNKNOWN` when ssh reports "Host key verification failed").
 2. **Resolve the configuration.** The CLI reads `config/target.json` and
    `config/install.json`. The MCP server calls `core/resolve.resolve_config()`,
    which layers overrides, profile, values inferred from the inventory,
    fallbacks, and `config/install.default.json`, and records the source of
-   every value. It infers the boot mode from the live system and the disk when
-   exactly one disk is eligible; otherwise it raises `DISK_AMBIGUOUS` or
+   every value. It infers the boot mode and the architecture from the live system, and the
+   disk when exactly one disk is eligible; otherwise it raises `DISK_AMBIGUOUS` or
    `CONFIG_CONFLICT` instead of guessing.
 3. **Create the plan.** `core/install_plan.create_install_plan()` runs
-   `validated_settings()`, requires full disk-erase authorization, takes the
-   disk identity from the latest inventory, and generates the apply and check
-   program of every phase. It writes `plans/<plan_id>.json`. The `plan_hash`
+   `validated_settings()`, requires full disk-erase authorization and an
+   inventory younger than 24 hours, checks the configured architecture against
+   the live one, runs the `validate_installation()` review and refuses on any
+   error, takes the disk identity from the latest inventory, checks
+   `expected_disk_model` and `expected_disk_size_gib` against it, and generates
+   the apply and check program of every phase. It writes `plans/<plan_id>.json`. The `plan_hash`
    is SHA-256 over everything except `plan_id`, `plan_hash`, and `created_at`.
    The `plan_id` is the first 16 hex characters of the hash.
 4. **Approve.** A human approves in one of two channels:
@@ -95,16 +99,22 @@ Rules that hold across the code:
    session. The password records travel to the worker over its stdin as a
    JSON payload. The password environment variables are removed from the
    worker's environment.
-6. **Worker claim.** The worker validates the payload, then calls
+6. **Worker claim.** The worker validates the payload, takes the per-run
+   flock `runs/<run_id>/worker.lock` (`runs.hold_worker_lock()`, under the
+   `runs/.mutex` so status probes cannot race its startup), then calls
    `runs.claim_run()`, which moves the run from `starting` to `running` only
    if the run still holds the lock. A missing or malformed payload fails the
-   run without executing anything.
+   run without executing anything. A second worker for the same run finds the
+   lock held, returns `RUN_ALREADY_ACTIVE`, and leaves the run record and the
+   run lock alone.
 7. **Re-check the approval.** The worker calls `require_approved_plan()` again
    and refuses the run with `PLAN_HASH_MISMATCH` if the plan hash differs from
    the one recorded at start.
 8. **Execute.** `core/runner.execute_plan()` first runs the `disk_identity`
    command again and compares path, size, model, serial, and WWN with the
-   plan. Any difference stops the run with `TARGET_DRIFT` before a change.
+   plan. Any difference stops the run with `TARGET_DRIFT` before a change. The
+   same check runs again before every destructive apply, so a disk that
+   changed mid-run stops the run before the next destructive phase.
 9. **Per phase.** For each phase in plan order, the runner checks the cancel
    flag, then runs the stored check program. Exit 0 means the phase is already
    complete and it is skipped. Otherwise it runs the stored apply program, and
@@ -115,14 +125,20 @@ Rules that hold across the code:
     (phase, kind, label, command, return code, output). `run.json` tracks the
     status, the current phase, the completed phases, and the last error. A
     successful run ends with `installed_pending_reboot`. The worker always
-    releases the lock.
+    releases the run lock and then closes its worker lock. The launcher waits
+    for each worker in a background thread so a long-lived MCP server leaves no
+    zombie processes.
 
 Resume: `run resume <run_id>` (or the MCP tool `resume_run`) starts a new run
 of the same plan through `start_run()`. Phases whose check passes are skipped.
 
 Interrupted runs are detected lazily. When `run_status()` reads an active run
-whose worker process is gone, it marks the run `interrupted` and releases the
-lock. There is no startup scan.
+whose worker is gone, it marks the run `interrupted` and releases the lock.
+Liveness is read from the worker's flock: while a worker is alive it holds
+`runs/<run_id>/worker.lock`, and the kernel drops the lock when the process
+ends, so a reused process id cannot make a dead worker look alive. The recorded
+process id is the fallback only before the worker took the lock and for runs
+without the file. There is no startup scan.
 
 ## What lives on disk
 
@@ -161,12 +177,14 @@ current code does not write to it.
 | Validation | `core/validate.validated_settings()` | Unsafe or inconsistent values reaching remote commands. It is the single gate before generation. |
 | Quoting | `core/phases.py` | Every value is quoted with `shlex.quote`. |
 | Erase authorization | `install_plan._check_erase_authorized()` | A plan without `disk_must_be_erased`, `target_is_disposable`, and `disk_erase_authorized` set to `true` in the configuration. |
+| Plan-time review | `install_plan.create_install_plan()` | A plan from a configuration that fails the `validate` review, an inventory older than 24 hours, an architecture that differs from the live system, or a disk that differs from `expected_disk_model` or `expected_disk_size_gib`. |
 | `plan_hash` | `core/install_plan.py` | Edited plan files. `load_install_plan()` rejects them with `PLAN_HASH_MISMATCH`. |
 | Signed approval with TTL | `core/approval.py`, `core/signing.py` | Approvals that are unsigned, malformed, for another hash, dated in the future, or older than 60 minutes. A malformed record counts as not approved. |
 | Single gate | `require_approved_plan()` | Any start without a valid approval. It runs in `start_run()` and again in the worker. |
 | Run lock | `runs/active.lock` under the `runs/.mutex` `fcntl` mutex | Two runs at once (`RUN_ALREADY_ACTIVE`). |
 | Claim | `runs.claim_run()` | A worker running a run it does not own, or a run that is no longer `starting`. `execute_plan()` refuses unclaimed runs. |
-| Drift check | `core/disks.check_drift()` | Writing to a disk that differs from the approved one (`TARGET_DRIFT`). |
+| Drift check | `core/disks.check_drift()` | Writing to a disk that differs from the approved one (`TARGET_DRIFT`). It runs at the start of a run and before every destructive apply. |
+| Worker lock | `runs/<run_id>/worker.lock` | A dead worker that looks alive (process id reuse), and a second worker for the same run. |
 | No reboot | `core/runner.py` | No phase reboots. The target stays up for console recovery. |
 | Passwords on stdin only | `core/credentials.py`, authentication apply program | Passwords in commands, logs, or configuration. The program reads the records once and pipes them only to `chpasswd`. |
 | No passwords to the model | `mcp/server.py` | `get_run_status` reports only `credentials_waiting` and `credentials_applied`. |
@@ -187,10 +205,11 @@ rules in `.claude/settings.json` are a convention.
 | `approval.py` | Approval summary, signed approval records, `require_approved_plan()`, `approval_status()` |
 | `config.py` | JSON loading, atomic saving, timestamps, `target_config()`, `install_config()`, `load_plan()` |
 | `credentials.py` | Builds `chpasswd` records from environment variables, generation, or a prompt callback |
+| `arch.py` | The architecture table (`ARCHITECTURES`), `architecture_spec()`, `live_architecture()` |
 | `disks.py` | Disk identities from `lsblk`, eligible candidates, identity strength, `check_drift()` |
 | `errors.py` | `AgentError` and the stable error codes |
 | `handbook.py` | Fetches the Handbook and saves a snapshot with URL and retrieval time |
-| `hardware.py` | Inventory summary for discovery: boot mode and disks |
+| `hardware.py` | Inventory summary for discovery: boot mode, architecture, and disks |
 | `install_plan.py` | Plan creation, `plan_hash`, loading and saving plans |
 | `inventory.py` | Collects and records the read-only inventory |
 | `layout.py` | Partition layout from disk, boot mode, and swap size |
@@ -198,9 +217,9 @@ rules in `.claude/settings.json` are a convention.
 | `phases.py` | `PHASES` order and the apply and check generators per phase |
 | `resolve.py` | Layered configuration resolution with value sources |
 | `runner.py` | `execute_plan()`, phase selection, `render_dry_run()` |
-| `runs.py` | Run records, lock, mutex, claim, cancel flag, log paging, one-time credentials |
+| `runs.py` | Run records, lock, mutex, per-run worker lock, claim, cancel flag, log paging, one-time credentials |
 | `signing.py` | HMAC-SHA256 signing key and signatures |
-| `ssh.py` | `ssh_base()`, read-only allowlist, `remote_shell()`, strict host-key checking |
+| `ssh.py` | `ssh_base()`, read-only allowlist, `remote_shell()`, strict host-key checking, `host_key_failed()` |
 | `state.py` | Local workflow state in `state/state.json` |
 | `validate.py` | `validated_settings()` gate and the broader `validate_installation()` review |
 
@@ -269,7 +288,30 @@ Every phase follows the contract in [phases/README.md](../phases/README.md):
 
 Phase programs must be idempotent, target-specific, logged, and safe to rerun
 after an SSH disconnect. `tests/test_golden_commands.py` pins the generated
-programs for five configurations in `tests/golden/`.
+programs for six configurations in `tests/golden/`.
+
+## Architectures
+
+`core/arch.py` holds the one table of supported architectures. Each entry of
+`ARCHITECTURES` gives the `uname -m` machine name, the GRUB EFI target, the
+EFI binary name, and whether BIOS boot is possible: `amd64` is `x86_64`,
+`x86_64-efi`, `grubx64.efi`, BIOS allowed; `arm64` is `aarch64`, `arm64-efi`,
+`grubaa64.efi`, UEFI only.
+
+- `phases.py` reads the table for the stage 3 URLs, the `grub-install` target,
+  the bootloader check, and the `uname -m` test in `preflight`.
+- `validate.py` refuses an unknown architecture and BIOS on an architecture
+  without BIOS support, and reports a mismatch with the live system.
+- `live_architecture()` reads the `arch=` line of the inventory's `identity`
+  result. It raises `INVENTORY_MISSING` when the probe is missing or failed and
+  `CONFIG_INVALID` for a machine that is not in the table. `resolve_config()`,
+  `create_install_plan()`, `validate_installation()`, `prepare_install.py`, and
+  `detect_hardware` (as `unknown` on failure) all use it.
+
+Adding an architecture takes a table entry, a golden fixture in
+`tests/golden/configs/` with regenerated programs, and a real test
+installation on that architecture. The golden fixture only proves the commands
+are stable, not that they work.
 
 ## Error codes
 
@@ -286,6 +328,7 @@ Codes are defined in `gentoo_agent/core/errors.py`. The CLI prints
 | `INVENTORY_MISSING` | No inventory exists, or it lacks usable disk identity data |
 | `TARGET_DRIFT` | The live disk no longer matches the plan, or the plan has no disk identity |
 | `SSH_UNREACHABLE` | The target could not be reached over SSH |
+| `HOST_KEY_UNKNOWN` | ssh refused the connection because the target's host key is unknown or changed |
 | `DISK_AMBIGUOUS` | No single eligible disk, or a disk without serial or WWN has an identical twin |
 | `PLAN_NOT_FOUND` | No plan file exists for the plan id |
 | `PLAN_HASH_MISMATCH` | A plan file was modified, or an approval or run refers to a different hash |

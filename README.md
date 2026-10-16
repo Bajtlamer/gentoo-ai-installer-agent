@@ -6,7 +6,8 @@ both cases a human approves the exact plan before anything changes on the
 target.
 
 Status: version 0.2.0. The installer covers a complete OpenRC, ext4, GRUB
-installation on one disk (BIOS/MBR or UEFI/GPT). It is meant for a disposable
+installation on one disk (BIOS/MBR or UEFI/GPT) on amd64 and arm64 (arm64 is UEFI
+only). It is meant for a disposable
 VM first. Test there before you use physical hardware. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what comes next.
 
@@ -57,7 +58,7 @@ Requirements:
 - Python 3.12 or newer and the OpenSSH client (`ssh` on `PATH`).
 - macOS or Linux for `approve` and for runs. On Windows, use WSL. Dry runs,
   `inspect`, and `plan create` work on any platform.
-- A Gentoo live environment reachable over SSH, with its host key verified in
+- A target with an amd64 or arm64 CPU and a Gentoo live environment reachable over SSH, with its host key verified in
   your `known_hosts` file and a dedicated temporary SSH key.
 
 Install the package, or use the `tools/` shims without installing:
