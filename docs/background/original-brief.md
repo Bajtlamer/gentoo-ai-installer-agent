@@ -1,3 +1,7 @@
+> Note: this is the original problem statement and research from the start of
+> the project, kept for history. The current design is described in
+> [ARCHITECTURE.md](../ARCHITECTURE.md) and the [design spec](../superpowers/specs/2026-10-15-mcp-server-design.md).
+
 # How to use agents to install or fix a Gentoo Linux system
 
 ## Answer in one sentence

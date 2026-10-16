@@ -1,225 +1,128 @@
 # Gentoo Agent
 
-A supervised, resumable agent workflow for installing or repairing Gentoo over
-SSH from a live environment.
+Supervised Gentoo installation over SSH from a live environment. You drive it
+from a command line, or let an AI client drive it through an MCP server. In
+both cases a human approves the exact plan before anything changes on the
+target.
 
-The repository provides a supervised installer whose default mode is still
-read-only. It can:
+Status: version 0.2.0. The installer covers a complete OpenRC, ext4, GRUB
+installation on one disk (BIOS/MBR or UEFI/GPT). It is meant for a disposable
+VM first. Test there before you use physical hardware. See
+[docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what comes next.
 
-- fetch the official Gentoo Handbook;
-- inspect a live target using an allowlisted SSH command set;
-- record inventory and source evidence;
-- keep a phase plan and resumable state;
-- create explicit approval records;
-- execute the reviewed installation phases with a guarded command allowlist.
-
-The installer is intended for disposable VM testing first. It never reboots a
-target automatically, and execution remains disabled until the operator
-explicitly approves the rendered configuration.
-
-## Architecture
+## How it works
 
 ```text
-local agent / supervisor
-        |
-        +-- Handbook reader (HTTPS)
-        +-- SSH inspector (read-only)
-        +-- approval and state store
-        +-- phase executor (allowlisted, dry-run by default)
-        |
-        +---- OpenSSH ----> Gentoo live environment
+operator machine                                  live target
++------------------------------------------+      +----------------------+
+| gentoo-agent CLI      or   MCP server    |      | Gentoo live          |
+|        |                  (AI client)    |      | environment          |
+|        v                                 |      |                      |
+| inspect -> plan (plan_hash)              | SSH  |  read-only inventory |
+|        -> human approval (signed record) |----->|  phase programs:     |
+|        -> background worker              |      |   check -> apply     |
+|        -> phases, run log under runs/    |      |   -> verify          |
++------------------------------------------+      +----------------------+
 ```
 
-The local machine owns the plan, logs, approvals, and private SSH key. The
-target only needs a booted live environment, networking, and a temporary SSH
-server.
+The operator machine holds the configuration, plans, approvals, run logs, and
+the SSH key. The target only needs a booted live environment, networking, and
+an SSH server. Each phase first runs a read-only check: if it passes, the phase
+is skipped. Otherwise it applies the change and runs the check again as
+verification. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the
+internals.
 
-## Requirements
+## Choose your path
 
-- Python 3.12 or newer on the operator machine.
-- Optional: `pip install -e .` provides the `gentoo-agent` command; every
-  `python tools/...` command below keeps working without installation.
-- OpenSSH client available as `ssh` on `PATH`.
-- A Gentoo live environment reachable over SSH.
-- A verified host key in the operator's SSH `known_hosts` file.
-- A dedicated temporary SSH key for the live session.
-- Dry run, `inspect`, and `plan create` work on any platform. `approve` and background runs (`run start`, `run resume`) need macOS or Linux; on Windows use WSL.
+**Install with the CLI.** You run every step yourself: create the
+configuration, inspect the target, review a dry run, create a plan, approve
+it in your terminal, and start the run. Read
+[docs/guides/cli-install.md](docs/guides/cli-install.md).
 
-## First setup
+**Install with an AI client over MCP.** An AI client such as Claude Code calls
+typed tools to detect hardware, resolve the configuration, and create a plan.
+You approve the plan in a dialog the server builds, and the AI starts and
+follows the run. Read [docs/guides/ai-install.md](docs/guides/ai-install.md).
+To make the approval a barrier the agent cannot bypass, follow
+[docs/guides/protected-mode.md](docs/guides/protected-mode.md).
 
-For a new checkout, create the minimum local configuration with:
+**Contribute.** Set up a development environment, run the tests, and learn
+the rules for changing generated commands in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-```text
+## Quickstart
+
+Requirements:
+
+- Python 3.12 or newer and the OpenSSH client (`ssh` on `PATH`).
+- macOS or Linux for `approve` and for runs. On Windows, use WSL. Dry runs,
+  `inspect`, and `plan create` work on any platform.
+- A Gentoo live environment reachable over SSH, with its host key verified in
+  your `known_hosts` file and a dedicated temporary SSH key.
+
+Install the package, or use the `tools/` shims without installing:
+
+```sh
+pip install -e .                 # adds the gentoo-agent command
+pip install -e '.[mcp]'          # also adds gentoo-agent-mcp
+python tools/gentoo_agent.py -h  # same commands, no installation
+```
+
+The minimal CLI sequence:
+
+```sh
 python tools/init_config.py --host <live-ip> --disk /dev/sda --allow-disk-erase
-```
-
-The command creates `config/target.json` and `config/install.json`, applies
-safe defaults, and does not connect to the target. It refuses to overwrite
-existing files unless `--overwrite` is explicitly supplied. See
-`docs/CONFIGURATION.md` for every required and optional field.
-
-The same defaults are directly visible in
-`config/target.default.json` and `config/install.default.json`. Those files
-are safe examples: disk erasure and execution are disabled.
-
-Edit the generated files with the live target address, SSH user, key path,
-architecture, and installation choices. Keep them private; they are ignored by
-Git.
-
-Do not put a private key or password in this repository.
-
-The installation choices are kept separately in `config/install.json`. This
-file is ignored by Git because it contains target-specific decisions. Review it
-before enabling execution. The active private configuration describes a BIOS,
-ext4, OpenRC, 2 GiB-swap installation on `/dev/sda`, with execution disabled.
-
-## Safe first run
-
-For the beginner-friendly workflow, run one command:
-
-```powershell
-python tools/prepare_install.py
-```
-
-It reads or creates `target.json`, connects over SSH using read-only checks,
-collects inventory, asks for installation choices, writes `install.json`, and
-prints the entire configuration for review. It never installs anything.
-
-Fetch the current Handbook source:
-
-```sh
-python tools/gentoo_agent.py handbook
-```
-
-Inspect the target using only the built-in read-only command set:
-
-```sh
-python tools/gentoo_agent.py inspect
-```
-
-Review the generated files under `inventory/` before doing anything else:
-
-```sh
-python tools/gentoo_agent.py status
-python tools/gentoo_agent.py validate
-```
-
-Render every installation command without connecting to the target:
-
-```powershell
-python tools/gentoo_agent.py install --dry-run
-```
-
-After reviewing `config/target.json`, `config/install.json`, the latest
-inventory, and the dry-run output, freeze them into a plan:
-
-```sh
-python tools/gentoo_agent.py plan create
-```
-
-The plan records the generated commands and the target disk serial, and its
-`plan_hash` covers both. Approve it yourself in an interactive terminal; the
-command refuses to run without one. The agent is instructed never to approve
-and is denied the command. With the operator profile and protected mode from
-docs/OPERATING.md the agent cannot create a valid approval; without them, the
-check is a convention.
-
-```sh
-python tools/gentoo_agent.py approve <plan_id>
-```
-
-The approval is valid for 60 minutes. Start the run, which continues in the
-background, and follow it:
-
-```sh
-python tools/gentoo_agent.py run start <plan_id>
-python tools/gentoo_agent.py run status <run_id>
-python tools/gentoo_agent.py run log <run_id>
-```
-
-The phases are preflight, storage, filesystems, base system, configuration,
-authentication, kernel, bootloader, and validation. A failure stops the run and preserves its log under `runs/<run_id>/`; the target is left running for console recovery.
-Every phase has a read-only state check and a post-apply verification. After a failure, `run resume <run_id>` starts a new run of the same plan and skips phases whose target state is already complete.
-
-During the authentication phase the agent installs OpenSSH and sudo, verifies
-the root authorized key and enabled services, creates the configured regular user, and
-reads password environment variables without prompting. It generates random
-replacements when configured values are absent. Generated
-credentials are kept in `runs/<run_id>/credentials.json` with mode 0600 until
-`run status` shows them once (if the authentication phase was attempted but the
-install did not finish, or the worker stopped early, it says they may have been
-applied), are deleted
-when shown, and are otherwise purged 24 hours after being written the next time
-any `run status` runs. They are never stored in configuration files or phase
-logs. The regular user is the normal post-reboot login. Root SSH is
-key-only by default; the reviewed configuration may explicitly allow root
-password SSH login while retaining the root public key as a fallback.
-
-When `configure_sudo` is enabled, the regular user must be in `wheel`; the
-authentication phase enables the standard `%wheel` sudoers rule. The regular
-user's password is the password requested by `sudo -i`.
-
-The commands use strict SSH host-key checking. If the host key is not already
-trusted, stop and verify it through the live console before reconnecting.
-
-## Workflow
-
-1. Boot the target into a live environment using a physical, hypervisor, or
-   management console.
-2. Start SSH and verify the connection manually.
-3. Configure `config/target.json`.
-4. Run `handbook` and `inspect`.
-5. Run `install --dry-run` and review the generated commands.
-6. Run `plan create`, approve the plan yourself with `approve <plan_id>`, then `run start <plan_id>`.
-7. Verify the phase, update state, and preserve the transcript.
-
-The Handbook provides procedure. The state machine, approval records, and
-phase scripts provide repeatability and safety.
-
-## AI-driven installation (MCP)
-
-An AI client can drive the whole installation through a stdio MCP server.
-Install the optional extra and register the server:
-
-```sh
-pip install -e '.[mcp]'
-```
-
-Point your client at `gentoo-agent-mcp` using `.mcp.json.example`. For a setup
-where the agent cannot approve its own plan, follow `docs/OPERATING.md`
-(protected copy of the server plus the sandbox profile in
-`docs/operator/claude-settings.json`).
-
-The tools are used in this order:
-
-1. `detect_hardware` summarizes the target's firmware boot mode (`uefi`,
-   `bios`, or `unknown`) and its disks with serial and WWN; CPU, GPU, and
-   network cards come in a later version. It uses the latest saved inventory
-   unless `refresh=true`, which first runs the read-only SSH inventory and
-   returns `SSH_UNREACHABLE` if the target cannot be reached.
-2. `resolve_config` merges the request into a validated install configuration
-   and reports the source of every value (overrides, profile, inferred from
-   hardware, fallbacks, defaults). It returns `DISK_AMBIGUOUS` or
-   `CONFIG_CONFLICT` instead of guessing.
-3. `create_plan` freezes the configuration into a plan with a `plan_hash`.
-4. `approve_plan` shows the human an approval dialog (elicitation). Only an
-   explicit accept writes a signed approval record. If the client cannot show
-   the dialog, the tool returns `APPROVAL_REQUIRED` with the command to run in
-   your own terminal.
-5. `start_install` starts the background run; `get_run_status` and
-   `get_run_log` follow it, and `verify_install` runs read-only checks after
-   it.
-
-Passwords are passed only as `{"env": "NAME"}`, where the variable name ends
-in `_PASSWORD` or `_PW`. Plain-text passwords are rejected. Generated
-passwords are never returned to the model; the status reports that credentials
-are waiting, and you read them in a terminal:
-
-```sh
+gentoo-agent inspect
+gentoo-agent install --dry-run
+gentoo-agent plan create
+gentoo-agent approve <plan_id>      # you, in an interactive terminal
+gentoo-agent run start <plan_id>
 gentoo-agent run status <run_id>
 ```
 
-## References
+Review the generated files, the inventory, and the dry run before you create
+the plan. The guides explain each step.
 
-- [Gentoo Handbook](https://wiki.gentoo.org/wiki/Handbook:Main_Page/en)
-- [Gentoo AMD64 Handbook](https://wiki.gentoo.org/wiki/Handbook:AMD64)
+## Safety model
+
+Every command can be rendered as a dry run without connecting to the target.
+A plan freezes the validated configuration, the exact generated commands, and
+the target disk identity (serial or WWN), and its `plan_hash` covers all of
+them. Only a human approves a plan, in a TTY or an MCP dialog, and the
+approval is an HMAC-signed record bound to the `plan_hash` and valid for 60
+minutes. One gate checks that approval before any run starts, and the worker
+re-reads the live disk identity and stops with `TARGET_DRIFT` if it changed.
+The installer never reboots the target, and passwords never appear in
+commands, logs, or MCP results.
+
+The approval is a real barrier only with the operator profile and the
+protected server copy from
+[docs/guides/protected-mode.md](docs/guides/protected-mode.md). Without them,
+an agent that can edit the repository could bypass it, so the rule is a
+convention.
+
+## Documentation map
+
+| Document | What it covers |
+|----------|----------------|
+| [README.md](README.md) | This entry point |
+| [docs/guides/cli-install.md](docs/guides/cli-install.md) | Full installation with the CLI |
+| [docs/guides/ai-install.md](docs/guides/ai-install.md) | Installation driven by an AI client over MCP |
+| [docs/guides/protected-mode.md](docs/guides/protected-mode.md) | Protected server copy and operator profile |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every configuration field and file |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Error codes, failed runs, and recovery |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Internals: flow, files on disk, safety layers, modules |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Done, next, and known limitations |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, tests, and change rules |
+| [AGENTS.md](AGENTS.md) | Binding safety rules for any agent working here |
+| [CLAUDE.md](CLAUDE.md) | Guidance for Claude Code in this repository |
+| [docs/superpowers/specs/](docs/superpowers/specs/) | Design specification of the MCP server |
+| [docs/superpowers/plans/](docs/superpowers/plans/) | Implementation plans 1 to 3 |
+| [docs/background/original-brief.md](docs/background/original-brief.md) | Original problem statement and research |
+
+Procedure source: the
+[Gentoo AMD64 Handbook](https://wiki.gentoo.org/wiki/Handbook:AMD64).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

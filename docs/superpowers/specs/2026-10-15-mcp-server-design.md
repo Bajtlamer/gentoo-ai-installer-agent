@@ -250,7 +250,7 @@ root-anchored, for example `Edit(/plans/**)`, because an unanchored
 `Edit(plans/**)` also matches `docs/superpowers/plans/`. It is opt-in because
 a project-wide sandbox would also restrict normal development sessions.
 
-Protected operation mode (`docs/OPERATING.md`): the barrier is real only when
+Protected operation mode (`docs/guides/protected-mode.md`): the barrier is real only when
 the MCP server runs from an installed copy the agent cannot modify, with the
 sandbox profile applied. In development mode, with the server run from the
 repository, the agent can edit the server's code and the barrier does not

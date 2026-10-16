@@ -50,14 +50,18 @@ Commands that touch the target (`inspect`, `handbook`, `prepare_install.py`, `ru
 - `core/layout.py`: partition layout from disk size, boot mode, and `swap_mb` (0 means no swap; swap must be under half the disk). `core/disks.py`: disk identities and inference (`disk_candidates()` excludes removable, USB, read-only, and mounted disks). `core/hardware.py`: inventory summary for discovery; the boot mode is `unknown` unless the probe succeeded cleanly.
 - `core/inventory.py`: `collect_inventory()` raises `SSH_UNREACHABLE` and saves nothing when every allowlisted command failed with ssh exit 255 or a timeout.
 - `gentoo_agent/mcp/server.py`: thin `MCPServer` adapter over `core/` and `jobs/launcher`. Every tool returns a `CallToolResult` with `structured_content` (no outputSchema); errors carry `{code, message, details}` with `is_error`. `approve_plan` uses elicitation and the server builds the dialog text (`approval_summary`, untrusted values escaped). Generated passwords never reach the model (`get_run_status` reports only `credentials_waiting` and `credentials_applied`). Never `print()` in server code: stdout is the protocol.
-- Operator profile: `docs/operator/claude-settings.json` and `docs/OPERATING.md` stop the agent's shell and file tools from writing `approvals/`, `plans/`, `runs/`, `secrets/`, `config/`, `inventory/`, `.mcp.json`, and `.claude/`; the shell cannot read `secrets/` or `runs/` (run status and logs come through the MCP tools), and the file tools cannot read `secrets/` or run credentials. Deny rules for top-level directories must be root-anchored (`Edit(/plans/**)`), because `Edit(plans/**)` also matches `docs/superpowers/plans/`.
+- Operator profile: `docs/operator/claude-settings.json` (see `docs/guides/protected-mode.md`) stops the agent's shell and file tools from writing `approvals/`, `plans/`, `runs/`, `secrets/`, `config/`, `inventory/`, `.mcp.json`, and `.claude/`; the shell cannot read `secrets/` or `runs/` (run status and logs come through the MCP tools), and the file tools cannot read `secrets/` or run credentials. Deny rules for top-level directories must be root-anchored (`Edit(/plans/**)`), because `Edit(plans/**)` also matches `docs/superpowers/plans/`.
 
 `roles/*.md` hold the Supervisor, Inspector, Executor, Verifier, and Recovery prompts used when coordinating the workflow as an agent. The MCP server design that builds on this package is in `docs/superpowers/specs/2026-10-15-mcp-server-design.md`.
+
+## Documentation
+
+`README.md` (overview), `docs/guides/` (`cli-install.md`, `ai-install.md`, `protected-mode.md`), `docs/CONFIGURATION.md` (field reference), `docs/ARCHITECTURE.md`, `docs/TROUBLESHOOTING.md`, `docs/ROADMAP.md`, `CONTRIBUTING.md`.
 
 ## Configuration files
 
 - Private, gitignored: `config/target.json`, `config/install.json`, `state/state.json`, and everything under `inventory/`, `logs/`, `plans/`, `approvals/`, `runs/`. Do not commit or overwrite them.
-- Committed templates: `*.default.json` (safe defaults, execution and erase disabled) and `*.example.json`. Field reference: `docs/CONFIGURATION.md`. When adding a config field, update the defaults, `init_config.py` / `prepare_install.py` if they set it, and `docs/CONFIGURATION.md`.
+- Committed templates: `*.default.json` (safe defaults, disk erasure disabled) and `*.example.json`. Field reference: `docs/CONFIGURATION.md`. When adding a config field, update the defaults, `init_config.py` / `prepare_install.py` if they set it, and `docs/CONFIGURATION.md`.
 - `target.json` may point to a different install config via `install_config`.
 
 ## Conventions
