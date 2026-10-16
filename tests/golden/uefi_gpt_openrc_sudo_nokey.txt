@@ -88,7 +88,7 @@ swapon "$swap_device" || true
 efi_device=/dev/sdc1
 mkdir -p "$mount_root/boot"
 if ! blkid -o value -s TYPE "$efi_device" 2>/dev/null | grep -Eq 'vfat|fat32'; then mkfs.vfat -F 32 "$efi_device"; fi
-if ! findmnt -rn -T "$mount_root/boot" >/dev/null; then mount "$efi_device" "$mount_root/boot"; fi
+if ! findmnt -rn -M "$mount_root/boot" >/dev/null; then mount "$efi_device" "$mount_root/boot"; fi
 findmnt -D "$mount_root"
 blkid
 ===== filesystems check =====
@@ -154,6 +154,8 @@ printf '"'"'%s\n'"'"' '"'"'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden'"'"' > /ro
 chmod 600 /root/.ssh/authorized_keys
 printf '"'"'%s\n'"'"' '"'"'PermitRootLogin prohibit-password'"'"' '"'"'PubkeyAuthentication yes'"'"' '"'"'PasswordAuthentication yes'"'"' '"'"'UsePAM yes'"'"' > /etc/ssh/sshd_config.d/gentoo-agent.conf
 rc-update add sshd default
+{ grep -v '"'"'^rc_autostart_user='"'"' /etc/rc.conf || true; printf '"'"'%s\n'"'"' '"'"'rc_autostart_user="NO"'"'"'; } > /etc/rc.conf.new
+mv /etc/rc.conf.new /etc/rc.conf
 env-update
 source /etc/profile || true'
 touch /mnt/gentoo/.gentoo-agent-configuration-complete
@@ -170,6 +172,7 @@ grep -Fqx 'PasswordAuthentication yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-
 grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
 test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+grep -Fqx 'rc_autostart_user="NO"' /mnt/gentoo/etc/rc.conf
 printf 'configuration-ok\n'
 ===== authentication apply =====
 set -eu
@@ -215,13 +218,15 @@ printf 'kernel-ok\n'
 ===== bootloader apply =====
 set -eu
 chroot /mnt/gentoo /bin/bash -c 'set -e
-emerge --noreplace --verbose sys-boot/grub
+emerge --noreplace --verbose sys-boot/grub sys-boot/efibootmgr
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Gentoo
+grub-install --target=x86_64-efi --efi-directory=/boot --removable
 grub-mkconfig -o /boot/grub/grub.cfg'
 ===== bootloader check =====
 set -eu
 test -s /mnt/gentoo/boot/grub/grub.cfg
 test -e /mnt/gentoo/boot/EFI/Gentoo/grubx64.efi
+test -e /mnt/gentoo/boot/EFI/BOOT/BOOTX64.EFI
 printf 'bootloader-ok\n'
 ===== validation apply =====
 set -eu

@@ -29,6 +29,13 @@ class PhaseGeneratorTests(unittest.TestCase):
         self.assertIn("sfdisk", command)
         self.assertIn("disk=/dev/sda", command)
 
+    def test_efi_mount_checks_the_exact_mount_point(self):
+        # findmnt -T resolves to the root filesystem once /mnt/gentoo is mounted,
+        # which skipped the EFI mount on every fresh UEFI install.
+        command = phases.filesystem_command(TARGET, fixture("uefi_gpt_user_sudo"))
+        self.assertIn('if ! findmnt -rn -M "$mount_root/boot" >/dev/null; then mount', command)
+        self.assertNotIn('findmnt -rn -T "$mount_root/boot"', command)
+
     def test_uefi_with_mbr_is_a_conflict(self):
         install = fixture("uefi_gpt_user_sudo")
         install["partition_table"] = "mbr"
@@ -117,6 +124,25 @@ class ConfigurationQuotingTests(unittest.TestCase):
         self.assertIn("grep -Fqx 'interface enp1s0' /mnt/gentoo/etc/dhcpcd.conf", check)
         self.assertIn("grep -Fqx 'static ip_address=192.168.10.20/24' /mnt/gentoo/etc/dhcpcd.conf", check)
 
+    def test_openrc_user_services_are_disabled_once_on_rerun(self):
+        # pam_openrc starts user.<name> on login; without elogind there is no
+        # XDG_RUNTIME_DIR, so every login printed "ERROR: user.<name> failed to start".
+        lines = [line for line in self.configuration() if "/etc/rc.conf" in line]
+        self.assertTrue(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            rc_conf = Path(directory) / "rc.conf"
+            rc_conf.write_text('#rc_autostart_user="YES"\nrc_parallel="NO"\nrc_autostart_user="YES"\n', encoding="utf-8")
+            program = "\n".join(lines).replace("/etc/rc.conf", shlex.quote(str(rc_conf)))
+            for _ in range(2):
+                subprocess.run(["sh", "-eu", "-c", program], check=True)
+            self.assertEqual(rc_conf.read_text(encoding="utf-8"),
+                             '#rc_autostart_user="YES"\nrc_parallel="NO"\nrc_autostart_user="NO"\n')
+
+    def test_configuration_check_requires_user_services_off(self):
+        with patch.object(phases, "public_key_for_target", return_value="ssh-ed25519 AAAATEST test"):
+            check = phases.configuration_check_command(TARGET, fixture("uefi_gpt_user_sudo"))
+        self.assertIn("grep -Fqx 'rc_autostart_user=\"NO\"' /mnt/gentoo/etc/rc.conf", check)
+
     def test_zoneinfo_path_is_quoted(self):
         lines = self.configuration(timezone="UTC; touch /PWNED")
         line = next(line for line in lines if line.startswith("ln -snf"))
@@ -174,6 +200,17 @@ class ArchitectureProgramTests(unittest.TestCase):
         self.assertNotIn("amd64", stage)
         self.assertIn("--target=arm64-efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader"))
         self.assertIn("/mnt/gentoo/boot/EFI/Gentoo/grubaa64.efi", self.render("uefi_gpt_arm64_user_sudo", "bootloader", check=True))
+
+    def test_uefi_bootloader_installs_efibootmgr_and_a_removable_fallback(self):
+        # grub-install needs efibootmgr to write the firmware boot entry; some
+        # firmware (VMware included) only loads /EFI/BOOT.
+        for name, fallback in (("uefi_gpt_user_sudo", "BOOTX64.EFI"), ("uefi_gpt_arm64_user_sudo", "BOOTAA64.EFI")):
+            with self.subTest(name=name):
+                apply = self.render(name, "bootloader")
+                self.assertIn("emerge --noreplace --verbose sys-boot/grub sys-boot/efibootmgr", apply)
+                self.assertIn("--efi-directory=/boot --removable", apply)
+                self.assertIn(f"/mnt/gentoo/boot/EFI/BOOT/{fallback}", self.render(name, "bootloader", check=True))
+        self.assertNotIn("efibootmgr", self.render("bios_mbr_user_sudo", "bootloader"))
 
     def test_amd64_programs_are_unchanged_apart_from_the_machine_check(self):
         self.assertIn("--target=x86_64-efi", self.render("uefi_gpt_user_sudo", "bootloader"))

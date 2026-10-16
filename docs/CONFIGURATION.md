@@ -305,6 +305,11 @@ control the installed system:
   public key to `/root/.ssh/authorized_keys`, writes
   `/etc/ssh/sshd_config.d/gentoo-agent.conf`, and enables `sshd`. It also
   enables `dhcpcd`, for both network methods.
+- The `configuration` phase sets `rc_autostart_user="NO"` in `/etc/rc.conf`.
+  OpenRC's `pam_openrc` would otherwise start a `user.<name>` service at every
+  login, which needs `XDG_RUNTIME_DIR` from elogind; the OpenRC stage3 has no
+  elogind, so each login printed `ERROR: user.<name> failed to start`
+  ([news item](https://www.gentoo.org/support/news-items/2025-09-04-openrc-user-services.html)).
 - Root SSH login is `PermitRootLogin prohibit-password` (key only) unless
   `allow_root_password_ssh` is true, which sets `PermitRootLogin yes`. The
   generated file always contains `PasswordAuthentication yes`, so the regular
@@ -336,9 +341,10 @@ table behind it is `gentoo_agent/core/arch.py`:
   probe failed or the machine is not supported.
 - The `preflight` program also checks `uname -m` on the live target.
 - arm64 is UEFI only: `boot_mode: bios` with `arm64` is `CONFIG_CONFLICT`.
-  `grub-install` is not run with `--removable` yet, so firmware that only boots
-  `/EFI/BOOT/BOOTAA64.EFI` will not find the installed system (see the
-  [roadmap](ROADMAP.md#known-limitations)).
+- UEFI installs (both architectures) emerge `sys-boot/efibootmgr` with GRUB,
+  run `grub-install` once for the `Gentoo` boot entry, and once more with
+  `--removable` so firmware that only loads `/EFI/BOOT` (`BOOTX64.EFI`,
+  `BOOTAA64.EFI`) still finds GRUB. The bootloader check requires both files.
 - `target.json` `architecture` is informational and is not compared with the
   live system; `prepare_install.py` sets it from the live system, together with
   `handbook_url`.

@@ -151,6 +151,8 @@ printf '"'"'%s\n'"'"' '"'"'ssh-ed25519 AAAAGOLDEN gentoo-agent-golden'"'"' > /ro
 chmod 600 /root/.ssh/authorized_keys
 printf '"'"'%s\n'"'"' '"'"'PermitRootLogin prohibit-password'"'"' '"'"'PubkeyAuthentication yes'"'"' '"'"'PasswordAuthentication yes'"'"' '"'"'UsePAM yes'"'"' > /etc/ssh/sshd_config.d/gentoo-agent.conf
 rc-update add sshd default
+{ grep -v '"'"'^rc_autostart_user='"'"' /etc/rc.conf || true; printf '"'"'%s\n'"'"' '"'"'rc_autostart_user="NO"'"'"'; } > /etc/rc.conf.new
+mv /etc/rc.conf.new /etc/rc.conf
 env-update
 source /etc/profile || true'
 touch /mnt/gentoo/.gentoo-agent-configuration-complete
@@ -167,6 +169,7 @@ grep -Fqx 'PasswordAuthentication yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-
 grep -Fqx 'UsePAM yes' /mnt/gentoo/etc/ssh/sshd_config.d/gentoo-agent.conf
 test -e /mnt/gentoo/etc/runlevels/default/sshd
 test -e /mnt/gentoo/etc/runlevels/default/dhcpcd
+grep -Fqx 'rc_autostart_user="NO"' /mnt/gentoo/etc/rc.conf
 printf 'configuration-ok\n'
 ===== authentication apply =====
 set -eu
