@@ -10,7 +10,15 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.resolve import SETTABLE, resolve_config
-from tests.helpers import identity_result, partitions_result, windows_bios_disk, windows_disk
+from tests.helpers import (
+    BASIC_DATA_TYPE,
+    ESP_TYPE,
+    identity_result,
+    partition,
+    partitions_result,
+    windows_bios_disk,
+    windows_disk,
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -364,6 +372,22 @@ class DualBootResolveTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, DISK_AMBIGUOUS)
             self.assertEqual(caught.exception.details["candidates"], ["/dev/sda"])
             self.assertIn("never chosen automatically", caught.exception.message)
+
+    def test_the_only_eligible_disk_is_not_inferred_when_it_holds_windows_data(self):
+        bitlocker = {"path": "/dev/sda", "type": "disk", "children": [
+            partition("/dev/sda", 1, ESP_TYPE, "vfat", "1111-2222"), partition("/dev/sda", 2, BASIC_DATA_TYPE, "BitLocker")]}
+        inv = inventory(disks=("/dev/sda",), partitions=partitions_result(bitlocker))
+        with self.assertRaises(AgentError) as caught:
+            resolve({}, inv=inv)
+        self.assertEqual(caught.exception.code, DISK_AMBIGUOUS)
+        self.assertEqual(caught.exception.details["existing_os"], {"/dev/sda": "windows-data"})
+        self.assertIn("holds Windows data or boot files", caught.exception.message)
+
+    def test_partitions_without_metadata_are_refused(self):
+        bare = {"path": "/dev/nvme0n1", "type": "disk", "children": [partition("/dev/nvme0n1", 1, None)]}
+        with self.assertRaises(AgentError) as caught:
+            resolve({}, inv=inventory(partitions=partitions_result(bare)))
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
     def test_a_windows_disk_named_explicitly_is_accepted_without_an_entry_for_itself(self):
         inv = inventory(disks=("/dev/sda",), partitions=partitions_result(windows_disk("/dev/sda")))

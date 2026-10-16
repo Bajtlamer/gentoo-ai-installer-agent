@@ -18,8 +18,12 @@ from tests.helpers import (
     DISPOSABLE_TARGET,
     dual_boot_inventory,
     fresh_inventory,
+    BASIC_DATA_TYPE,
+    ESP_TYPE,
+    MSR_TYPE,
     identity_result,
     linux_disk,
+    partition,
     partitions_result,
     storage_result,
     temp_home,
@@ -313,6 +317,36 @@ class DualBootPlanTests(unittest.TestCase):
         plan = install_plan.create_install_plan(TARGET, install_fixture(), project_plan(), data)
         self.assertEqual(plan["erases_existing_os"]["os"], "windows-bios")
         self.assertEqual(plan["warnings"], [])
+
+    def test_windows_split_across_disks_protects_the_esp_on_the_install_disk(self):
+        nvme = {"path": "/dev/nvme0n1", "type": "disk", "children": [
+            partition("/dev/nvme0n1", 1, ESP_TYPE, "vfat", "1111-2222")]}
+        sda = {"path": "/dev/sda", "type": "disk", "children": [
+            partition("/dev/sda", 1, MSR_TYPE), partition("/dev/sda", 2, BASIC_DATA_TYPE, "ntfs", "01D9")]}
+        plan = self.create(nvme=nvme, sda=sda)
+        self.assertEqual(plan["erases_existing_os"], {
+            "disk": "/dev/nvme0n1", "os": "windows-data",
+            "evidence": ["esp vfat /dev/nvme0n1p1", "esp used by Windows on /dev/sda"],
+        })
+        self.assertEqual(plan["install"]["dual_boot_entries"], [])
+        self.assertEqual(plan["warnings"], [
+            "/dev/sda holds Windows data or boot files (msr /dev/sda1, ntfs /dev/sda2) but no complete UEFI "
+            "Windows; it will not be added to the GRUB menu."])
+
+    def test_bitlocker_on_the_install_disk_is_recorded_as_erased(self):
+        nvme = {"path": "/dev/nvme0n1", "type": "disk", "children": [
+            partition("/dev/nvme0n1", 1, ESP_TYPE, "vfat", "1111-2222"),
+            partition("/dev/nvme0n1", 2, BASIC_DATA_TYPE, "BitLocker")]}
+        plan = self.create(nvme=nvme)
+        self.assertEqual(plan["erases_existing_os"]["os"], "windows-data")
+        self.assertEqual(plan["erases_existing_os"]["evidence"], ["esp vfat /dev/nvme0n1p1", "bitlocker /dev/nvme0n1p2"])
+
+    def test_partitions_without_metadata_are_refused(self):
+        nvme = {"path": "/dev/nvme0n1", "type": "disk", "children": [
+            partition("/dev/nvme0n1", 1, None), partition("/dev/nvme0n1", 2, None)]}
+        with self.assertRaises(AgentError) as caught:
+            self.create(nvme=nvme)
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
     def test_missing_partition_list_is_refused(self):
         data = inventory()

@@ -15,7 +15,7 @@ import copy
 
 from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.disks import disk_candidates, inventory_results
-from gentoo_agent.core.foreign_os import detect_foreign_os, dual_boot_entries
+from gentoo_agent.core.foreign_os import describe_os, detect_foreign_os, dual_boot_entries
 from gentoo_agent.core.errors import (
     CONFIG_CONFLICT,
     CONFIG_INVALID,
@@ -173,7 +173,7 @@ def resolve_config(
         if len(eligible) == 1:
             raise AgentError(
                 DISK_AMBIGUOUS,
-                f"The only eligible disk, {eligible[0]['path']}, holds {existing_os[eligible[0]['path']]}; it is "
+                f"The only eligible disk, {eligible[0]['path']}, holds {describe_os(existing_os[eligible[0]['path']])}; it is "
                 "never chosen automatically. Name it with the disk setting only if it may be erased.",
                 {"candidates": [eligible[0]["path"]], "excluded": excluded_details, "existing_os": existing_os},
             )

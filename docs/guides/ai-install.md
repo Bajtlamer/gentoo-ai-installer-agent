@@ -246,7 +246,7 @@ detect_hardware({"refresh": true})
 ```
 
 `secure_boot` is `on`, `off`, or `unknown`, and `existing_os` is `windows`,
-`windows-bios`, `null`, or `unknown`; see
+`windows-bios`, `windows-data`, `null`, or `unknown`; see
 [Dual boot with Windows](#dual-boot-with-windows).
 
 Two disks are listed, but `/dev/sdb` is the USB stick the live system booted
@@ -489,8 +489,12 @@ Prerequisites:
   and call `detect_hardware` with `refresh=true`.
 
 `detect_hardware` reports `secure_boot` (`on`, `off`, or `unknown`) and, per
-disk, `existing_os`: `windows` (UEFI), `windows-bios`, `null` (nothing found),
-or `unknown` for every disk when the partition list is missing or unusable.
+disk, `existing_os`: `windows` (UEFI, gets a menu entry), `windows-bios`,
+`windows-data` (Windows data or boot files without a complete UEFI Windows, for
+example BitLocker without a Microsoft reserved partition, or the EFI system
+partition of a Windows on another disk), `null` (nothing found), or `unknown`
+for every disk when the partition list is missing or unusable. Every Windows
+value protects the disk: erasing it needs `ERASE WINDOWS <disk>`.
 `resolve_config` previews the derived `dual_boot_entries`.
 
 What the result looks like:

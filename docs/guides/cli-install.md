@@ -482,7 +482,9 @@ carries the warning `Windows on <disk> will not be added to the GRUB menu
 in this version; the plan warns about it (see
 [Windows in BIOS mode](../TROUBLESHOOTING.md#windows-in-bios-mode)).
 
-Erasing a disk that holds Windows:
+Erasing a disk that holds Windows (`windows`, `windows-bios`, or `windows-data`
+in `existing_os`; the rule is in the
+[configuration reference](../CONFIGURATION.md#disk-erase-authorization)):
 
 - `resolve_config` never infers it. Name it explicitly as the install disk, and
   only when you mean to erase it.

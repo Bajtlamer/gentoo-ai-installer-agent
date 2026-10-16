@@ -250,7 +250,28 @@ The error lists the missing flags. A disk that holds Windows is never inferred
 by `resolve_config`, and it can be the install disk only with the extended
 confirmation `ERASE WINDOWS <disk>`: typed in `prepare_install.py`, as part of
 the phrase `APPROVE <plan_id> ERASE WINDOWS <disk>` in `approve`, and as the
-`confirm` field of the MCP approval dialog. Plan creation has further
+`confirm` field of the MCP approval dialog.
+
+A disk holds Windows, for this protection, when the `partitions` inventory
+shows any of these on it:
+
+- a Microsoft reserved partition;
+- a partition with the `ntfs` or `BitLocker` filesystem, on any partition table
+  (GPT basic data, or MBR types such as `0x7` and `0x17`);
+- an EFI system partition (`vfat`) while another disk holds Windows without an
+  EFI system partition of its own, because Windows may boot from it (evidence
+  `esp used by Windows on <other disk>`).
+
+The plan, `resolve_config`, `detect_hardware`, and `prepare_install.py` report
+such a disk as `windows` (UEFI Windows that gets a menu entry, see
+`dual_boot_entries`), `windows-bios` (NTFS or BitLocker on MBR without an EFI
+system partition), or `windows-data` (any other evidence). All three need the
+extended confirmation. An empty disk, or a Linux disk with its own EFI system
+partition, is not flagged. When a disk lists partitions but none of them has
+both a partition type and a filesystem, the partition data is unusable
+(`INVENTORY_MISSING` for `plan create`, `resolve_config`, and
+`prepare_install.py`; `existing_os` `unknown` in discovery), since Windows could
+be hidden there. Plan creation has further
 requirements; see [Plan creation requirements](#plan-creation-requirements). Before any change,
 and again before every destructive phase, a run re-reads the disk path, size,
 model, serial, and WWN and stops with `TARGET_DRIFT` if they differ from the
@@ -301,6 +322,9 @@ or `null`). Warnings are shown in the approval dialog and returned by the MCP
 - `Windows in BIOS mode on <disk> will not be in the GRUB menu.` for Windows
   installed in BIOS mode (`windows-bios`) on a disk other than the install disk;
   such a Windows never gets a menu entry in this version.
+- `<disk> holds Windows data or boot files (<evidence>) but no complete UEFI
+  Windows; it will not be added to the GRUB menu.` for a `windows-data` disk
+  other than the install disk.
 - `Windows on <disk> will not be added to the GRUB menu (dual_boot is off).` for
   Windows (UEFI or BIOS mode) on a disk other than the install disk when
   `dual_boot` is `off`.
@@ -519,7 +543,8 @@ Rules:
   disks returns `INVENTORY_MISSING`; when disks exist but none or several are
   eligible, the result is `DISK_AMBIGUOUS` with the candidates and the
   excluded disks with reasons. An inferred disk adds a warning. A disk with
-  `existing_os` (Windows, from the `partitions` result) is never inferred: when
+  `existing_os` (`windows`, `windows-bios`, or `windows-data`, from the
+  `partitions` result) is never inferred: when
   it is the only eligible disk, the result is `DISK_AMBIGUOUS` and names it, and
   you must pass it as the `disk` override to erase it.
 - A chosen disk that is not in the inventory returns `CONFIG_INVALID`; an

@@ -247,7 +247,7 @@ rules in `.claude/settings.json` are a convention.
 | `disks.py` | Disk identities from `lsblk`, eligible candidates, identity strength, `check_drift()` |
 | `errors.py` | `AgentError` and the stable error codes |
 | `handbook.py` | Fetches the Handbook and saves a snapshot with URL and retrieval time |
-| `foreign_os.py` | Windows detection from the `partitions` inventory, `parse_secure_boot()`, derived `dual_boot_entries` |
+| `foreign_os.py` | Windows detection from the `partitions` inventory (`windows` by the strict rule, the only one that builds menu entries; `windows-bios` and `windows-data` by the broader rule that protects a disk from an ordinary erase), `parse_secure_boot()`, derived `dual_boot_entries` |
 | `hardware.py` | Inventory summary for discovery: boot mode, architecture, Secure Boot state, and disks with their existing OS |
 | `install_plan.py` | Plan creation, `plan_hash`, loading and saving plans |
 | `inventory.py` | Collects and records the read-only inventory |

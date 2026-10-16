@@ -2,9 +2,12 @@ import json
 import unittest
 
 from gentoo_agent.core.errors import INVENTORY_MISSING, AgentError
-from gentoo_agent.core.foreign_os import detect_foreign_os, parse_secure_boot
+from gentoo_agent.core.foreign_os import detect_foreign_os, dual_boot_entries, parse_secure_boot
 from tests.helpers import (
+    BASIC_DATA_TYPE,
     ESP_TYPE,
+    LINUX_TYPE,
+    MSR_TYPE,
     linux_disk,
     partition,
     partitions_result,
@@ -95,6 +98,79 @@ class DetectForeignOsTests(unittest.TestCase):
             for value in [record["disk"], record["os"], *record["evidence"]]:
                 self.assertTrue(value.isprintable())
         json.dumps(records)
+
+
+def disk(path: str, *parts: tuple) -> dict:
+    """A disk with partitions given as (parttype, fstype, uuid) tuples, numbered from 1."""
+    return {"path": path, "type": "disk", "children": [
+        partition(path, number, *part) for number, part in enumerate(parts, start=1)]}
+
+
+ESP = (ESP_TYPE, "vfat", "1111-2222")
+UEFI = {"boot_mode": "uefi", "dual_boot": "auto", "disk": "/dev/nvme0n1"}
+
+
+class WindowsDataTests(unittest.TestCase):
+    """The broad rule that protects a disk holding Windows data or boot files from an ordinary erase."""
+
+    def detect(self, *disks) -> dict:
+        records = detect_foreign_os(inventory(partitions_result(*disks)))
+        return {record["disk"]: record for record in records}
+
+    def test_windows_split_across_two_disks_protects_both(self):
+        records = self.detect(disk("/dev/sda", (MSR_TYPE,), (BASIC_DATA_TYPE, "ntfs", "01D9")),
+                              disk("/dev/sdb", ESP))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
+                                               "evidence": ["msr /dev/sda1", "ntfs /dev/sda2"]})
+        self.assertEqual(records["/dev/sdb"], {"disk": "/dev/sdb", "os": "windows-data",
+                                               "evidence": ["esp vfat /dev/sdb1", "esp used by Windows on /dev/sda"]})
+        self.assertEqual(dual_boot_entries(UEFI, list(records.values())), [])
+
+    def test_every_esp_is_protected_when_windows_has_none_of_its_own(self):
+        records = self.detect(disk("/dev/sda", (BASIC_DATA_TYPE, "ntfs", "01D9")),
+                              disk("/dev/sdb", ESP, (LINUX_TYPE, "ext4", "u")), disk("/dev/sdc", ESP))
+        self.assertEqual(sorted(records), ["/dev/sda", "/dev/sdb", "/dev/sdc"])
+        self.assertEqual(records["/dev/sdc"]["evidence"][-1], "esp used by Windows on /dev/sda")
+
+    def test_bitlocker_without_msr_on_gpt(self):
+        records = self.detect(disk("/dev/sda", ESP, (BASIC_DATA_TYPE, "BitLocker")))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
+                                               "evidence": ["esp vfat /dev/sda1", "bitlocker /dev/sda2"]})
+        self.assertEqual(dual_boot_entries(UEFI, list(records.values())), [])
+
+    def test_bitlocker_on_mbr(self):
+        records = self.detect(disk("/dev/sda", ("0x7", "BitLocker")))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-bios",
+                                               "evidence": ["bitlocker /dev/sda1"]})
+
+    def test_hidden_ntfs_type_on_mbr(self):
+        self.assertEqual(self.detect(disk("/dev/sda", ("0x17", "ntfs")))["/dev/sda"]["os"], "windows-bios")
+
+    def test_mbr_disk_with_an_esp_and_ntfs(self):
+        records = self.detect(disk("/dev/sda", ("0xef", "vfat", "3333-4444"), ("0x7", "ntfs")))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
+                                               "evidence": ["esp vfat /dev/sda1", "ntfs /dev/sda2"]})
+        self.assertEqual(dual_boot_entries(UEFI, list(records.values())), [])
+
+    def test_msr_alone_is_windows_data(self):
+        self.assertEqual(self.detect(disk("/dev/sda", (MSR_TYPE,), (LINUX_TYPE, "ext4")))["/dev/sda"]["os"],
+                         "windows-data")
+
+    def test_empty_disk_and_linux_disk_with_an_esp_are_not_flagged(self):
+        self.assertEqual(self.detect("/dev/sda", linux_disk("/dev/sdb"), disk("/dev/sdc", ESP)), {})
+
+    def test_partitions_without_type_and_filesystem_are_unusable(self):
+        for parts in ([(None,), (None,)], [(None, None)], [(ESP_TYPE,), (None, "ntfs")]):
+            with self.subTest(parts=parts):
+                with self.assertRaises(AgentError) as caught:
+                    self.detect(disk("/dev/sda", *parts))
+                self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_menu_entries_still_need_the_strict_rule(self):
+        records = self.detect(windows_disk("/dev/sda"), disk("/dev/sdb", ESP, (BASIC_DATA_TYPE, "BitLocker")))
+        self.assertEqual([entry["disk"] for entry in dual_boot_entries(UEFI, list(records.values()))], ["/dev/sda"])
+        self.assertEqual(records["/dev/sda"]["os"], "windows")
+        self.assertNotIn("esp_uuid", records["/dev/sdb"])
 
 
 class SecureBootTests(unittest.TestCase):

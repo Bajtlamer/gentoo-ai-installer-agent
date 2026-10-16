@@ -23,6 +23,8 @@ BASIC_DATA_TYPE = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
 # MBR partition types are printed as hex bytes (0x7 for NTFS, 0xef for an EFI system partition).
 MBR_TYPE = re.compile(r"0x[0-9a-f]{1,2}")
 MBR_ESP_TYPE = "0xef"
+# Filesystems (lowercased lsblk FSTYPE) that only Windows writes, on any partition table.
+WINDOWS_FILESYSTEMS = ("ntfs", "bitlocker")
 SECURE_BOOT_STATES = {"1": "on", "0": "off"}
 
 
@@ -61,51 +63,88 @@ def _checked(record: dict) -> dict:
     return record
 
 
-def _windows_record(disk_path: str, partitions: list[dict]) -> dict | None:
-    esp: dict | None = None
-    esp_path = ""
-    windows: list[str] = []
-    bios_ntfs: list[str] = []
-    any_esp = False
+def _scan(disk_path: str, partitions: list[dict]) -> dict:
+    """What one disk holds: its first EFI system partition and every Windows marker, with evidence."""
+    if partitions and not any(_text(part, "parttype") and _text(part, "fstype") for part in partitions):
+        # lsblk printed partitions without metadata (no udev data): Windows could be hidden there.
+        raise _unusable(f"The partitions inventory has no partition type and filesystem for {disk_path}")
+    scan: dict = {"disk": disk_path, "esp": None, "esp_path": "", "gpt_esp": False, "esp_type": False,
+                  "markers": [], "strict": False, "mbr": False}
     for part in partitions:
         path = _path(part)
         parttype = _text(part, "parttype").lower()
         fstype = _text(part, "fstype").lower()
         if parttype in (ESP_TYPE, MBR_ESP_TYPE):
-            any_esp = True
-        if parttype == ESP_TYPE and fstype == "vfat" and esp is None:
-            esp, esp_path = part, path
-        elif parttype == MSR_TYPE:
-            windows.append(f"msr {path}")
-        elif parttype == BASIC_DATA_TYPE and fstype == "ntfs":
-            windows.append(f"ntfs {path}")
-        elif MBR_TYPE.fullmatch(parttype) and fstype == "ntfs":
-            bios_ntfs.append(f"ntfs {path}")
-    if esp is not None and windows:
-        esp_uuid = _text(esp, "uuid")
+            scan["esp_type"] = True
+            if fstype == "vfat" and scan["esp"] is None:
+                scan.update(esp=part, esp_path=path, gpt_esp=parttype == ESP_TYPE)
+            continue
+        if parttype == MSR_TYPE:
+            scan["markers"].append(f"msr {path}")
+            scan["strict"] = True
+        elif fstype in WINDOWS_FILESYSTEMS:
+            scan["markers"].append(f"{fstype} {path}")
+            scan["strict"] = scan["strict"] or (parttype == BASIC_DATA_TYPE and fstype == "ntfs")
+            scan["mbr"] = scan["mbr"] or bool(MBR_TYPE.fullmatch(parttype))
+    return scan
+
+
+def _record(scan: dict) -> dict | None:
+    """The record for a disk with Windows markers of its own, or None."""
+    if not scan["markers"]:
+        return None
+    disk_path, esp_path = scan["disk"], scan["esp_path"]
+    if scan["gpt_esp"] and scan["strict"]:
+        # The strict rule: the only one that builds a GRUB menu entry.
+        esp_uuid = _text(scan["esp"], "uuid")
         if not ESP_UUID.fullmatch(esp_uuid):
             raise _unusable(f"The EFI system partition {esp_path} has an unexpected UUID")
         return _checked({"disk": disk_path, "os": "windows", "esp_uuid": esp_uuid,
-                         "evidence": [f"esp vfat {esp_path}", *windows]})
-    if bios_ntfs and not any_esp:
-        return _checked({"disk": disk_path, "os": "windows-bios", "evidence": bios_ntfs})
-    return None
+                         "evidence": [f"esp vfat {esp_path}", *scan["markers"]]})
+    if scan["mbr"] and not scan["esp_type"]:
+        return _checked({"disk": disk_path, "os": "windows-bios", "evidence": list(scan["markers"])})
+    evidence = ([f"esp vfat {esp_path}"] if scan["esp"] is not None else []) + scan["markers"]
+    return _checked({"disk": disk_path, "os": "windows-data", "evidence": evidence})
 
 
 def detect_foreign_os(inventory: dict) -> list[dict]:
-    """One record per disk that holds Windows: UEFI ("windows") or BIOS ("windows-bios")."""
+    """One record per disk that holds Windows data or boot files, in inventory order.
+
+    "windows": the strict rule (a vfat EFI system partition with the GPT type, and a Microsoft
+    reserved partition or an NTFS basic data partition on the same disk); only these records carry
+    esp_uuid and become GRUB menu entries. "windows-bios": NTFS or BitLocker on MBR and no EFI system
+    partition. "windows-data": any other Windows marker (a Microsoft reserved partition, NTFS, or
+    BitLocker), and every disk with an EFI system partition while another disk holds Windows without
+    one, since Windows may boot from it. Every record protects its disk from an ordinary erase.
+    """
     item = inventory_results(inventory).get(PARTITIONS_LABEL)
     if item is None or item.get("returncode") != 0:
         raise AgentError(INVENTORY_MISSING, "The latest inventory has no partition list; refresh it.",
                          {"label": PARTITIONS_LABEL})
-    records = []
-    for disk in _block_devices(item.get("stdout"), PARTITIONS_LABEL):
-        if _text(disk, "type") != "disk":
-            continue
-        record = _windows_record(_path(disk), _partitions(disk))
-        if record is not None:
-            records.append(record)
-    return records
+    scans = [_scan(_path(disk), _partitions(disk))
+             for disk in _block_devices(item.get("stdout"), PARTITIONS_LABEL) if _text(disk, "type") == "disk"]
+    records = {scan["disk"]: _record(scan) for scan in scans}
+    without_esp = [scan["disk"] for scan in scans if scan["markers"] and scan["esp"] is None]
+    for scan in scans:
+        users = [disk for disk in without_esp if disk != scan["disk"]]
+        if scan["esp"] is not None and records[scan["disk"]] is None and users:
+            records[scan["disk"]] = _checked({
+                "disk": scan["disk"], "os": "windows-data",
+                "evidence": [f"esp vfat {scan['esp_path']}", *(f"esp used by Windows on {disk}" for disk in users)],
+            })
+    return [record for record in records.values() if record is not None]
+
+
+OS_DESCRIPTIONS = {
+    "windows": "Windows (UEFI)",
+    "windows-bios": "Windows (BIOS mode)",
+    "windows-data": "Windows data or boot files",
+}
+
+
+def describe_os(os_name: str) -> str:
+    """Human words for a record's os value."""
+    return OS_DESCRIPTIONS.get(os_name, os_name)
 
 
 def parse_secure_boot(inventory: dict) -> str:

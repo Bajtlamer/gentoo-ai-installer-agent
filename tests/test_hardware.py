@@ -2,7 +2,16 @@ import json
 import unittest
 
 from gentoo_agent.core.hardware import summarize_inventory
-from tests.helpers import identity_result, partitions_result, secure_boot_result, windows_bios_disk, windows_disk
+from tests.helpers import (
+    BASIC_DATA_TYPE,
+    ESP_TYPE,
+    identity_result,
+    partition,
+    partitions_result,
+    secure_boot_result,
+    windows_bios_disk,
+    windows_disk,
+)
 
 
 class HardwareSummaryTests(unittest.TestCase):
@@ -59,11 +68,25 @@ class HardwareSummaryTests(unittest.TestCase):
         self.assertEqual(summary["secure_boot"], "off")
         self.assertEqual([disk["existing_os"] for disk in summary["disks"]], [None, "windows", "windows-bios"])
 
+    def test_windows_data_is_reported_for_a_split_install(self):
+        disks = [{"path": path, "type": "disk", "size": 100, "model": "QEMU", "serial": "s", "wwn": None}
+                 for path in ("/dev/sda", "/dev/sdb", "/dev/sdc")]
+        results = [
+            {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": disks})},
+            partitions_result(
+                {"path": "/dev/sda", "type": "disk", "children": [partition("/dev/sda", 1, BASIC_DATA_TYPE, "ntfs")]},
+                {"path": "/dev/sdb", "type": "disk", "children": [partition("/dev/sdb", 1, ESP_TYPE, "vfat", "1111-2222")]},
+                "/dev/sdc"),
+        ]
+        summary = summarize_inventory({"results": results})
+        self.assertEqual([disk["existing_os"] for disk in summary["disks"]], ["windows-data", "windows-data", None])
+
     def test_existing_os_is_unknown_without_a_usable_partition_list(self):
         disks = [{"path": "/dev/sda", "type": "disk", "size": 100, "model": "QEMU", "serial": "s", "wwn": None}]
         identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": disks})}
         hostile = windows_disk("/dev/sda", esp_uuid="ABCD-1234\nDisk erase: no")
-        for extra in ([], [partitions_result(hostile)]):
+        bare = {"path": "/dev/sda", "type": "disk", "children": [partition("/dev/sda", 1, None)]}
+        for extra in ([], [partitions_result(hostile)], [partitions_result(bare)]):
             with self.subTest(extra=extra):
                 summary = summarize_inventory({"results": [identity, *extra]})
                 self.assertEqual(summary["disks"][0]["existing_os"], "unknown")

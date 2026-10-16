@@ -63,8 +63,16 @@ Windows (UEFI) means one disk with:
   `ntfs` partition with the Microsoft basic data type
   (`ebd0a0a2-b9e5-4433-87c0-68b6b72699c7`).
 
-Windows (BIOS) means an MBR disk with an `ntfs` partition and no ESP; it is
-reported with `"os": "windows-bios"` and no ESP fields.
+Windows (BIOS) means an MBR disk with an `ntfs` or `BitLocker` partition and
+no ESP; it is reported with `"os": "windows-bios"` and no ESP fields.
+
+Only the strict UEFI rule above builds menu entries. A broader rule protects
+disks from an ordinary erase (review fix, 2026-10-17): any disk with a Microsoft
+reserved partition or an `ntfs` or `BitLocker` partition on any partition table
+is `"windows-data"` when neither rule above matches, and every disk with a vfat
+ESP becomes `"windows-data"` (evidence `esp used by Windows on <disk>`) while
+another disk holds Windows without an ESP. A disk whose partitions all lack a
+partition type or filesystem makes the inventory unusable.
 
 All values from the inventory are untrusted: the ESP UUID must match
 `^[0-9A-F]{4}-[0-9A-F]{4}$`, paths must pass the existing device path rule, and

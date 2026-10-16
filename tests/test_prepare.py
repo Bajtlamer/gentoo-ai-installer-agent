@@ -7,7 +7,16 @@ from unittest.mock import patch
 
 from gentoo_agent import prepare
 from gentoo_agent.core.config import load_json, save_json
-from tests.helpers import identity_result, partitions_result, temp_home, windows_bios_disk, windows_disk
+from tests.helpers import (
+    BASIC_DATA_TYPE,
+    ESP_TYPE,
+    identity_result,
+    partition,
+    partitions_result,
+    temp_home,
+    windows_bios_disk,
+    windows_disk,
+)
 
 
 class PrepareInventoryTests(unittest.TestCase):
@@ -154,6 +163,20 @@ class EraseAuthorizationTests(unittest.TestCase):
                 target, install = self.build("ERASE WINDOWS /dev/sda", partitions=partitions_result(disk))
                 self.assertIs(install["disk_must_be_erased"], True)
                 self.assertIs(target["disk_erase_authorized"], True)
+
+    def test_windows_data_on_the_disk_needs_the_extended_confirmation(self):
+        split = partitions_result(
+            {"path": "/dev/sda", "type": "disk", "children": [partition("/dev/sda", 1, ESP_TYPE, "vfat", "1111-2222")]},
+            {"path": "/dev/sdb", "type": "disk", "children": [partition("/dev/sdb", 1, BASIC_DATA_TYPE, "BitLocker")]})
+        target, install = self.build("ERASE WINDOWS /dev/sda", partitions=split)
+        self.assertEqual(self.erase_prompts, ["Type ERASE WINDOWS /dev/sda to record that decision"])
+        self.assertIs(install["disk_must_be_erased"], True)
+
+    def test_partitions_without_metadata_stop_preparation(self):
+        bare = {"path": "/dev/sda", "type": "disk", "children": [partition("/dev/sda", 1, None)]}
+        with self.assertRaises(SystemExit) as caught:
+            self.build("ERASE /dev/sda", partitions=partitions_result(bare))
+        self.assertIn("INVENTORY_MISSING", str(caught.exception))
 
     def test_windows_on_another_disk_keeps_the_ordinary_confirmation(self):
         target, install = self.build("ERASE /dev/sda", partitions=partitions_result("/dev/sda", windows_disk("/dev/sdb")))
