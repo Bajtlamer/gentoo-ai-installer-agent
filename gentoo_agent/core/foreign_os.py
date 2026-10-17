@@ -76,7 +76,8 @@ def _scan(disk_path: str, disk_fstype: str, partitions: list[dict]) -> dict:
     """What one disk holds: its first EFI system partition and every Windows marker, with evidence."""
     if partitions and not any(_text(part, "parttype") for part in partitions):
         # lsblk printed partitions without any type (no udev metadata): Windows could be hidden there.
-        # A missing filesystem alone is normal, for example a fresh layout before mkfs.
+        # A missing filesystem alone is normal, for example a fresh layout before mkfs. "All", not "any":
+        # udev metadata goes missing per disk, and a valid partition table gives every partition a type.
         raise _unusable(f"The partitions inventory has no partition type for {disk_path}")
     scan: dict = {"disk": disk_path, "esp": None, "esp_path": "", "gpt_esp": False, "esp_type": False,
                   "markers": [], "strict": False, "mbr": False, "system": False}

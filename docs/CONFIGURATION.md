@@ -285,7 +285,11 @@ filesystems (for example after a storage phase that failed before `mkfs`).
 When a disk lists partitions but none of them has a partition type (missing
 udev metadata), the partition data is unusable (`INVENTORY_MISSING` for
 `plan create`, `resolve_config`, and `prepare_install.py`; `existing_os`
-`unknown` in discovery), since Windows could be hidden there. Plan creation has further
+`unknown` in discovery), since Windows could be hidden there. The rule needs
+all partitions of a disk to lack a type, not just one: udev metadata goes
+missing for a whole disk at once, and a partition without a type cannot exist
+in a valid partition table, so refusing when any single partition lacks one
+would only add false refusals. Plan creation has further
 requirements; see [Plan creation requirements](#plan-creation-requirements). Before any change,
 and again before every destructive phase, a run re-reads the disk path, size,
 model, serial, and WWN and stops with `TARGET_DRIFT` if they differ from the
