@@ -232,6 +232,37 @@ class DiscoveryAndPlanningTests(unittest.TestCase):
         self.assertEqual(refused.structured_content["code"], "CONFIG_CONFLICT")
         self.assertIn("Secure Boot is on", refused.structured_content["message"])
 
+    def test_plan_view_has_the_dual_boot_fields(self):
+        from tests.helpers import partitions_result, temp_home, windows_disk
+
+        with temp_home() as home, patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home, disks=("/dev/nvme0n1", "/dev/sda"), secure_boot="unknown",
+                       partitions=partitions_result("/dev/nvme0n1", windows_disk("/dev/sda")))
+            created = call("create_plan", {"overrides": {"disk": "/dev/nvme0n1"}})
+            shown = call("get_plan", {"plan_id": created.structured_content["plan_id"]})
+        self.assertFalse(created.is_error, created.content[0].text)
+        entries = [{"os": "windows", "disk": "/dev/sda", "esp_uuid": "ABCD-1234",
+                    "loader": "/EFI/Microsoft/Boot/bootmgfw.efi"}]
+        for view in (created.structured_content, shown.structured_content):
+            self.assertEqual(view["dual_boot_entries"], entries)
+            self.assertEqual(view["secure_boot"], "unknown")
+            self.assertIsNone(view["erases_existing_os"])
+            self.assertTrue(any("Secure Boot state is unknown" in w for w in view["warnings"]))
+
+    def test_plan_view_shows_that_windows_is_erased(self):
+        from tests.helpers import partitions_result, temp_home, windows_disk
+
+        with temp_home() as home, patch("gentoo_agent.core.phases.public_key_for_target", return_value="ssh-ed25519 AAAA t"):
+            write_home(home, partitions=partitions_result(windows_disk("/dev/nvme0n1")))
+            resolved = call("resolve_config", {"overrides": {"disk": "/dev/nvme0n1"}})
+            created = call("create_plan", {"overrides": {"disk": "/dev/nvme0n1"}})
+            shown = call("get_plan", {"plan_id": created.structured_content["plan_id"]})
+        warning = "/dev/nvme0n1 holds Windows; approving will require typing ERASE WINDOWS /dev/nvme0n1"
+        self.assertIn(warning, resolved.structured_content["warnings"])
+        self.assertIn(warning, created.structured_content["warnings"])
+        self.assertEqual(shown.structured_content["erases_existing_os"]["disk"], "/dev/nvme0n1")
+        self.assertEqual(shown.structured_content["erases_existing_os"]["os"], "windows")
+
     def test_plain_text_password_is_refused(self):
         from tests.helpers import temp_home
 

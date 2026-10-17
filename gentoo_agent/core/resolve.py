@@ -193,6 +193,8 @@ def resolve_config(
     if sources["disk"] == "inferred":
         warnings.append(f"disk {install['disk']} was inferred as the only eligible disk; "
                         f"excluded: {_excluded_text(excluded_details)}")
+    if install["disk"] in existing_os:
+        warnings.append(f"{install['disk']} holds Windows; approving will require typing ERASE WINDOWS {install['disk']}")
 
     username = install.get("username")
     if isinstance(username, str) and username != username.lower():

@@ -92,6 +92,10 @@ def plan_view(plan: dict) -> dict:
         "summary": approval_summary(plan),
         "target": plan["target"],
         "disks": plan["disks"],
+        "dual_boot_entries": plan["install"].get("dual_boot_entries", []),
+        "erases_existing_os": plan.get("erases_existing_os"),
+        "secure_boot": plan.get("secure_boot"),
+        "warnings": plan.get("warnings", []),
         "phases": [{"id": phase["id"], "destructive": phase["destructive"]} for phase in plan["phases"]],
         "approval": approval_status(plan["plan_id"]),
     }

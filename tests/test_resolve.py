@@ -389,6 +389,14 @@ class DualBootResolveTests(unittest.TestCase):
             resolve({}, inv=inventory(partitions=partitions_result(bare)))
         self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
+    def test_a_windows_disk_named_explicitly_warns_about_the_extended_confirmation(self):
+        for disk in (windows_disk("/dev/sda"), windows_bios_disk("/dev/sda")):
+            inv = inventory(disks=("/dev/sda",), partitions=partitions_result(disk))
+            with self.subTest(os=disk["children"][0]["parttype"]):
+                warnings = resolve({"disk": "/dev/sda"}, inv=inv)["warnings"]
+                self.assertIn("/dev/sda holds Windows; approving will require typing ERASE WINDOWS /dev/sda", warnings)
+        self.assertEqual(resolve({"disk": "/dev/nvme0n1"}, inv=self.two_disks())["warnings"], [])
+
     def test_a_windows_disk_named_explicitly_is_accepted_without_an_entry_for_itself(self):
         inv = inventory(disks=("/dev/sda",), partitions=partitions_result(windows_disk("/dev/sda")))
         result = resolve({"disk": "/dev/sda"}, inv=inv)

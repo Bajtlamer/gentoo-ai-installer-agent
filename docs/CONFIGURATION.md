@@ -549,7 +549,9 @@ Rules:
   `existing_os` (`windows`, `windows-bios`, or `windows-data`, from the
   `partitions` result) is never inferred: when
   it is the only eligible disk, the result is `DISK_AMBIGUOUS` and names it, and
-  you must pass it as the `disk` override to erase it.
+  you must pass it as the `disk` override to erase it. Such a disk adds the
+  warning `<disk> holds Windows; approving will require typing ERASE WINDOWS
+  <disk>`.
 - A chosen disk that is not in the inventory returns `CONFIG_INVALID`; an
   excluded disk returns `CONFIG_CONFLICT` with the reason.
 - An uppercase `username` is lowercased, with a warning.

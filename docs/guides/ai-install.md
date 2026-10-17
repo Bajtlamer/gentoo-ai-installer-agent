@@ -166,8 +166,8 @@ The tools in workflow order:
 | `detect_hardware(refresh)` | Summarizes the firmware boot mode (`uefi`, `bios`, or `unknown`), the architecture (`amd64`, `arm64`, or `unknown`), and the disks with serial and WWN. `refresh=true` first runs the read-only SSH inventory; otherwise the latest saved inventory is used. |
 | `list_phases()` | Lists the runnable phases in order, with description, whether each changes the target, and its Handbook sections. |
 | `resolve_config(overrides, fallbacks)` | Previews the merged install configuration (overrides, then inferred values, then fallbacks, then defaults) with the source of every value. Writes nothing. |
-| `create_plan(overrides, fallbacks)` | Same inputs as `resolve_config`. Freezes the configuration, the disk identity, and every command into a plan; returns `plan_id`, `plan_hash`, and the summary. It refuses an inventory older than 24 hours, a configuration that fails the `validate` review, and a disk that does not match `expected_disk_model` or `expected_disk_size_gib`. |
-| `get_plan(plan_id)` | Shows a stored plan, its summary, and its approval status. |
+| `create_plan(overrides, fallbacks)` | Same inputs as `resolve_config`. Freezes the configuration, the disk identity, and every command into a plan; returns `plan_id`, `plan_hash`, the summary, and the structured fields `dual_boot_entries`, `erases_existing_os`, `secure_boot`, and `warnings` (the resolve and plan warnings together). It refuses an inventory older than 24 hours, a configuration that fails the `validate` review, and a disk that does not match `expected_disk_model` or `expected_disk_size_gib`. |
+| `get_plan(plan_id)` | Shows a stored plan, its summary, its approval status, and the same structured fields as `create_plan` (`warnings` holds the plan warnings). |
 | `approve_plan(plan_id)` | Asks you, in a dialog built by the server, to approve the plan for 60 minutes. The model cannot answer it. |
 | `start_install(plan_id)` | Starts the approved plan in the background. Erases the target disk. Returns `run_id`. |
 | `run_phase(plan_id, phases)` | Runs only the listed phases of an approved plan, in plan order, in the background. |
@@ -519,6 +519,8 @@ Erasing a disk that holds Windows:
 - It is never chosen automatically: when it is the only eligible disk,
   `resolve_config` returns `DISK_AMBIGUOUS` and names it. The AI must ask you
   and pass the disk as the `disk` override only if you say it may be erased.
+  `resolve_config` and `create_plan` then warn `<disk> holds Windows; approving
+  will require typing ERASE WINDOWS <disk>`.
 - The dialog then starts with `WARNING: <disk> contains Windows (...). It will
   be erased.` and has a second field, `confirm`, which must be exactly
   `ERASE WINDOWS <disk>`. A missing or different value records nothing
