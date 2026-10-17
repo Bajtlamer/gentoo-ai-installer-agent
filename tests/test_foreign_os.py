@@ -107,6 +107,7 @@ def disk(path: str, *parts: tuple) -> dict:
 
 
 ESP = (ESP_TYPE, "vfat", "1111-2222")
+SWAP_TYPE = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"
 UEFI = {"boot_mode": "uefi", "dual_boot": "auto", "disk": "/dev/nvme0n1"}
 
 
@@ -159,8 +160,19 @@ class WindowsDataTests(unittest.TestCase):
     def test_empty_disk_and_linux_disk_with_an_esp_are_not_flagged(self):
         self.assertEqual(self.detect("/dev/sda", linux_disk("/dev/sdb"), disk("/dev/sdc", ESP)), {})
 
-    def test_partitions_without_type_and_filesystem_are_unusable(self):
-        for parts in ([(None,), (None,)], [(None, None)], [(ESP_TYPE,), (None, "ntfs")]):
+    def test_fresh_layout_without_filesystems_is_usable_and_not_windows(self):
+        """Our own storage phase before mkfs: ESP, swap, and Linux types, no filesystem yet."""
+        fresh = disk("/dev/nvme0n1", (ESP_TYPE,), (SWAP_TYPE,), (LINUX_TYPE,))
+        mbr = disk("/dev/sda", ("0x83",), ("0x82",))
+        self.assertEqual(self.detect(fresh, mbr, windows_disk("/dev/sdb"))["/dev/sdb"]["os"], "windows")
+        self.assertEqual(sorted(self.detect(fresh, mbr, windows_disk("/dev/sdb"))), ["/dev/sdb"])
+
+    def test_a_filesystem_without_partition_type_still_counts_when_another_partition_has_one(self):
+        self.assertEqual(self.detect(disk("/dev/sda", (LINUX_TYPE,), (None, "ntfs")))["/dev/sda"]["os"],
+                         "windows-data")
+
+    def test_partitions_without_any_partition_type_are_unusable(self):
+        for parts in ([(None,), (None,)], [(None, None)], [(None, "vfat"), (None, "ntfs")], [(None, "ext4")]):
             with self.subTest(parts=parts):
                 with self.assertRaises(AgentError) as caught:
                     self.detect(disk("/dev/sda", *parts))

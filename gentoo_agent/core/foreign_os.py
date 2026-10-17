@@ -65,9 +65,10 @@ def _checked(record: dict) -> dict:
 
 def _scan(disk_path: str, partitions: list[dict]) -> dict:
     """What one disk holds: its first EFI system partition and every Windows marker, with evidence."""
-    if partitions and not any(_text(part, "parttype") and _text(part, "fstype") for part in partitions):
-        # lsblk printed partitions without metadata (no udev data): Windows could be hidden there.
-        raise _unusable(f"The partitions inventory has no partition type and filesystem for {disk_path}")
+    if partitions and not any(_text(part, "parttype") for part in partitions):
+        # lsblk printed partitions without any type (no udev metadata): Windows could be hidden there.
+        # A missing filesystem alone is normal, for example a fresh layout before mkfs.
+        raise _unusable(f"The partitions inventory has no partition type for {disk_path}")
     scan: dict = {"disk": disk_path, "esp": None, "esp_path": "", "gpt_esp": False, "esp_type": False,
                   "markers": [], "strict": False, "mbr": False}
     for part in partitions:

@@ -267,11 +267,12 @@ such a disk as `windows` (UEFI Windows that gets a menu entry, see
 `dual_boot_entries`), `windows-bios` (NTFS or BitLocker on MBR without an EFI
 system partition), or `windows-data` (any other evidence). All three need the
 extended confirmation. An empty disk, or a Linux disk with its own EFI system
-partition, is not flagged. When a disk lists partitions but none of them has
-both a partition type and a filesystem, the partition data is unusable
-(`INVENTORY_MISSING` for `plan create`, `resolve_config`, and
-`prepare_install.py`; `existing_os` `unknown` in discovery), since Windows could
-be hidden there. Plan creation has further
+partition, is not flagged, and neither is a disk partitioned without
+filesystems (for example after a storage phase that failed before `mkfs`).
+When a disk lists partitions but none of them has a partition type (missing
+udev metadata), the partition data is unusable (`INVENTORY_MISSING` for
+`plan create`, `resolve_config`, and `prepare_install.py`; `existing_os`
+`unknown` in discovery), since Windows could be hidden there. Plan creation has further
 requirements; see [Plan creation requirements](#plan-creation-requirements). Before any change,
 and again before every destructive phase, a run re-reads the disk path, size,
 model, serial, and WWN and stops with `TARGET_DRIFT` if they differ from the

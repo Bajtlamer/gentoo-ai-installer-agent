@@ -362,9 +362,18 @@ class DualBootPlanTests(unittest.TestCase):
         self.assertEqual(plan["erases_existing_os"]["os"], "windows-data")
         self.assertEqual(plan["erases_existing_os"]["evidence"], ["esp vfat /dev/nvme0n1p1", "bitlocker /dev/nvme0n1p2"])
 
+    def test_install_disk_left_partitioned_without_filesystems_can_be_planned(self):
+        """A storage phase that failed before mkfs must not block a new plan for the same disk."""
+        nvme = {"path": "/dev/nvme0n1", "type": "disk", "children": [
+            partition("/dev/nvme0n1", 1, ESP_TYPE), partition("/dev/nvme0n1", 2, "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"),
+            partition("/dev/nvme0n1", 3, "0fc63daf-8483-4772-8e79-3d69d8477de4")]}
+        plan = self.create(nvme=nvme)
+        self.assertIsNone(plan["erases_existing_os"])
+        self.assertEqual(plan["warnings"], [])
+
     def test_partitions_without_metadata_are_refused(self):
         nvme = {"path": "/dev/nvme0n1", "type": "disk", "children": [
-            partition("/dev/nvme0n1", 1, None), partition("/dev/nvme0n1", 2, None)]}
+            partition("/dev/nvme0n1", 1, None, "vfat"), partition("/dev/nvme0n1", 2, None, "ext4")]}
         with self.assertRaises(AgentError) as caught:
             self.create(nvme=nvme)
         self.assertEqual(caught.exception.code, INVENTORY_MISSING)

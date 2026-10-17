@@ -72,7 +72,7 @@ reserved partition or an `ntfs` or `BitLocker` partition on any partition table
 is `"windows-data"` when neither rule above matches, and every disk with a vfat
 ESP becomes `"windows-data"` (evidence `esp used by Windows on <disk>`) while
 another disk holds Windows without an ESP. A disk whose partitions all lack a
-partition type or filesystem makes the inventory unusable.
+partition type makes the inventory unusable; a missing filesystem alone is fine.
 
 All values from the inventory are untrusted: the ESP UUID must match
 `^[0-9A-F]{4}-[0-9A-F]{4}$`, paths must pass the existing device path rule, and
