@@ -465,6 +465,11 @@ What the result looks like:
   `TARGET_DRIFT` if the disk is gone or swapped.
 - Windows may ask once for its BitLocker recovery key after the first boot
   through GRUB, because the boot path changed. Have the key ready.
+- A Windows disk on USB or other removable media still gets a menu entry (only
+  the install disk must be fixed). Keep it plugged in for the whole run:
+  unplugging it stops the run with `TARGET_DRIFT` before the next destructive
+  phase (see
+  [Windows disk on USB or removable media](../TROUBLESHOOTING.md#windows-disk-on-usb-or-removable-media)).
 
 In the plan summary, the `Dual boot:` line names the Windows disk and its EFI
 partition UUID, and the Windows disk appears as `Windows disk (kept, not

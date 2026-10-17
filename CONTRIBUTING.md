@@ -82,7 +82,7 @@ writing into the checkout.
 ## Golden command files
 
 `tests/test_golden_commands.py` renders the apply and check program of every
-phase for the six configurations in `tests/golden/configs/` and compares them
+phase for the seven configurations in `tests/golden/configs/` and compares them
 byte for byte with the matching files in `tests/golden/`. These files are the
 exact shell programs a target receives, so any difference is a change in
 behavior on real hardware.

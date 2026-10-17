@@ -24,6 +24,7 @@ the background stores the same object in `error` (and the message in
 - [Windows EFI partition not found](#windows-efi-partition-not-found)
 - [BitLocker recovery prompt](#bitlocker-recovery-prompt)
 - [Windows in BIOS mode](#windows-in-bios-mode)
+- [Windows disk on USB or removable media](#windows-disk-on-usb-or-removable-media)
 - [Windows](#windows)
 
 ## Error codes
@@ -366,6 +367,17 @@ A Windows installed in BIOS mode (MBR, no EFI system partition) is reported as
 `windows-bios`. The plan warns `Windows in BIOS mode on <disk> will not be in
 the GRUB menu.` and this version never adds it to the menu. Either convert
 Windows to UEFI (outside this tool), or boot it through the firmware boot menu.
+
+## Windows disk on USB or removable media
+
+Only the install disk must be fixed. A Windows disk on USB or other removable
+media still gets a GRUB menu entry, and its identity joins the plan like any
+other Windows disk with an entry. Unplugging it during a run stops the run with
+`TARGET_DRIFT` before the next destructive phase. Plug it back in: if it comes
+back under the same device path, `run resume <run_id>` (or `resume_run`) works
+while the approval is still valid; otherwise inspect again and create and
+approve a new plan. A Windows disk that is not connected when
+the inventory is taken gets no entry.
 
 ## Windows
 

@@ -506,6 +506,11 @@ What the result looks like:
   if that disk is gone or swapped.
 - Windows may ask once for its BitLocker recovery key after the first boot
   through GRUB. Have the key ready.
+- A Windows disk on USB or other removable media still gets a menu entry (only
+  the install disk must be fixed). Keep it plugged in for the whole run:
+  unplugging it stops the run with `TARGET_DRIFT` before the next destructive
+  phase (see
+  [Windows disk on USB or removable media](../TROUBLESHOOTING.md#windows-disk-on-usb-or-removable-media)).
 
 To leave Windows out, the AI passes the override `{"dual_boot": "off"}` (or
 `config/install.json` carries `"dual_boot": "off"` for the CLI, for example from
@@ -524,7 +529,11 @@ Erasing a disk that holds Windows:
 - The dialog then starts with `WARNING: <disk> contains Windows (...). It will
   be erased.` and has a second field, `confirm`, which must be exactly
   `ERASE WINDOWS <disk>`. A missing or different value records nothing
-  (`APPROVAL_DECLINED`). Type it yourself; the AI must not know the answer.
+  (`APPROVAL_DECLINED`). The phrase is not a secret: the dialog text states
+  it. What protects the approval is that only you fill in the dialog, which
+  your MCP client shows to you and the model never answers. An elicitation
+  client that answers forms automatically would defeat this, in the same way
+  it would defeat the ordinary approval.
 - The CLI equivalent is the phrase `APPROVE <plan_id> ERASE WINDOWS <disk>`.
 
 ## Reading generated passwords
