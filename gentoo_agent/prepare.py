@@ -17,7 +17,7 @@ from gentoo_agent.core.arch import live_architecture
 from gentoo_agent.core.config import load_json, load_plan, save_json
 from gentoo_agent.core.disks import IDENTITY_LABEL, disk_candidates, parse_disk_identities
 from gentoo_agent.core.errors import AgentError
-from gentoo_agent.core.foreign_os import detect_foreign_os
+from gentoo_agent.core.foreign_os import describe_os, detect_foreign_os
 from gentoo_agent.core.handbook import fetch_handbook
 from gentoo_agent.core.inventory import collect_inventory, latest_inventory
 from gentoo_agent.core.layout import build_layout
@@ -139,18 +139,30 @@ def choose_disk(inventory: dict) -> dict:
             "No eligible disk was found. Removable, USB, read-only, and mounted disks are excluded. "
             f"Excluded: {listed}"
         )
+    try:
+        windows = {record["disk"]: record for record in detect_foreign_os(inventory)}
+    except AgentError as error:
+        raise SystemExit(f"{error.code}: {error.message}") from None
     sizes = {disk.get("path") or disk.get("name"): disk.get("size") for disk in disks_from_inventory(inventory)}
     print("\nEligible disks:")
     for disk in eligible:
-        print(f"  {disk['path']}: {disk['size_bytes'] / 1024 ** 3:.1f} GiB, model={disk['model'] or 'unknown'}")
+        record = windows.get(disk["path"])
+        # Evidence strings passed the strict format checks in core/foreign_os.py.
+        status = (f"holds {describe_os(record['os'])}: {', '.join(record['evidence'])}" if record
+                  else "no Windows found")
+        print(f"  {disk['path']}: {disk['size_bytes'] / 1024 ** 3:.1f} GiB, model={disk['model'] or 'unknown'}, {status}")
     if excluded:
         print("Excluded disks (cannot be installed to):")
         for item in excluded:
             print(f"  {item['path']}: {item['reason']}")
     by_path = {disk["path"]: disk for disk in eligible}
     reasons = {item["path"]: item["reason"] for item in excluded}
+    # A disk that holds Windows is never the default; with only such disks, the path must be typed.
+    default = next((disk["path"] for disk in eligible if disk["path"] not in windows), None)
+    if default is None:
+        print("Every eligible disk holds Windows. Type the path of the disk to erase only if you mean it.")
     while True:
-        selected = ask("Disk to use", eligible[0]["path"])
+        selected = ask("Disk to use", default)
         if selected in by_path:
             disk = by_path[selected]
             return {"path": disk["path"], "model": disk["model"] or None, "size": sizes.get(disk["path"])}

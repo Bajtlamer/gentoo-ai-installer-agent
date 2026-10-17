@@ -244,8 +244,10 @@ What it does, in order:
    saves them.
 2. Runs the read-only inventory over SSH (`Read-only check: identity`,
    `Read-only check: boot_mode`, and so on) and saves it under `inventory/`.
-3. Lists the eligible disks and asks which one to use, defaulting to the
-   first. Removable, USB, read-only, and mounted disks are listed separately
+3. Lists the eligible disks, each with its Windows status (`no Windows found`,
+   or `holds Windows ...` with the evidence), and asks which one to use,
+   defaulting to the first disk without Windows. When every eligible disk
+   holds Windows there is no default: type the path yourself. Removable, USB, read-only, and mounted disks are listed separately
    with the reason and cannot be chosen (the same rule `plan create`
    enforces); if no disk is eligible, the tool stops. It reads the
    architecture from the live system (it does not ask) and sets `architecture`

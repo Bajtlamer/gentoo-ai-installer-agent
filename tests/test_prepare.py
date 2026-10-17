@@ -196,7 +196,8 @@ class EraseAuthorizationTests(unittest.TestCase):
 
 
 
-def disk_inventory(*, mounted_sdc: bool = True, usb_sdb: bool = True) -> dict:
+def disk_inventory(*, mounted_sdc: bool = True, usb_sdb: bool = True, windows: tuple[str, ...] = ()) -> dict:
+    """windows names the disks that get a Windows (UEFI) partition layout."""
     identity = {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": [
         {"path": "/dev/sdb", "type": "disk", "size": 16 * 1024 ** 3, "model": "Flash", "serial": "u1", "wwn": "",
          "tran": "usb" if usb_sdb else "sata", "rm": usb_sdb, "ro": False},
@@ -212,7 +213,9 @@ def disk_inventory(*, mounted_sdc: bool = True, usb_sdb: bool = True) -> dict:
                        "mountpoints": ["/mnt/data"] if mounted_sdc else [None]}]},
         {"path": "/dev/sda", "type": "disk", "size": "40G", "model": "QEMU HARDDISK", "mountpoints": [None]},
     ]})}
-    return {"results": [identity, storage]}
+    partitions = partitions_result(*(windows_disk(path) if path in windows else path
+                                     for path in ("/dev/sdb", "/dev/sdc", "/dev/sda")))
+    return {"results": [identity, storage, partitions]}
 
 
 class ChooseDiskTests(unittest.TestCase):
@@ -244,6 +247,28 @@ class ChooseDiskTests(unittest.TestCase):
         disk, asked, _ = self.choose(disk_inventory(usb_sdb=False))
         self.assertEqual(asked[0], ("Disk to use", "/dev/sdb"))
         self.assertEqual(disk["path"], "/dev/sdb")
+
+    def test_windows_status_is_shown_and_the_default_skips_windows_disks(self):
+        disk, asked, output = self.choose(disk_inventory(usb_sdb=False, windows=("/dev/sdb",)))
+        self.assertEqual(asked, [("Disk to use", "/dev/sda")])
+        self.assertEqual(disk["path"], "/dev/sda")
+        self.assertIn("/dev/sdb: 16.0 GiB, model=Flash, holds Windows (UEFI): esp vfat /dev/sdb1, msr /dev/sdb2, "
+                      "ntfs /dev/sdb3", output)
+        self.assertIn("/dev/sda: 40.0 GiB, model=QEMU HARDDISK, no Windows found", output)
+
+    def test_no_default_when_every_eligible_disk_holds_windows(self):
+        disk, asked, output = self.choose(disk_inventory(usb_sdb=False, windows=("/dev/sdb", "/dev/sda")),
+                                          ["/dev/sdb"])
+        self.assertEqual(asked, [("Disk to use", None)])
+        self.assertEqual(disk["path"], "/dev/sdb")
+        self.assertIn("Every eligible disk holds Windows", output)
+
+    def test_unusable_partition_list_stops_disk_selection(self):
+        inventory = disk_inventory()
+        inventory["results"][2] = {"label": "partitions", "returncode": 1, "stdout": ""}
+        with self.assertRaises(SystemExit) as caught:
+            self.choose(inventory)
+        self.assertIn("INVENTORY_MISSING", str(caught.exception))
 
     def test_an_excluded_or_unknown_disk_is_refused_and_asked_again(self):
         disk, asked, output = self.choose(disk_inventory(), ["/dev/sdc", "/dev/nvme9n1", "/dev/sda"])
