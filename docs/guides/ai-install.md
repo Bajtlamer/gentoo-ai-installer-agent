@@ -491,8 +491,10 @@ Prerequisites:
 `detect_hardware` reports `secure_boot` (`on`, `off`, or `unknown`) and, per
 disk, `existing_os`: `windows` (UEFI, gets a menu entry), `windows-bios`,
 `windows-data` (Windows data or boot files without a complete UEFI Windows, for
-example BitLocker without a Microsoft reserved partition, or the EFI system
-partition of a Windows on another disk), `null` (nothing found), or `unknown`
+example BitLocker without a Microsoft reserved partition, or an EFI system
+partition that may hold the boot files of a Windows on another disk; see the
+[configuration reference](../CONFIGURATION.md#disk-erase-authorization) for the
+exact rule), `null` (nothing found), or `unknown`
 for every disk when the partition list is missing or unusable. Every Windows
 value protects the disk: erasing it needs `ERASE WINDOWS <disk>`.
 `resolve_config` previews the derived `dual_boot_entries`.

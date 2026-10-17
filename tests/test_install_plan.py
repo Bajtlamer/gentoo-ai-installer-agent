@@ -347,7 +347,7 @@ class DualBootPlanTests(unittest.TestCase):
         plan = self.create(nvme=nvme, sda=sda)
         self.assertEqual(plan["erases_existing_os"], {
             "disk": "/dev/nvme0n1", "os": "windows-data",
-            "evidence": ["esp vfat /dev/nvme0n1p1", "esp used by Windows on /dev/sda"],
+            "evidence": ["esp vfat /dev/nvme0n1p1", "may hold the boot files of Windows on /dev/sda"],
         })
         self.assertEqual(plan["install"]["dual_boot_entries"], [])
         self.assertEqual(plan["warnings"], [

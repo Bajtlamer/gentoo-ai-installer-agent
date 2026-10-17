@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from gentoo_agent.core.disks import _block_devices, inventory_results
+from gentoo_agent.core.disks import IDENTITY_LABEL, _block_devices, inventory_results
 from gentoo_agent.core.errors import INVENTORY_MISSING, AgentError
 from gentoo_agent.core.validate import DEVICE_PATH, ESP_UUID, WINDOWS_LOADER
 
@@ -70,7 +70,7 @@ def _scan(disk_path: str, partitions: list[dict]) -> dict:
         # A missing filesystem alone is normal, for example a fresh layout before mkfs.
         raise _unusable(f"The partitions inventory has no partition type for {disk_path}")
     scan: dict = {"disk": disk_path, "esp": None, "esp_path": "", "gpt_esp": False, "esp_type": False,
-                  "markers": [], "strict": False, "mbr": False}
+                  "markers": [], "strict": False, "mbr": False, "system": False}
     for part in partitions:
         path = _path(part)
         parttype = _text(part, "parttype").lower()
@@ -82,10 +82,12 @@ def _scan(disk_path: str, partitions: list[dict]) -> dict:
             continue
         if parttype == MSR_TYPE:
             scan["markers"].append(f"msr {path}")
-            scan["strict"] = True
+            scan.update(strict=True, system=True)
         elif fstype in WINDOWS_FILESYSTEMS:
             scan["markers"].append(f"{fstype} {path}")
             scan["strict"] = scan["strict"] or (parttype == BASIC_DATA_TYPE and fstype == "ntfs")
+            # Looks like a Windows system disk (GPT): only such a disk can boot from another disk's ESP.
+            scan["system"] = scan["system"] or parttype == BASIC_DATA_TYPE
             scan["mbr"] = scan["mbr"] or bool(MBR_TYPE.fullmatch(parttype))
     return scan
 
@@ -108,6 +110,29 @@ def _record(scan: dict) -> dict | None:
     return _checked({"disk": disk_path, "os": "windows-data", "evidence": evidence})
 
 
+def _removable_disks(inventory: dict) -> set[str]:
+    """Paths of removable or USB disks from the disk_identity result.
+
+    Untrusted and optional: a missing, failed, or malformed result, a missing field, or a value of an
+    unexpected type counts as not removable (so the disk stays protected).
+    """
+    item = inventory_results(inventory).get(IDENTITY_LABEL)
+    if item is None or item.get("returncode") != 0:
+        return set()
+    try:
+        devices = _block_devices(item.get("stdout"), IDENTITY_LABEL)
+    except AgentError:
+        return set()
+    removable = set()
+    for device in devices:
+        path, tran, rm = device.get("path"), device.get("tran"), device.get("rm")
+        if not isinstance(path, str):
+            continue
+        if rm is True or rm == 1 or rm == "1" or (isinstance(tran, str) and tran.strip().lower() == "usb"):
+            removable.add(path)
+    return removable
+
+
 def detect_foreign_os(inventory: dict) -> list[dict]:
     """One record per disk that holds Windows data or boot files, in inventory order.
 
@@ -115,8 +140,11 @@ def detect_foreign_os(inventory: dict) -> list[dict]:
     reserved partition or an NTFS basic data partition on the same disk); only these records carry
     esp_uuid and become GRUB menu entries. "windows-bios": NTFS or BitLocker on MBR and no EFI system
     partition. "windows-data": any other Windows marker (a Microsoft reserved partition, NTFS, or
-    BitLocker), and every disk with an EFI system partition while another disk holds Windows without
-    one, since Windows may boot from it. Every record protects its disk from an ordinary erase.
+    BitLocker), and every fixed disk with a vfat EFI system partition while a fixed disk that looks
+    like a Windows system disk (GPT, with a Microsoft reserved partition or an NTFS or BitLocker basic
+    data partition) has no EFI system partition and no strict "windows" record exists anywhere, since
+    that Windows may boot from it. Removable and USB disks never take part in that propagation.
+    Every record protects its disk from an ordinary erase.
     """
     item = inventory_results(inventory).get(PARTITIONS_LABEL)
     if item is None or item.get("returncode") != 0:
@@ -125,13 +153,19 @@ def detect_foreign_os(inventory: dict) -> list[dict]:
     scans = [_scan(_path(disk), _partitions(disk))
              for disk in _block_devices(item.get("stdout"), PARTITIONS_LABEL) if _text(disk, "type") == "disk"]
     records = {scan["disk"]: _record(scan) for scan in scans}
-    without_esp = [scan["disk"] for scan in scans if scan["markers"] and scan["esp"] is None]
+    if any(record is not None and record["os"] == "windows" for record in records.values()):
+        # A complete UEFI Windows boots from its own ESP; no other ESP is its boot ESP.
+        return [record for record in records.values() if record is not None]
+    removable = _removable_disks(inventory)
+    without_esp = [scan["disk"] for scan in scans
+                   if scan["system"] and scan["esp"] is None and scan["disk"] not in removable]
     for scan in scans:
         users = [disk for disk in without_esp if disk != scan["disk"]]
-        if scan["esp"] is not None and records[scan["disk"]] is None and users:
+        if scan["esp"] is not None and records[scan["disk"]] is None and users and scan["disk"] not in removable:
             records[scan["disk"]] = _checked({
                 "disk": scan["disk"], "os": "windows-data",
-                "evidence": [f"esp vfat {scan['esp_path']}", *(f"esp used by Windows on {disk}" for disk in users)],
+                "evidence": [f"esp vfat {scan['esp_path']}",
+                             *(f"may hold the boot files of Windows on {disk}" for disk in users)],
             })
     return [record for record in records.values() if record is not None]
 

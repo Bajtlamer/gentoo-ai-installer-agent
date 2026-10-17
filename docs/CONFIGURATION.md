@@ -258,16 +258,24 @@ shows any of these on it:
 - a Microsoft reserved partition;
 - a partition with the `ntfs` or `BitLocker` filesystem, on any partition table
   (GPT basic data, or MBR types such as `0x7` and `0x17`);
-- an EFI system partition (`vfat`) while another disk holds Windows without an
-  EFI system partition of its own, because Windows may boot from it (evidence
-  `esp used by Windows on <other disk>`).
+- an EFI system partition (`vfat`) on a fixed disk, when no complete UEFI
+  Windows (`windows`) exists anywhere and another fixed disk looks like a
+  Windows system disk without an EFI system partition of its own (GPT, with a
+  Microsoft reserved partition or an NTFS or BitLocker basic data partition),
+  because that Windows may boot from it (evidence `may hold the boot files of
+  Windows on <other disk>`). Windows in BIOS mode, NTFS on MBR, and removable
+  or USB disks (`rm` or `tran` `usb` in the `disk_identity` result; a missing
+  value counts as fixed) never take part in this rule.
 
 The plan, `resolve_config`, `detect_hardware`, and `prepare_install.py` report
 such a disk as `windows` (UEFI Windows that gets a menu entry, see
 `dual_boot_entries`), `windows-bios` (NTFS or BitLocker on MBR without an EFI
 system partition), or `windows-data` (any other evidence). All three need the
-extended confirmation. An empty disk, or a Linux disk with its own EFI system
-partition, is not flagged, and neither is a disk partitioned without
+extended confirmation. An empty disk is not flagged. A Linux disk with its own
+EFI system partition is not flagged unless the EFI system partition rule above
+applies to it; for example an install disk left over from a failed run (EFI
+system partition, swap, ext4) next to a complete Windows is not flagged.
+Neither is a disk partitioned without
 filesystems (for example after a storage phase that failed before `mkfs`).
 When a disk lists partitions but none of them has a partition type (missing
 udev metadata), the partition data is unusable (`INVENTORY_MISSING` for

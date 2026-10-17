@@ -69,9 +69,11 @@ no ESP; it is reported with `"os": "windows-bios"` and no ESP fields.
 Only the strict UEFI rule above builds menu entries. A broader rule protects
 disks from an ordinary erase (review fix, 2026-10-17): any disk with a Microsoft
 reserved partition or an `ntfs` or `BitLocker` partition on any partition table
-is `"windows-data"` when neither rule above matches, and every disk with a vfat
-ESP becomes `"windows-data"` (evidence `esp used by Windows on <disk>`) while
-another disk holds Windows without an ESP. A disk whose partitions all lack a
+is `"windows-data"` when neither rule above matches. When no strict Windows
+exists, every fixed disk with a vfat ESP becomes `"windows-data"` (evidence
+`may hold the boot files of Windows on <disk>`) while another fixed GPT disk
+with an MSR or an NTFS/BitLocker basic data partition has no ESP; removable or
+USB disks, Windows in BIOS mode, and MBR NTFS disks never take part. A disk whose partitions all lack a
 partition type makes the inventory unusable; a missing filesystem alone is fine.
 
 All values from the inventory are untrusted: the ESP UUID must match

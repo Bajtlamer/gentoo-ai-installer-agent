@@ -111,6 +111,72 @@ SWAP_TYPE = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"
 UEFI = {"boot_mode": "uefi", "dual_boot": "auto", "disk": "/dev/nvme0n1"}
 
 
+def identity(*disks: tuple) -> dict:
+    """The disk_identity result for (path, tran, rm) tuples."""
+    devices = [{"path": path, "type": "disk", "size": 1, "model": "m", "serial": path[-3:], "wwn": None,
+                "tran": tran, "rm": rm} for path, tran, rm in disks]
+    return {"label": "disk_identity", "returncode": 0, "stdout": json.dumps({"blockdevices": devices})}
+
+
+FAILED_RUN_LAYOUT = (ESP, ("0657fd6d-a4ab-43c4-84e5-0933c84b4f4f", "swap"), (LINUX_TYPE, "ext4"))
+
+
+class EspPropagationTests(unittest.TestCase):
+    """When an EFI system partition counts as the boot ESP of a Windows on another disk."""
+
+    def detect(self, disks: list, identities: list | None = None) -> dict:
+        results = [partitions_result(*disks)]
+        if identities is not None:
+            results.append(identity(*identities))
+        return {record["disk"]: record for record in detect_foreign_os(inventory(*results))}
+
+    def test_failed_install_disk_next_to_complete_windows_and_ntfs_data_is_not_flagged(self):
+        records = self.detect([disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT), windows_disk("/dev/sda"),
+                               disk("/dev/sdb", (BASIC_DATA_TYPE, "ntfs"))])
+        self.assertNotIn("/dev/nvme0n1", records)
+        self.assertEqual(records["/dev/sda"]["os"], "windows")
+
+    def test_ntfs_usb_stick_never_uses_an_esp(self):
+        records = self.detect([disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT), disk("/dev/sdc", (BASIC_DATA_TYPE, "ntfs"))],
+                              [("/dev/nvme0n1", "nvme", False), ("/dev/sdc", "usb", False)])
+        self.assertNotIn("/dev/nvme0n1", records)
+        removable = self.detect([disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT), disk("/dev/sdc", (MSR_TYPE,), (BASIC_DATA_TYPE, "ntfs"))],
+                                [("/dev/nvme0n1", "nvme", False), ("/dev/sdc", "sata", True)])
+        self.assertNotIn("/dev/nvme0n1", removable)
+
+    def test_live_iso_usb_esp_is_never_flagged(self):
+        live = disk("/dev/sdd", ("0xef", "vfat", "5555-6666"))
+        for other in (disk("/dev/sde", (BASIC_DATA_TYPE, "ntfs")), disk("/dev/sda", (MSR_TYPE,), (BASIC_DATA_TYPE, "ntfs"))):
+            with self.subTest(other=other["path"]):
+                records = self.detect([live, other], [("/dev/sdd", "usb", True), ("/dev/sde", "usb", True),
+                                                      ("/dev/sda", "sata", False)])
+                self.assertNotIn("/dev/sdd", records)
+
+    def test_windows_in_bios_mode_and_mbr_ntfs_never_use_an_esp(self):
+        for other in (windows_bios_disk("/dev/sda"), disk("/dev/sda", ("0x7", "ntfs"), ("0xef", None))):
+            with self.subTest(other=other["children"][-1]["parttype"]):
+                self.assertNotIn("/dev/nvme0n1", self.detect([disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT), other]))
+
+    def test_genuine_split_still_flags_the_fixed_esp_disk(self):
+        disks = [disk("/dev/sda", (MSR_TYPE,), (BASIC_DATA_TYPE, "ntfs")), disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT)]
+        for identities in (None, [("/dev/sda", "sata", False), ("/dev/nvme0n1", "nvme", "0")]):
+            with self.subTest(identities=identities):
+                records = self.detect(disks, identities)
+                self.assertEqual(records["/dev/nvme0n1"], {
+                    "disk": "/dev/nvme0n1", "os": "windows-data",
+                    "evidence": ["esp vfat /dev/nvme0n1p1", "may hold the boot files of Windows on /dev/sda"]})
+
+    def test_hostile_identity_fields_count_as_not_removable(self):
+        disks = [disk("/dev/sda", (MSR_TYPE,), (BASIC_DATA_TYPE, "ntfs")), disk("/dev/nvme0n1", *FAILED_RUN_LAYOUT)]
+        for tran, rm in ((["usb"], {"x": 1}), (None, None), (5, "yes")):
+            with self.subTest(tran=tran, rm=rm):
+                records = self.detect(disks, [("/dev/sda", tran, rm), ("/dev/nvme0n1", tran, rm)])
+                self.assertIn("/dev/nvme0n1", records)
+        broken = {"label": "disk_identity", "returncode": 0, "stdout": "not json"}
+        records = detect_foreign_os(inventory(partitions_result(*disks), broken))
+        self.assertIn("/dev/nvme0n1", [record["disk"] for record in records])
+
+
 class WindowsDataTests(unittest.TestCase):
     """The broad rule that protects a disk holding Windows data or boot files from an ordinary erase."""
 
@@ -124,14 +190,14 @@ class WindowsDataTests(unittest.TestCase):
         self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
                                                "evidence": ["msr /dev/sda1", "ntfs /dev/sda2"]})
         self.assertEqual(records["/dev/sdb"], {"disk": "/dev/sdb", "os": "windows-data",
-                                               "evidence": ["esp vfat /dev/sdb1", "esp used by Windows on /dev/sda"]})
+                                               "evidence": ["esp vfat /dev/sdb1", "may hold the boot files of Windows on /dev/sda"]})
         self.assertEqual(dual_boot_entries(UEFI, list(records.values())), [])
 
     def test_every_esp_is_protected_when_windows_has_none_of_its_own(self):
         records = self.detect(disk("/dev/sda", (BASIC_DATA_TYPE, "ntfs", "01D9")),
                               disk("/dev/sdb", ESP, (LINUX_TYPE, "ext4", "u")), disk("/dev/sdc", ESP))
         self.assertEqual(sorted(records), ["/dev/sda", "/dev/sdb", "/dev/sdc"])
-        self.assertEqual(records["/dev/sdc"]["evidence"][-1], "esp used by Windows on /dev/sda")
+        self.assertEqual(records["/dev/sdc"]["evidence"][-1], "may hold the boot files of Windows on /dev/sda")
 
     def test_bitlocker_without_msr_on_gpt(self):
         records = self.detect(disk("/dev/sda", ESP, (BASIC_DATA_TYPE, "BitLocker")))
