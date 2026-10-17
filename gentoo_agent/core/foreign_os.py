@@ -23,8 +23,17 @@ BASIC_DATA_TYPE = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
 # MBR partition types are printed as hex bytes (0x7 for NTFS, 0xef for an EFI system partition).
 MBR_TYPE = re.compile(r"0x[0-9a-f]{1,2}")
 MBR_ESP_TYPE = "0xef"
-# Filesystems (lowercased lsblk FSTYPE) that only Windows writes, on any partition table.
-WINDOWS_FILESYSTEMS = ("ntfs", "bitlocker")
+# Filesystems (lowercased lsblk FSTYPE) that only Windows writes, on any partition table or a whole disk.
+WINDOWS_FILESYSTEMS = ("ntfs", "bitlocker", "refs")
+# Filesystems Windows can boot from (NTFS, or NTFS inside BitLocker); ReFS is data only.
+WINDOWS_BOOT_FILESYSTEMS = ("ntfs", "bitlocker")
+# Partition types only Windows uses (lowercased PARTTYPE), with their evidence word.
+WINDOWS_PARTITION_TYPES = {
+    "5808c8aa-7e8f-42e0-85d2-e1e90434cfb3": "ldm-metadata",
+    "af9b60a0-1431-4f62-bc68-3311714a69ad": "ldm-data",
+    "e75caf8f-f680-4cee-afa3-b001e56efc2d": "storage-spaces",
+    "0x42": "dynamic-disk",
+}
 SECURE_BOOT_STATES = {"1": "on", "0": "off"}
 
 
@@ -63,7 +72,7 @@ def _checked(record: dict) -> dict:
     return record
 
 
-def _scan(disk_path: str, partitions: list[dict]) -> dict:
+def _scan(disk_path: str, disk_fstype: str, partitions: list[dict]) -> dict:
     """What one disk holds: its first EFI system partition and every Windows marker, with evidence."""
     if partitions and not any(_text(part, "parttype") for part in partitions):
         # lsblk printed partitions without any type (no udev metadata): Windows could be hidden there.
@@ -71,6 +80,9 @@ def _scan(disk_path: str, partitions: list[dict]) -> dict:
         raise _unusable(f"The partitions inventory has no partition type for {disk_path}")
     scan: dict = {"disk": disk_path, "esp": None, "esp_path": "", "gpt_esp": False, "esp_type": False,
                   "markers": [], "strict": False, "mbr": False, "system": False}
+    if disk_fstype in WINDOWS_FILESYSTEMS:
+        # A filesystem on the whole disk, without a partition table.
+        scan["markers"].append(f"{disk_fstype} {disk_path}")
     for part in partitions:
         path = _path(part)
         parttype = _text(part, "parttype").lower()
@@ -83,12 +95,15 @@ def _scan(disk_path: str, partitions: list[dict]) -> dict:
         if parttype == MSR_TYPE:
             scan["markers"].append(f"msr {path}")
             scan.update(strict=True, system=True)
+        elif parttype in WINDOWS_PARTITION_TYPES:
+            scan["markers"].append(f"{WINDOWS_PARTITION_TYPES[parttype]} {path}")
         elif fstype in WINDOWS_FILESYSTEMS:
             scan["markers"].append(f"{fstype} {path}")
-            scan["strict"] = scan["strict"] or (parttype == BASIC_DATA_TYPE and fstype == "ntfs")
-            # Looks like a Windows system disk (GPT): only such a disk can boot from another disk's ESP.
-            scan["system"] = scan["system"] or parttype == BASIC_DATA_TYPE
-            scan["mbr"] = scan["mbr"] or bool(MBR_TYPE.fullmatch(parttype))
+            if fstype in WINDOWS_BOOT_FILESYSTEMS:
+                scan["strict"] = scan["strict"] or (parttype == BASIC_DATA_TYPE and fstype == "ntfs")
+                # Looks like a Windows system disk (GPT): only such a disk can boot from another disk's ESP.
+                scan["system"] = scan["system"] or parttype == BASIC_DATA_TYPE
+                scan["mbr"] = scan["mbr"] or bool(MBR_TYPE.fullmatch(parttype))
     return scan
 
 
@@ -139,8 +154,9 @@ def detect_foreign_os(inventory: dict) -> list[dict]:
     "windows": the strict rule (a vfat EFI system partition with the GPT type, and a Microsoft
     reserved partition or an NTFS basic data partition on the same disk); only these records carry
     esp_uuid and become GRUB menu entries. "windows-bios": NTFS or BitLocker on MBR and no EFI system
-    partition. "windows-data": any other Windows marker (a Microsoft reserved partition, NTFS, or
-    BitLocker), and every fixed disk with a vfat EFI system partition while a fixed disk that looks
+    partition. "windows-data": any other Windows marker (a Microsoft reserved partition; NTFS,
+    BitLocker, or ReFS on a partition or a whole disk; an LDM, Storage Spaces, or MBR dynamic disk
+    partition type), and every fixed disk with a vfat EFI system partition while a fixed disk that looks
     like a Windows system disk (GPT, with a Microsoft reserved partition or an NTFS or BitLocker basic
     data partition) has no EFI system partition and no strict "windows" record exists anywhere, since
     that Windows may boot from it. Removable and USB disks never take part in that propagation.
@@ -150,7 +166,7 @@ def detect_foreign_os(inventory: dict) -> list[dict]:
     if item is None or item.get("returncode") != 0:
         raise AgentError(INVENTORY_MISSING, "The latest inventory has no partition list; refresh it.",
                          {"label": PARTITIONS_LABEL})
-    scans = [_scan(_path(disk), _partitions(disk))
+    scans = [_scan(_path(disk), _text(disk, "fstype").lower(), _partitions(disk))
              for disk in _block_devices(item.get("stdout"), PARTITIONS_LABEL) if _text(disk, "type") == "disk"]
     records = {scan["disk"]: _record(scan) for scan in scans}
     if any(record is not None and record["os"] == "windows" for record in records.values()):

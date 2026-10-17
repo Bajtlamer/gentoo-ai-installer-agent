@@ -256,8 +256,13 @@ A disk holds Windows, for this protection, when the `partitions` inventory
 shows any of these on it:
 
 - a Microsoft reserved partition;
-- a partition with the `ntfs` or `BitLocker` filesystem, on any partition table
-  (GPT basic data, or MBR types such as `0x7` and `0x17`);
+- a partition with the `ntfs`, `BitLocker`, or `ReFS` filesystem, on any
+  partition table (GPT basic data, or MBR types such as `0x7` and `0x17`), or
+  one of these filesystems on the whole disk without a partition table;
+- a Windows dynamic disk or Storage Spaces partition: the LDM metadata
+  (`5808c8aa-7e8f-42e0-85d2-e1e90434cfb3`) or LDM data
+  (`af9b60a0-1431-4f62-bc68-3311714a69ad`) GPT type, the Storage Spaces GPT type
+  (`e75caf8f-f680-4cee-afa3-b001e56efc2d`), or MBR type `0x42`;
 - an EFI system partition (`vfat`) on a fixed disk, when no complete UEFI
   Windows (`windows`) exists anywhere and another fixed disk looks like a
   Windows system disk without an EFI system partition of its own (GPT, with a

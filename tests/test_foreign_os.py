@@ -223,6 +223,37 @@ class WindowsDataTests(unittest.TestCase):
         self.assertEqual(self.detect(disk("/dev/sda", (MSR_TYPE,), (LINUX_TYPE, "ext4")))["/dev/sda"]["os"],
                          "windows-data")
 
+    def test_whole_disk_windows_filesystems_without_a_partition_table(self):
+        for fstype in ("ntfs", "BitLocker", "ReFS"):
+            with self.subTest(fstype=fstype):
+                whole = {"path": "/dev/sdb", "type": "disk", "fstype": fstype}
+                self.assertEqual(self.detect(whole)["/dev/sdb"], {
+                    "disk": "/dev/sdb", "os": "windows-data", "evidence": [f"{fstype.lower()} /dev/sdb"]})
+
+    def test_refs_partition(self):
+        records = self.detect(disk("/dev/sda", (BASIC_DATA_TYPE, "refs")))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data", "evidence": ["refs /dev/sda1"]})
+
+    def test_ldm_and_storage_spaces_partition_types(self):
+        cases = {
+            "5808c8aa-7e8f-42e0-85d2-e1e90434cfb3": "ldm-metadata",
+            "AF9B60A0-1431-4F62-BC68-3311714A69AD": "ldm-data",
+            "e75caf8f-f680-4cee-afa3-b001e56efc2d": "storage-spaces",
+        }
+        for parttype, word in cases.items():
+            with self.subTest(word=word):
+                records = self.detect(disk("/dev/sda", (parttype,)))
+                self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
+                                                       "evidence": [f"{word} /dev/sda1"]})
+
+    def test_mbr_dynamic_disk(self):
+        records = self.detect(disk("/dev/sda", ("0x42",)))
+        self.assertEqual(records["/dev/sda"], {"disk": "/dev/sda", "os": "windows-data",
+                                               "evidence": ["dynamic-disk /dev/sda1"]})
+
+    def test_whole_disk_linux_filesystem_is_not_flagged(self):
+        self.assertEqual(self.detect({"path": "/dev/sdb", "type": "disk", "fstype": "ext4"}), {})
+
     def test_empty_disk_and_linux_disk_with_an_esp_are_not_flagged(self):
         self.assertEqual(self.detect("/dev/sda", linux_disk("/dev/sdb"), disk("/dev/sdc", ESP)), {})
 

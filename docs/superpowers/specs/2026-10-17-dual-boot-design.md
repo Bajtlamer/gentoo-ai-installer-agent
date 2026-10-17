@@ -68,8 +68,9 @@ no ESP; it is reported with `"os": "windows-bios"` and no ESP fields.
 
 Only the strict UEFI rule above builds menu entries. A broader rule protects
 disks from an ordinary erase (review fix, 2026-10-17): any disk with a Microsoft
-reserved partition or an `ntfs` or `BitLocker` partition on any partition table
-is `"windows-data"` when neither rule above matches. When no strict Windows
+reserved partition, an `ntfs`, `BitLocker`, or `ReFS` partition on any partition
+table or such a filesystem on the whole disk, or an LDM, Storage Spaces, or MBR
+`0x42` partition type is `"windows-data"` when neither rule above matches. When no strict Windows
 exists, every fixed disk with a vfat ESP becomes `"windows-data"` (evidence
 `may hold the boot files of Windows on <disk>`) while another fixed GPT disk
 with an MSR or an NTFS/BitLocker basic data partition has no ESP; removable or
