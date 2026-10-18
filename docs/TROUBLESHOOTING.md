@@ -22,6 +22,7 @@ the background stores the same object in `error` (and the message in
 - [Credentials not shown](#credentials-not-shown)
 - [Secure Boot is on](#secure-boot-is-on)
 - [Windows EFI partition not found](#windows-efi-partition-not-found)
+- [Windows entry fails with no such device](#windows-entry-fails-with-no-such-device)
 - [BitLocker recovery prompt](#bitlocker-recovery-prompt)
 - [Windows in BIOS mode](#windows-in-bios-mode)
 - [Windows disk on USB or removable media](#windows-disk-on-usb-or-removable-media)
@@ -355,6 +356,54 @@ cloned EFI partition), so the entry would boot something else.
 Refresh the inventory, create and approve a new plan, and start it; completed
 phases are skipped. A Windows disk that was swapped for another one stops the
 run earlier with `TARGET_DRIFT`.
+
+## Windows entry fails with no such device
+
+Gentoo boots, but choosing `Windows Boot Manager (on <disk>)` in GRUB stops
+with:
+
+```text
+error: .../grub-core/commands/search.c:grub_search_fs_uuid:371:no such device: <uuid>.
+error: .../grub-core/fs/fshelp.c:find_file:260:file `/EFI/Microsoft/Boot/bootmgfw.efi' not found.
+Press any key to continue...
+```
+
+The firmware boots with Fast Boot (quick boot) and connects only the device
+it boots from, so GRUB cannot see the Windows disk at all. The second error
+only follows from the first: GRUB looked for the Windows loader on the Gentoo
+EFI partition. Windows itself and its EFI partition are intact, and the
+installer did not write to them. This happens even when both disks sit on one
+controller, for example two namespaces of one VMware virtual NVMe controller.
+
+Fix it in the firmware, not in GRUB:
+
+- **VMware (Workstation, Fusion, ESXi):** `efi.quickBoot` is on by default.
+  Power the VM off completely, close it in VMware, add this line to its `.vmx`
+  file, and start it again:
+
+  ```text
+  efi.quickBoot.enabled = "FALSE"
+  ```
+
+- **Physical hardware:** turn off "Fast Boot" (sometimes "Quick Boot" or
+  "Ultra Fast Boot") in the firmware setup, and save.
+
+To check before you change anything, press `c` in the GRUB menu and run `ls`.
+When only the Gentoo disk and its partitions appear, the firmware did not
+connect the Windows disk. To check that Windows itself is intact, boot
+`Windows Boot Manager` from the firmware boot menu, or on the installed
+Gentoo:
+
+```sh
+sudo mkdir -p /mnt/winesp
+sudo mount -o ro "$(blkid -U <uuid>)" /mnt/winesp
+find /mnt/winesp -maxdepth 4 -iname 'bootmgfw.efi'
+sudo umount /mnt/winesp
+```
+
+Some distributions patch GRUB with a `connectefi` command for this case. The
+upstream GRUB that Gentoo ships does not have it, so the generated menu entry
+does not use it.
 
 ## BitLocker recovery prompt
 

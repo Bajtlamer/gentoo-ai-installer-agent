@@ -9,6 +9,8 @@ Status: version 0.2.0. The installer covers a complete OpenRC, ext4, GRUB
 installation on one disk (BIOS/MBR or UEFI/GPT) on amd64 and arm64 (arm64 is UEFI
 only). Dual boot with Windows on another disk is supported (UEFI, Secure Boot
 off): GRUB gets a Windows menu entry and the Windows disk is never written.
+Fast Boot must be off too (on VMware `efi.quickBoot.enabled = "FALSE"`), or
+GRUB cannot see the Windows disk.
 It is meant for a disposable
 VM first. Test there before you use physical hardware. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what comes next.

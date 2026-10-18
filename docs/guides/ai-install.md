@@ -456,7 +456,7 @@ the form has a second text field, `confirm`.
 For a plan with a Windows entry, the dialog also shows this line, for example:
 
 ```text
-Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.
+Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key. If GRUB reports "no such device" for it, turn off Fast Boot in the firmware (VMware: efi.quickBoot.enabled = "FALSE" in the .vmx).
 ```
 
 See [Dual boot with Windows](#dual-boot-with-windows).
@@ -482,6 +482,12 @@ frozen into the plan. It never writes to the Windows disk.
 Prerequisites:
 
 - Windows is installed in UEFI mode on a disk other than the install disk.
+- Fast Boot is off in the firmware setup (on VMware: `efi.quickBoot.enabled =
+  "FALSE"` in the `.vmx`; it is on by default). With Fast Boot the firmware
+  connects only the boot disk, and the Windows entry fails with `no such
+  device` (see
+  [Windows entry fails with no such device](../TROUBLESHOOTING.md#windows-entry-fails-with-no-such-device)).
+  Gentoo boots either way.
 - Secure Boot is off in the firmware setup. `create_plan` refuses a UEFI
   install while it is on (`CONFIG_CONFLICT`), because the installed GRUB is not
   signed. An unknown state is a warning in the plan and the dialog.

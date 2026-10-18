@@ -284,7 +284,9 @@ class DualBootApprovalTests(unittest.TestCase):
         with temp_home():
             summary = approval.approval_summary(save_dual_boot_plan(sda=windows_disk("/dev/sda")))
         self.assertIn("Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. "
-                      "Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.", summary)
+                      "Gentoo becomes the default; Windows may ask once for its BitLocker recovery key. "
+                      "If GRUB reports \"no such device\" for it, turn off Fast Boot in the firmware "
+                      "(VMware: efi.quickBoot.enabled = \"FALSE\" in the .vmx).", summary)
         self.assertIn("Windows disk (kept, not written): /dev/sda  size=256060514304 bytes", summary)
         self.assertIn("Disk (erased): /dev/nvme0n1", summary)
         self.assertTrue(any(line.startswith("Disk (erased): ") for line in summary.splitlines()))

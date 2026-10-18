@@ -119,7 +119,10 @@ def approval_summary(plan: dict) -> str:
     for entry in install.get("dual_boot_entries", []):
         lines.append(
             f"Dual boot: Windows on {_shown(entry['disk'])} (EFI UUID {_shown(entry['esp_uuid'])}) will be added to "
-            "the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key."
+            "the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key. "
+            # Fast Boot connects only the boot disk, so GRUB cannot see the Windows disk (VMware default).
+            'If GRUB reports "no such device" for it, turn off Fast Boot in the firmware '
+            '(VMware: efi.quickBoot.enabled = "FALSE" in the .vmx).'
         )
     password_source = install.get("password_source", "environment")
     passwords = f"Passwords: source={_shown(password_source)}"

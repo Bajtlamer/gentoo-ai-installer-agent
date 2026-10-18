@@ -449,6 +449,12 @@ frozen into the plan, and it never writes to the Windows disk.
 Prerequisites:
 
 - Windows is installed in UEFI mode on a disk other than the install disk.
+- Fast Boot is off in the firmware setup (on VMware: `efi.quickBoot.enabled =
+  "FALSE"` in the `.vmx`; it is on by default). With Fast Boot the firmware
+  connects only the boot disk, and the Windows entry fails with `no such
+  device` (see
+  [Windows entry fails with no such device](../TROUBLESHOOTING.md#windows-entry-fails-with-no-such-device)).
+  Gentoo boots either way.
 - Secure Boot is off in the firmware setup. `plan create` refuses a UEFI
   install while it is on (`CONFIG_CONFLICT`), because the installed GRUB is not
   signed. An unknown state is only a `WARNING` line in the plan.
@@ -476,7 +482,7 @@ partition UUID, and the Windows disk appears as `Windows disk (kept, not
 written)` below the `Disk (erased)` line:
 
 ```text
-Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key.
+Dual boot: Windows on /dev/sda (EFI UUID ABCD-1234) will be added to the GRUB menu. Gentoo becomes the default; Windows may ask once for its BitLocker recovery key. If GRUB reports "no such device" for it, turn off Fast Boot in the firmware (VMware: efi.quickBoot.enabled = "FALSE" in the .vmx).
 ...
 Disk (erased): /dev/nvme0n1  size=512110190592 bytes  model=NVMe  serial=N1  wwn=none
 Windows disk (kept, not written): /dev/sda  size=256060514304 bytes  model=WinDisk  serial=W1  wwn=none

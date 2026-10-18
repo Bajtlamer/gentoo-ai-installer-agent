@@ -160,7 +160,7 @@ Fields with a default when absent:
 | `user_password_env` | string | none | Variable holding the regular-user password |
 | `expected_disk_model` | string | none | When set, plan creation requires the inventory to report exactly this model, and `preflight` requires `lsblk` to report it on the live target. Must be a string or `null` |
 | `expected_disk_size_gib` | number | none | When set, plan creation and `preflight` require the disk size to be within 1 GiB of this value. Must be a number greater than 0 (not a boolean) or `null`. `prepare_install.py` derives it from the exact byte count in the `disk_identity` inventory, falling back to the rounded `lsblk` size only when that is missing |
-| `dual_boot` | string | `auto` | `auto` adds every Windows installed in UEFI mode on a disk other than the install disk to the GRUB menu; `off` adds none. `init_config.py --no-dual-boot` writes `off` |
+| `dual_boot` | string | `auto` | `auto` adds every Windows installed in UEFI mode on a disk other than the install disk to the GRUB menu; `off` adds none. `init_config.py --no-dual-boot` writes `off`. The firmware must have Fast Boot off (VMware: `efi.quickBoot.enabled = "FALSE"`), see [Windows entry fails with no such device](TROUBLESHOOTING.md#windows-entry-fails-with-no-such-device) |
 | `schema_version` | integer | none | Configuration schema version; currently `1` |
 
 The derived field `dual_boot_entries` is a list of Windows menu entries.

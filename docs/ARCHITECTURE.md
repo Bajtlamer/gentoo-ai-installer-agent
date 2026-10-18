@@ -340,6 +340,12 @@ programs are byte-identical to the ones without dual boot
 (`test_empty_dual_boot_entries_change_nothing`); the seventh golden
 configuration is `uefi_gpt_dualboot_windows`.
 
+The entry finds the Windows EFI partition with GRUB's `search`, which sees
+only devices the firmware connected. Fast Boot (VMware `efi.quickBoot`, on by
+default) connects only the boot disk, so the entry then fails with `no such
+device`. Fast Boot is a firmware prerequisite, not something the installer
+can check from the live system; the plan summary names it.
+
 ## Architectures
 
 `core/arch.py` holds the one table of supported architectures. Each entry of
