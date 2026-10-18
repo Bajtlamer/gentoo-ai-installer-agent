@@ -162,3 +162,30 @@ class DiskIdentityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_shared_serial_is_weak(self):
+        # VMware gives every virtual NVMe disk the serial "VMware NVME_0000".
+        shared = json.dumps({"blockdevices": [
+            {"path": "/dev/nvme0n1", "type": "disk", "size": 200, "model": "NVMe", "serial": "NVME_0000", "wwn": None},
+            {"path": "/dev/nvme0n2", "type": "disk", "size": 100, "model": "NVMe", "serial": "NVME_0000", "wwn": None},
+        ]})
+        parsed = disks.parse_disk_identities(shared)
+        self.assertEqual(disks.identity_strength(parsed[1], parsed), "weak")
+        self.assertEqual(disks.identity_strength(parsed[1]), "strong")
+        self.assertEqual(disks.disk_from_inventory(inventory_with(shared), "/dev/nvme0n2")["path"], "/dev/nvme0n2")
+
+    def test_shared_serial_with_same_size_and_model_is_ambiguous(self):
+        twins = json.dumps({"blockdevices": [
+            {"path": "/dev/nvme0n1", "type": "disk", "size": 100, "model": "NVMe", "serial": "NVME_0000", "wwn": None},
+            {"path": "/dev/nvme0n2", "type": "disk", "size": 100, "model": "NVMe", "serial": "NVME_0000", "wwn": None},
+        ]})
+        with self.assertRaises(AgentError) as caught:
+            disks.disk_from_inventory(inventory_with(twins), "/dev/nvme0n2")
+        self.assertEqual(caught.exception.code, DISK_AMBIGUOUS)
+
+    def test_unique_wwn_keeps_a_shared_serial_strong(self):
+        parsed = [
+            {"path": "/dev/sda", "size_bytes": 1, "model": "M", "serial": "S", "wwn": "0x1"},
+            {"path": "/dev/sdb", "size_bytes": 1, "model": "M", "serial": "S", "wwn": "0x2"},
+        ]
+        self.assertEqual(disks.identity_strength(parsed[0], parsed), "strong")

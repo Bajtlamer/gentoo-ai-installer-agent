@@ -147,8 +147,8 @@ def approval_summary(plan: dict) -> str:
             f"model={_shown(disk['model'] or 'unknown')}  "
             f"serial={_shown(disk['serial'] or 'none')}  wwn={_shown(disk['wwn'] or 'none')}"
         )
-        if identity_strength(disk) == "weak":
-            lines.append("WARNING: this disk has no serial number or WWN; drift detection relies on path, size, and model only.")
+        if identity_strength(disk, plan["disks"]) == "weak":
+            lines.append("WARNING: this disk has no unique serial number or WWN; drift detection relies on path, size, and model only.")
     return "\n".join(lines)
 
 

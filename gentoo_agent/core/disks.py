@@ -142,8 +142,13 @@ def disk_candidates(inventory: dict) -> tuple[list[dict], list[dict]]:
     return eligible, excluded
 
 
-def identity_strength(disk: dict) -> str:
-    return "strong" if disk.get("serial") or disk.get("wwn") else "weak"
+def identity_strength(disk: dict, others: list[dict] | tuple = ()) -> str:
+    """Strong when a serial or WWN is present and no other disk in others shares it."""
+    def unique(field: str) -> bool:
+        value = disk.get(field)
+        return bool(value) and not any(o.get("path") != disk.get("path") and o.get(field) == value for o in others)
+
+    return "strong" if unique("serial") or unique("wwn") else "weak"
 
 
 def disk_from_inventory(inventory: dict | None, path: str) -> dict:
@@ -154,7 +159,7 @@ def disk_from_inventory(inventory: dict | None, path: str) -> dict:
     parsed = parse_disk_identities(item.get("stdout", ""))
     for disk in parsed:
         if disk["path"] == path:
-            if identity_strength(disk) == "weak":
+            if identity_strength(disk, parsed) == "weak":
                 twins = [
                     other["path"]
                     for other in parsed
@@ -165,7 +170,7 @@ def disk_from_inventory(inventory: dict | None, path: str) -> dict:
                 if twins:
                     raise AgentError(
                         DISK_AMBIGUOUS,
-                        f"Disk {path} has no serial number or WWN and another disk has the same size and model; it cannot be identified reliably.",
+                        f"Disk {path} has no unique serial number or WWN and another disk has the same size and model; it cannot be identified reliably.",
                         {"disk": path, "twins": twins},
                     )
             return disk

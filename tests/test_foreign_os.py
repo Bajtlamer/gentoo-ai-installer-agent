@@ -37,6 +37,28 @@ class DetectForeignOsTests(unittest.TestCase):
     def test_linux_only_and_empty_disks_hold_no_foreign_os(self):
         self.assertEqual(detect_foreign_os(inventory(partitions_result(linux_disk("/dev/sda"), "/dev/sdb"))), [])
 
+    def test_flat_lsblk_output_is_read_by_pkname(self):
+        # lsblk on the Gentoo live ISO prints partitions as top-level entries with PKNAME, not as children.
+        disk = windows_disk("/dev/nvme0n1")
+        flat = [{k: v for k, v in disk.items() if k != "children"}, *disk["children"]]
+        records = detect_foreign_os(inventory(partitions_result(*flat, "/dev/nvme0n2")))
+        self.assertEqual(records, [{
+            "disk": "/dev/nvme0n1", "os": "windows", "esp_uuid": "ABCD-1234",
+            "evidence": ["esp vfat /dev/nvme0n1p1", "msr /dev/nvme0n1p2", "ntfs /dev/nvme0n1p3"],
+        }])
+
+    def test_partition_listed_both_nested_and_flat_counts_once(self):
+        disk = windows_disk("/dev/sda")
+        records = detect_foreign_os(inventory(partitions_result(disk, *disk["children"])))
+        self.assertEqual(records[0]["evidence"], ["esp vfat /dev/sda1", "msr /dev/sda2", "ntfs /dev/sda3"])
+
+    def test_flat_partition_without_a_known_parent_is_refused(self):
+        for pkname in (None, "", "sdz", ["sda"]):
+            with self.subTest(pkname=pkname), self.assertRaises(AgentError) as caught:
+                part = {**partition("/dev/sda", 3, BASIC_DATA_TYPE, "ntfs"), "pkname": pkname}
+                detect_foreign_os(inventory(partitions_result("/dev/sda", part)))
+            self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
     def test_esp_alone_is_not_windows(self):
         disk = {"path": "/dev/sda", "type": "disk", "children": [
             partition("/dev/sda", 1, ESP_TYPE, "vfat", "ABCD-1234", "6b8c1a2e-0d4f-4b6a-9c3e-1f2a3b4c5d6e")]}

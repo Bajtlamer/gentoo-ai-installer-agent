@@ -167,8 +167,19 @@ def detect_foreign_os(inventory: dict) -> list[dict]:
     if item is None or item.get("returncode") != 0:
         raise AgentError(INVENTORY_MISSING, "The latest inventory has no partition list; refresh it.",
                          {"label": PARTITIONS_LABEL})
-    scans = [_scan(_path(disk), _text(disk, "fstype").lower(), _partitions(disk))
-             for disk in _block_devices(item.get("stdout"), PARTITIONS_LABEL) if _text(disk, "type") == "disk"]
+    devices = _block_devices(item.get("stdout"), PARTITIONS_LABEL)
+    disks = [disk for disk in devices if _text(disk, "type") == "disk"]
+    # lsblk prints partitions nested under their disk or, on some systems, flat with PKNAME naming the disk.
+    owned = {_path(disk): {_path(part): part for part in _partitions(disk)} for disk in disks}
+    for part in devices:
+        if _text(part, "type") != "part":
+            continue
+        parent = f"/dev/{_text(part, 'pkname')}"
+        if parent not in owned:
+            # A partition of an unknown disk could hide Windows.
+            raise _unusable(f"The partitions inventory lists {_path(part)} without a known disk")
+        owned[parent].setdefault(_path(part), part)
+    scans = [_scan(_path(disk), _text(disk, "fstype").lower(), list(owned[_path(disk)].values())) for disk in disks]
     records = {scan["disk"]: _record(scan) for scan in scans}
     if any(record is not None and record["os"] == "windows" for record in records.values()):
         # A complete UEFI Windows boots from its own ESP; no other ESP is its boot ESP.

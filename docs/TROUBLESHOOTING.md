@@ -166,8 +166,9 @@ How a USB stick is treated depends on the path:
   cheap USB sticks. Detach the twin, run `inspect` again, and create the plan
   again.
 
-A disk without serial or WWN that has no twin is accepted, and the plan summary
-adds: "WARNING: this disk has no serial number or WWN; drift detection relies
+A disk without a unique serial or WWN (none at all, or one another disk shares,
+as every VMware virtual NVMe disk reports `VMware NVME_0000`) that has no twin
+is accepted, and the plan summary adds: "WARNING: this disk has no unique serial number or WWN; drift detection relies
 on path, size, and model only."
 
 ## Disk mounted after a failed run

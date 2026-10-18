@@ -38,7 +38,7 @@ def summarize_inventory(inventory: dict) -> dict:
         "architecture": architecture,
         "secure_boot": parse_secure_boot(inventory),
         "disks": [
-            {**disk, "strength": identity_strength(disk),
+            {**disk, "strength": identity_strength(disk, disks),
              "existing_os": "unknown" if existing is None else existing.get(disk["path"])}
             for disk in disks
         ],

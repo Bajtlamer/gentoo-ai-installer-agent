@@ -70,7 +70,7 @@ class ApprovalTests(unittest.TestCase):
         self.assertIn("Destructive phases: storage, filesystems, base-system", summary)
         self.assertIn("all data on the disk will be destroyed", summary)
         self.assertNotIn("WARNING", summary)
-        self.assertIn("WARNING: this disk has no serial number or WWN", weak)
+        self.assertIn("WARNING: this disk has no unique serial number or WWN", weak)
 
     def test_unapproved_plan_is_refused(self):
         with temp_home():
