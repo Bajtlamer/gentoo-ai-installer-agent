@@ -25,7 +25,8 @@ DISPLAY_BASE_CLASS = "03"
 KERNEL_RELEASE = re.compile(r"[0-9A-Za-z._+-]{1,64}")
 TEXT_LIMIT = 120
 ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
-PROFILE_NAME = r"[a-z0-9][a-z0-9/._+-]{0,127}"
+# A profile of an overlay is listed as repo:path; the name still has to be strict because it is shown and compared.
+PROFILE_NAME = r"(?:[a-z0-9][a-z0-9._+-]{0,63}:)?[a-z0-9][a-z0-9/._+-]{0,127}"
 PROFILE_NAME_LINE = re.compile(PROFILE_NAME)
 PROFILE_LIST_LINE = re.compile(rf"\s*\[(\d+)\]\s+({PROFILE_NAME})\s+\((stable|dev|exp)\)(?: (\*))?")
 PROFILE_HEADER = "Current /etc/portage/make.profile symlink:"

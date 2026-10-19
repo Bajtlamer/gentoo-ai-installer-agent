@@ -41,6 +41,15 @@ class PlasmaProfileTests(unittest.TestCase):
             self.assertIn("Only the plain OpenRC profile", reason)
             self.assertIn(name, reason)
 
+    def test_an_overlay_profile_keeps_the_inventory_usable_but_is_refused_by_name(self):
+        name = "guru:default/linux/amd64/23.0/desktop/plasma"
+        hardware = hardware_of(portage_profile=portage_profile_result(name))
+        self.assertEqual(hardware["portage_profile"], name)
+        target, reason = plasma_profile(hardware)
+        self.assertIsNone(target)
+        self.assertIn("Only the plain OpenRC profile", reason)
+        self.assertIn(name, reason)
+
     def test_arm64_refuses(self):
         target, reason = plasma_profile(hardware_of(arch=arch_result("aarch64")))
         self.assertIsNone(target)

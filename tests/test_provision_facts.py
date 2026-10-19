@@ -96,6 +96,22 @@ class MakeConfTests(unittest.TestCase):
         self.assertEqual(facts.make_conf_overrides(None), [])
 
 
+class OverlayProfileTests(unittest.TestCase):
+    def test_an_overlay_profile_name_is_parsed(self):
+        self.assertEqual(facts.parse_portage_profile("Current /etc/portage/make.profile symlink:\n  guru:default/linux/amd64/x\n"),
+                         "guru:default/linux/amd64/x")
+        listed = facts.parse_portage_profiles(
+            "Available profile symlink targets:\n  [1]   default/linux/amd64/23.0 (stable)\n"
+            "  [2]   guru:default/linux/amd64/x (exp) *\n")
+        self.assertEqual([item["name"] for item in listed], ["default/linux/amd64/23.0", "guru:default/linux/amd64/x"])
+        self.assertTrue(listed[1]["current"])
+
+    def test_hostile_names_are_still_unusable(self):
+        for name in ("a:b:c", ":x", "guru:", "gu ru:x", "guru:x;reboot", "guru:/x"):
+            with self.subTest(name=name), self.assertRaises(AgentError):
+                facts.parse_portage_profile(f"Current /etc/portage/make.profile symlink:\n  {name}\n")
+
+
 class SummaryTests(unittest.TestCase):
     def test_a_complete_inventory(self):
         summary = facts.summarize_provision_inventory(provision_inventory())
