@@ -754,3 +754,28 @@ class ProvisionToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
         popen.assert_not_called()
+
+
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ProvisionGuidanceTests(unittest.TestCase):
+    def test_the_server_instructions_explain_provisioning_and_forbid_invented_licenses(self):
+        text = mcp_server.server.instructions
+        for name in ("detect_provision", "create_provision_plan", "verify_install"):
+            self.assertIn(name, text)
+        self.assertIn("never invent or guess license names", text)
+
+    def test_the_install_prompt_mentions_provisioning(self):
+        async def go():
+            async with Client(mcp_server.server, mode="legacy") as client:
+                return await client.get_prompt("install_gentoo", {"request": ""})
+        text = anyio.run(go).messages[0].content.text
+        self.assertIn("create_provision_plan", text)
+
+    def test_the_provision_tool_description_does_not_overpromise_threads(self):
+        async def go():
+            async with Client(mcp_server.server, mode="legacy") as client:
+                return await client.list_tools()
+        tools = {tool.name: tool for tool in anyio.run(go).tools}
+        description = " ".join(tools["create_provision_plan"].description.split())
+        self.assertNotIn("all CPU threads", description)
+        self.assertIn("parallel jobs derived from the CPU threads and the memory", description)

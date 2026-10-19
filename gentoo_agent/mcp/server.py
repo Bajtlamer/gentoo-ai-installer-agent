@@ -64,7 +64,13 @@ INSTRUCTIONS = (
     "Installs Gentoo on a disposable target over SSH. Workflow: detect_hardware(refresh=true), "
     "resolve_config to preview, create_plan, approve_plan (a human confirms in a dialog), "
     "start_install, then get_run_status and get_run_log until the run ends. Never ask for or "
-    "pass passwords as text; reference environment variables with {\"env\": \"NAME\"}."
+    "pass passwords as text; reference environment variables with {\"env\": \"NAME\"}. "
+    "To provision an INSTALLED running system instead (it touches no disk): detect_provision(refresh=true), "
+    "create_provision_plan(accept_licenses=[...]), approve_plan (a human confirms in a dialog), start_install, "
+    "then get_run_status and get_run_log until the run ends. The HUMAN reboots the target; afterwards "
+    "verify_install proves the GPU. License names come only from the human or from emerge --pretend output "
+    "that the human shows you: never invent or guess license names, and never pass a license the human did "
+    "not name."
 )
 
 server = MCPServer("gentoo-agent", instructions=INSTRUCTIONS)
@@ -206,9 +212,10 @@ def detect_provision(refresh: bool = False) -> CallToolResult:
 
 @server.tool(annotations=LOCAL_WRITE)
 def create_provision_plan(accept_licenses: list[str], profile: str = "nvidia-driver") -> CallToolResult:
-    """Freeze a provision plan for the running system: Portage tuning for all CPU threads and the NVIDIA
-    driver. accept_licenses lists the license names the plan accepts; they are accepted only if a human
-    approves the plan. The plan erases no disk. Returns plan_id, plan_hash, and a summary for the human."""
+    """Freeze a provision plan for the running system: Portage tuning (parallel jobs derived from the CPU
+    threads and the memory) and the NVIDIA driver. accept_licenses lists the license names the plan
+    accepts; they are accepted only if a human approves the plan. The plan erases no disk. Returns
+    plan_id, plan_hash, and a summary for the human."""
     def run() -> dict:
         plan = core_provision_plan.create_provision_plan(
             target_config(), {"profile": profile, "accept_licenses": accept_licenses}, latest_provision_inventory())
@@ -410,7 +417,12 @@ def install_gentoo(request: str = "") -> str:
         "4. create_plan, then approve_plan. Never try to approve any other way.\n"
         "5. start_install, then poll get_run_status and read get_run_log until the run ends.\n"
         "6. On failure, report the error code and output tail; resume_run only if the user agrees.\n"
-        "7. Never reboot the target. If credentials are waiting, tell the user to read them in a terminal."
+        "7. Never reboot the target. If credentials are waiting, tell the user to read them in a terminal.\n\n"
+        "To provision an already installed running system instead (no disk is touched): "
+        "detect_provision(refresh=true), create_provision_plan(accept_licenses=[...]), approve_plan, "
+        "start_install, then get_run_status and get_run_log. The human reboots; then verify_install. "
+        "License names come only from the human or from emerge --pretend output the human shows; "
+        "never invent or guess them."
     )
 
 
