@@ -458,8 +458,15 @@ Symptoms: the run stops in `nvidia-drivers` (`PHASE_FAILED`) and the log tail fr
 - A license message ("The following license changes are necessary", "missing license"): a license that the
   package or a dependency needs is not in `accept_licenses`. The plan accepts licenses only for
   `x11-drivers/nvidia-drivers`, so a dependency with its own license also fails. Get the names from
-  `emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target, add them to the list, and
-  create a new plan (new `plan_id`, new approval). Never accept a license you have not read.
+  `USE="dist-kernel -tools" emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target,
+  add them to the list, and create a new plan (new `plan_id`, new approval). Never accept a license you have not
+  read.
+- `nvidia-config: Portage cannot resolve x11-drivers/nvidia-drivers with these licenses and USE settings`: the
+  `nvidia-config` check ran `emerge --pretend` and Portage refused (a missing license or `package.use` line).
+  Run `USE="dist-kernel -tools" emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the
+  target, copy the license name and the `package.use` lines it lists under "USE changes are necessary" and
+  "license changes are necessary", and create a new plan with `--accept-license` and `--package-use`
+  (`accept_licenses` and `package_use`). The check runs before the long build, so nothing was compiled.
 - A keyword message ("masked by: ~amd64 keyword"): the driver version is testing only. This needs a keyword file
   that the plan does not write; add it by hand, then `run resume <run_id>` (the plan's files are not affected).
 - A USE or blocker message: resolve it by hand on the target with `emerge --pretend`, then `run resume`, or
@@ -496,8 +503,9 @@ to see which test stopped it, then:
 - `modeset` is `N`: the kernel parameter did not reach the boot. Check `cat /proc/cmdline` for
   `nvidia-drm.modeset=1`, the plan block in `/etc/default/grub`, and that nothing after it overrides
   `GRUB_CMDLINE_LINUX`; run `grub-mkconfig -o /boot/grub/grub.cfg` and reboot.
-- The module license does not contain GPL: the proprietary module was built. Check that
-  `/etc/portage/package.use/gentoo-agent-nvidia` has `kernel-open` and rebuild the package.
+- The module license does not contain GPL: a module other than the open one was built. From driver 595 the open
+  module is the only module (there is no `kernel-open` flag); check the installed driver version with
+  `ls /var/db/pkg/x11-drivers` and rebuild the package for the running kernel.
 - `nvidia-smi` not found or lists nothing: it lives in `/opt/bin`; run it from a login shell and read its error.
   A kernel and driver mismatch (a new kernel without a rebuilt module) shows there too.
 

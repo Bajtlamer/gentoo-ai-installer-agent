@@ -44,22 +44,43 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 
 - If the machine dual boots Windows, Fast Boot (and on VMware `efi.quickBoot.enabled`) stays off, or GRUB
   cannot see the Windows disk. The plan regenerates `grub.cfg`; the Windows entry must still be there.
-- You know the licenses Portage requires for the driver. The agent never guesses them. On the target run:
+- You know the license and the `package.use` lines Portage requires for the driver. The agent never guesses
+  them. On the target run:
 
   ```sh
-  emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers
+  USE="dist-kernel -tools" emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers
   ```
 
-  and read the license names it lists (for example `NVIDIA-r2`). Give exactly those names as the accepted
-  licenses. The plan writes them for the package `x11-drivers/nvidia-drivers` only, never for `*/*`.
+  (the USE value is the one the plan sets). Copy the license name from the block "The following license
+  changes are necessary" and every `package.use` line from the block "The following USE changes are
+  necessary". Give exactly those as `accept_licenses` and `package_use`. The plan writes the licenses for the
+  package `x11-drivers/nvidia-drivers` only, never for `*/*`.
+
+  Output on the first real server for x11-drivers/nvidia-drivers-595.104.02 (the list of 13 packages that
+  precedes the change blocks and the `# required by` comment lines are left out here):
+
+  ```text
+  The following USE changes are necessary to proceed:
+  >=media-libs/libglvnd-1.7.0 X
+
+  The following license changes are necessary to proceed:
+  =x11-drivers/nvidia-drivers-595.104.02 NVIDIA-2025
+  ```
+
+  Here the license is `NVIDIA-2025` and the only USE change is `>=media-libs/libglvnd-1.7.0 X`. The plan does
+  not enable the `tools` flag (nvidia-settings): with it Portage would also want
+  `>=media-libs/freetype-2.14.3 harfbuzz` and `>=x11-libs/cairo-1.18.4-r1 X` and pull about 50 packages,
+  including gtk+ and rust-bin. From driver 595 the open kernel module is the only module and there is no
+  `kernel-open` flag; the plan sets `dist-kernel -tools` itself.
 
 ## Steps with the CLI
 
 1. `gentoo-agent provision inspect`. It connects to the target and runs the read-only provision inventory.
    Check the CPU threads, the memory, the GPU, and `portage_overrides` (variables the plan's value will
    replace in `make.conf`).
-2. `gentoo-agent provision plan --accept-license NVIDIA-r2`. Repeat `--accept-license` for every license (1 to
-   8). The name here is an example: use what Portage reported. `--profile` defaults to `nvidia-driver`, the
+2. `gentoo-agent provision plan --accept-license NVIDIA-2025 --package-use ">=media-libs/libglvnd-1.7.0 X"`.
+   Repeat `--accept-license` for every license (1 to 8) and `--package-use` for every line (0 to 8). The values
+   here are examples: use what Portage reported. `--profile` defaults to `nvidia-driver`, the
    only profile. This step reads the saved inventory and does not connect to the target; it refuses an
    inventory older than 24 hours.
 3. Read the summary. You accept the licenses by approving, in an interactive terminal:
@@ -75,8 +96,9 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 
 1. `detect_provision` with `refresh=true` (read-only inventory; without `refresh` it summarizes the latest
    saved one).
-2. `create_provision_plan` with `accept_licenses` (the names the human gave you; never invent them) and the
-   default `profile` `nvidia-driver`.
+2. `create_provision_plan` with `accept_licenses` and `package_use` (the license names and `package.use` lines
+   the human gave you or showed you from `emerge --pretend`; never invent them) and the default `profile`
+   `nvidia-driver`.
 3. `approve_plan`: a human reads the dialog and confirms. There is no erase phrase for a provision plan.
 4. `start_install`, then `get_run_status` and `get_run_log` until the run ends.
 5. The human reboots the target.
@@ -99,7 +121,7 @@ Phases, in order:
 | `preflight` | yes, read-only | Refuses unless: root, a default route, `emerge`, `/boot` is a mounted vfat filesystem, 8 GiB free on `/`, `/usr/src/linux-$(uname -r)` exists, and the running kernel matches `*-gentoo-dist*`. |
 | `portage-tuning` | yes | Writes `MAKEOPTS` and `EMERGE_DEFAULT_OPTS` into a block in `/etc/portage/make.conf`. |
 | `portage-sync` | yes | `emerge-webrsync`. Counts as done when `timestamp.chk` of the tree is under 2 days old. |
-| `nvidia-config` | yes | Writes the license and USE files, adds a block to `/etc/default/grub`, runs `eselect kernel set linux-<running release>`. |
+| `nvidia-config` | yes | Writes the license and USE files, checks with `emerge --pretend` that Portage can resolve the driver with them, adds a block to `/etc/default/grub`, runs `eselect kernel set linux-<running release>`. |
 | `nvidia-drivers` | yes | `emerge --noreplace --verbose x11-drivers/nvidia-drivers`, then `grub-mkconfig -o /boot/grub/grub.cfg`. |
 | `nvidia-verify` | yes, read-only | The module exists for the running kernel and `nouveau` is blacklisted. |
 | `gpu-online` | no (`run: false`) | Checked only by `verify_install` after the reboot: the `nvidia` module is loaded, `nvidia-smi -L` lists an NVIDIA device, the module license contains GPL (open modules), and `/sys/module/nvidia_drm/parameters/modeset` is `Y`. |
@@ -110,7 +132,8 @@ Files and blocks:
   `# gentoo-agent portage-tuning end`, for example `MAKEOPTS="-j15"` and
   `EMERGE_DEFAULT_OPTS="--jobs=3 --load-average=24"`.
 - `/etc/portage/package.license/gentoo-agent-nvidia`: `x11-drivers/nvidia-drivers <licenses>`.
-- `/etc/portage/package.use/gentoo-agent-nvidia`: `x11-drivers/nvidia-drivers kernel-open dist-kernel`.
+- `/etc/portage/package.use/gentoo-agent-nvidia`: `x11-drivers/nvidia-drivers dist-kernel -tools` on the first
+  line, then every line of `package_use`.
 - `/etc/default/grub`: a block between `# gentoo-agent nvidia begin` and `# gentoo-agent nvidia end` that
   appends `nvidia-drm.modeset=1` to `GRUB_CMDLINE_LINUX`.
 - `/boot/grub/grub.cfg`: regenerated.

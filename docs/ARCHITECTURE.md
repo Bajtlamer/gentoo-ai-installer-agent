@@ -320,7 +320,7 @@ kinds.
 | `disks` | disk identities, one erased | not present |
 | `identity` | not present | host identity: `hostname`, `root_uuid`, `hostkey` (SSH ed25519 fingerprint) |
 | `install` | validated install config | not present |
-| `provision` | not present | validated settings (`profile`, `accept_licenses`) and derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
+| `provision` | not present | validated settings (`profile`, `accept_licenses`, `package_use`) and derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
 | `erases_existing_os` | possible | never |
 
 Every phase of a plan has `destructive` (the phase changes the target; the guard runs before it) and `run`

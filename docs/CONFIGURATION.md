@@ -583,7 +583,7 @@ Rules:
 ## Provision settings
 
 A provision plan (see [guides/provision.md](guides/provision.md)) has no file under `config/`. Its settings come
-from the command line (`gentoo-agent provision plan --profile ... --accept-license ...`) or the MCP tool
+from the command line (`gentoo-agent provision plan --profile ... --accept-license ... --package-use ...`) or the MCP tool
 `create_provision_plan` and are checked by `validated_provision()`. The SSH user in `config/target.json` must be
 `root` (`CONFIG_INVALID` otherwise), and `target.json` must point at the installed system.
 
@@ -591,12 +591,19 @@ from the command line (`gentoo-agent provision plan --profile ... --accept-licen
 |-------|------|
 | `profile` | Required. Only `nvidia-driver` exists; anything else is `CONFIG_INVALID`. |
 | `accept_licenses` | Required. A list of 1 to 8 distinct strings, each matching `[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}`. Not a list, empty, duplicated, too long, or containing other characters: `CONFIG_INVALID`. |
+| `package_use` | Optional, default empty. A list of 0 to 8 distinct `package.use` lines, each `ATOM FLAG [FLAG ...]` (1 to 8 flags separated by single spaces, at most 200 characters, text only). ATOM is an optional operator (`<`, `<=`, `>`, `>=`, `=`, `~`), a category and a package name, with an optional version, for example `>=media-libs/libglvnd-1.7.0 X`; a FLAG is a USE flag, optionally with a leading `-`. Wildcards, newlines, shell text, a duplicate, and any line for `x11-drivers/nvidia-drivers` (the plan writes that line itself; the operator and version are ignored when comparing) are `CONFIG_INVALID` with `details.field` `package_use`. |
 
 Everything else in the input is dropped. The licenses are written to
 `/etc/portage/package.license/gentoo-agent-nvidia` as `x11-drivers/nvidia-drivers <licenses>`, so they apply to
 that package only. The operator supplies the names, taken from
-`emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target; the agent never guesses
-them. Approving the plan accepts them.
+`USE="dist-kernel -tools" emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target
+(the license name and the `package.use` lines under "USE changes are necessary" and "license changes are
+necessary"); the agent never guesses them. Approving the plan accepts them.
+
+`/etc/portage/package.use/gentoo-agent-nvidia` holds `x11-drivers/nvidia-drivers dist-kernel -tools` first and
+then every `package_use` line. There is no `kernel-open` flag: from driver 595 the open kernel module is the
+only module. The `nvidia-config` check ends with `emerge --pretend` for the driver, so a plan whose licenses or
+USE lines are not enough fails there, before the long build.
 
 The plan derives these fields from the provision inventory (they cannot be set) and freezes them in its hash:
 

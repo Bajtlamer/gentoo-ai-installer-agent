@@ -62,7 +62,7 @@ hash), launcher, worker, run records, and logs are unchanged.
 | `disks` | disk identities, one erased | not present |
 | `identity` | not present | host identity (below) |
 | `install` | validated install config | not present |
-| `provision` | not present | validated settings (`profile`, `accept_licenses`) and the derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
+| `provision` | not present | validated settings (`profile`, `accept_licenses`, `package_use`) and the derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
 | `erases_existing_os` | possible | never |
 | `phases` | frozen apply and check programs | frozen apply and check programs, each with `destructive` and `run` |
 
@@ -152,7 +152,7 @@ plan has seven phases, in this order:
 4. `nvidia-config`: writes `/etc/portage/package.license/gentoo-agent-nvidia`
    (`x11-drivers/nvidia-drivers <licenses>`, the explicit `accept_licenses` list, limited to
    that package, not `*/*`), `/etc/portage/package.use/gentoo-agent-nvidia`
-   (`x11-drivers/nvidia-drivers kernel-open dist-kernel`), and a block in
+   (`x11-drivers/nvidia-drivers dist-kernel -tools`, then every line of the `package_use` setting), and a block in
    `/etc/default/grub` (markers `# gentoo-agent nvidia begin` and `end`) that appends
    `nvidia-drm.modeset=1` to `GRUB_CMDLINE_LINUX`. It runs
    `eselect kernel set linux-<running release>`.
@@ -173,9 +173,10 @@ adds a missing final newline first and uses a temporary file that a trap removes
 parameter goes into a block of `/etc/default/grub`, not a drop-in, because the installer's
 GRUB does not create `/etc/default/grub.d/`.
 
-Licenses are an explicit setting, not parsed from `emerge` output. The operator learns the
-names from `emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the
-target and supplies them; the agent never guesses them. The human sees them in the approval
+Licenses and `package.use` lines are explicit settings, not parsed from `emerge` output. The
+operator learns them from `USE="dist-kernel -tools" emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers`
+on the target and supplies them (`accept_licenses`, `package_use`); the `nvidia-config` check
+runs `emerge --pretend` to prove they are sufficient before the long build; the agent never guesses them. The human sees them in the approval
 dialog, and an incomplete list makes `emerge` fail loudly (the fix is a new plan with a
 longer list). This avoids a fragile parser of Portage's text.
 
@@ -229,9 +230,9 @@ Source: Gentoo Wiki, NVIDIA/nvidia-drivers, https://wiki.gentoo.org/wiki/NVIDIA/
 sections on USE flags, kernel configuration, and distribution kernels. Retrieved
 2026-10-19T20:08Z.
 
-- `kernel-open` selects the open kernel modules. They are required for Blackwell
-  (RTX 50 series) and newer, and since driver version 595 building the open module
-  is mandatory.
+- The open kernel module is required for Blackwell (RTX 50 series) and newer, and
+  from driver version 595 it is the only module: the `kernel-open` flag no longer
+  exists (see Amendment 3 in the implementation plan).
 - `dist-kernel` rebuilds the driver on every distribution kernel upgrade;
   `modules` builds the kernel modules; `persistenced` is off by default.
 - With `gentoo-kernel-bin` the page asks for `dist-kernel` in

@@ -2332,3 +2332,10 @@ Assumptions that are checked only here (adjust the generators and tests if one i
 - `/etc/machine-id` does not exist on an OpenRC Gentoo (no systemd), so the `host_identity` command produced a glued `machine_id=hostkey=256 ...` line and `detect_provision` failed with `INVENTORY_MISSING`. The fixtures had assumed the file exists.
 - The host identity now uses the UUID of the root filesystem (`findmnt -rno UUID /`, key `root_uuid`) instead of the machine id. The installer always creates an ext4 root, and a reinstalled server gets a new root filesystem UUID and a new SSH host key.
 - The real outputs of the inventory commands (`cpu`, `memory`, `gpu`, `kernel`, and the broken `host_identity`) are now test fixtures in `tests/provision_helpers.py`, exercised by `tests/test_provision_real_data.py`.
+
+## Amendment 3 (found on the first real server)
+
+- `emerge --pretend` for x11-drivers/nvidia-drivers-595.104.02 shows the package USE flags `X modules static-libs strip tools dist-kernel modules-compress modules-sign persistenced powerd wayland`. There is no `kernel-open` flag any more: from driver 595 the open kernel module is mandatory. The code no longer writes it.
+- The license to accept is `NVIDIA-2025`. License names stay operator input and are never hard-coded.
+- Portage refuses to proceed (exit status 1 for `emerge --pretend`) until `package.use` changes exist. With `USE="dist-kernel -tools"` exactly one remains: `>=media-libs/libglvnd-1.7.0 X`. With `tools` it would also need `>=media-libs/freetype-2.14.3 harfbuzz` and `>=x11-libs/cairo-1.18.4-r1 X` and pull about 50 packages including gtk+ and rust-bin. The operator decided not to install the `tools` flag (nvidia-settings), so the plan sets `dist-kernel -tools`.
+- The plan as built would have failed at the `emerge` step. Changes: the new `package_use` setting (operator-supplied lines), written to the package.use file after the code-owned line, and a check in `nvidia-config` that runs `emerge --pretend --nospinner --autounmask-write=n x11-drivers/nvidia-drivers` so a missing license or USE line fails before the long build. The approval summary shows `USE changes`.
