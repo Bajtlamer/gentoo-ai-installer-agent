@@ -152,7 +152,7 @@ class FailClosedAndShapeTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
 
     def test_the_tuning_is_refused_before_any_program_is_generated(self):
-        with mock.patch("gentoo_agent.core.provision_plan.command_for") as command_for:
+        with mock.patch("gentoo_agent.core.profiles.command_for") as command_for:
             with self.assertRaises(AgentError) as caught:
                 create(provision_inventory(cpu=cpu_result(5000)))
         self.assertEqual(caught.exception.code, CONFIG_INVALID)

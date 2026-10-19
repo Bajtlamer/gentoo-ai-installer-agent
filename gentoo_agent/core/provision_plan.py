@@ -18,23 +18,25 @@ from gentoo_agent.core.install_plan import (
     canonical,
     compute_plan_hash,
 )
-from gentoo_agent.core.provision import derive_tuning, validated_provision, validated_tuning
+from gentoo_agent.core.hardware_profile import hardware_profile
+from gentoo_agent.core.profiles import get_profile
+from gentoo_agent.core.provision import derive_tuning, validated_tuning
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
-from gentoo_agent.core.provision_phases import PHASE_FLAGS, PHASES, check_command_for, command_for
 
 
 def create_provision_plan(target: dict, settings: dict, inventory: dict | None) -> dict:
     if target.get("user") != "root":
         raise AgentError(CONFIG_INVALID, "Provision plans run as root; the SSH user must be root.", {"field": "user"})
-    settings = validated_provision(settings)
+    profile = get_profile(settings.get("profile") if isinstance(settings, dict) else None)
+    settings = profile.validate(settings)
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No provision inventory exists; collect it first.", {})
     check_inventory_fresh(inventory)
     facts = summarize_provision_inventory(inventory)
     nvidia = [gpu for gpu in facts["gpus"] if gpu["vendor"] == "nvidia"]
-    if len(nvidia) != 1:
-        raise AgentError(CONFIG_INVALID, f"Expected exactly one NVIDIA GPU on the target, found {len(nvidia)}.",
-                         {"nvidia_gpus": len(nvidia)})
+    reason = profile.applicable(hardware_profile(facts))
+    if reason:
+        raise AgentError(CONFIG_INVALID, reason, {"profile": profile.id, "nvidia_gpus": len(nvidia)})
     provision = {
         **settings,
         "gpu": nvidia[0],
@@ -54,12 +56,12 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
         "phases": [
             {
                 "id": phase,
-                "destructive": PHASE_FLAGS[phase][0],
-                "run": PHASE_FLAGS[phase][1],
-                "apply": command_for(phase, target, provision),
-                "check": check_command_for(phase, target, provision),
+                "destructive": profile.flags[phase][0],
+                "run": profile.flags[phase][1],
+                "apply": profile.command_for(phase, target, provision),
+                "check": profile.check_command_for(phase, target, provision),
             }
-            for phase in PHASES
+            for phase in profile.phases
         ],
     }
     plan["plan_hash"] = compute_plan_hash(plan)
@@ -74,19 +76,21 @@ def verify_provision_programs(plan: dict) -> None:
     The approval summary is built from the settings while the runner executes the stored programs; the plan
     hash covers both but cannot tell whether they belong together.
     """
+    provision = plan.get("provision")
+    profile = get_profile(provision.get("profile") if isinstance(provision, dict) else None)
     phases = plan.get("phases")
-    if not isinstance(phases, list) or [phase.get("id") for phase in phases] != list(PHASES):
+    if not isinstance(phases, list) or [phase.get("id") for phase in phases] != list(profile.phases):
         raise AgentError(PLAN_HASH_MISMATCH, "The stored phases do not match the provision phases.",
                          {"plan_id": plan.get("plan_id")})
     for phase in phases:
         phase_id = phase["id"]
-        destructive, run = PHASE_FLAGS[phase_id]
+        destructive, run = profile.flags[phase_id]
         if phase.get("destructive") != destructive or phase.get("run") != run:
             raise AgentError(PLAN_HASH_MISMATCH, f"The stored {phase_id} phase flags do not match the plan settings.",
                              {"plan_id": plan.get("plan_id"), "phase": phase_id})
         generated = {
-            "apply": command_for(phase_id, plan["target"], plan["provision"]),
-            "check": check_command_for(phase_id, plan["target"], plan["provision"]),
+            "apply": profile.command_for(phase_id, plan["target"], plan["provision"]),
+            "check": profile.check_command_for(phase_id, plan["target"], plan["provision"]),
         }
         for kind, expected in generated.items():
             if phase.get(kind) != expected:
