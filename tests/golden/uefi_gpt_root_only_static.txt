@@ -44,24 +44,25 @@ printf 'preflight-ok boot=uefi disk=/dev/vda\n'
 set -eu
 disk=/dev/vda
 test -b "$disk"
-if lsblk -nr -o MOUNTPOINTS "$disk" | grep -q '[^[:space:]]' || swapon --show=NAME --noheadings | awk -v disk="$disk" '$1 != disk && index($1, disk) == 1 && substr($1, length(disk) + 1) ~ /^p?[0-9]+$/ {found=1} END {exit found ? 0 : 1}'; then
-  test "$(findmnt -rn -o SOURCE -T /mnt/gentoo)" = /dev/vda2
-  printf %s 'label: gpt
-unit: sectors
-/dev/vda1 : size=512M, type=U
-/dev/vda2 : type=L
-' | sfdisk --no-reread --force "$disk"
-else
-  wipefs -a -f "$disk"
-  printf %s 'label: gpt
+umount -R /mnt/gentoo 2>/dev/null || true
+for dev in $(lsblk -nr -o PATH "$disk"); do
+  swapoff "$dev" 2>/dev/null || true
+  umount "$dev" 2>/dev/null || true
+done
+if lsblk -nr -o MOUNTPOINTS "$disk" | grep -q '[^[:space:]]' || swapon --show=NAME --noheadings | awk -v disk="$disk" 'index($1, disk) == 1 {found=1} END {exit found ? 0 : 1}'; then
+  printf '%s\n' "$disk is still mounted or used as swap and could not be released" >&2
+  exit 1
+fi
+blkdiscard -f "$disk" || true
+wipefs -a -f "$disk"
+printf %s 'label: gpt
 unit: sectors
 /dev/vda1 : size=512M, type=U
 /dev/vda2 : type=L
 ' | sfdisk --wipe always "$disk"
-  partprobe "$disk" || true
-  udevadm settle || true
-  wipefs -a /dev/vda1 /dev/vda2
-fi
+partprobe "$disk" || true
+udevadm settle || true
+wipefs -a /dev/vda1 /dev/vda2
 partprobe "$disk" || true
 udevadm settle || true
 lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINTS "$disk"

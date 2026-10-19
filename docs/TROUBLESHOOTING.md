@@ -237,17 +237,14 @@ disk that held an earlier installation, there is no `mkfs` output, and the
 `base-system` phase downloads no stage3. The old system is still there with the
 new configuration on top.
 
-Cause (fixed in runs started after 2026-10-19): the storage check passed
-because the old layout matched the plan (same partition types and sizes), so
-the phase was skipped and the old filesystems were reused. A new run now always
-applies `storage`: it wipes the disk, writes the table, and clears the new
-partitions. Only `run resume` may skip it.
-
-The apply only wipes a disk that is not in use. If a cancelled or failed run
-left `/mnt/gentoo` mounted or the swap partition active, the next run treats it
-as a resume and rewrites the table without wiping. Before you start again, on
-the live system run `umount -R /mnt/gentoo` and `swapoff <swap partition>` (see
-[Disk mounted after a failed run](#disk-mounted-after-a-failed-run)).
+Cause (fixed after 2026-10-19): the storage check passed because the old
+layout matched the plan (same partition types and sizes), so the phase was
+skipped and the old filesystems were reused. The `storage` phase now never
+takes that shortcut: every run, a resume included, releases what is mounted or
+swapped on the install disk, discards and wipes it, writes the table, and wipes
+the new partitions. If something on the disk cannot be released (for example an
+active LVM or RAID device), the program stops before any write with `disk ... is
+still mounted or used as swap`; release it by hand and start again.
 
 ## Kernel install fails: not enough disk space on /boot
 
@@ -265,8 +262,7 @@ phase skips `mkfs` when it already sees the right filesystem type. The
 partition is 512 MB, but `/boot` has the size of the old filesystem. The same
 could leave an old root filesystem, with its files, in place. The `storage`
 apply now clears the signatures of every new partition right after it writes
-the table (`wipefs -a` on the planned partitions, only when it partitions a
-disk that is not in use).
+the table (`wipefs -a` on the planned partitions), in every run.
 
 Do not resume the run. The frozen plan still has the old storage program, and
 the storage check passes on a correct table, so the partitions would not be

@@ -125,36 +125,38 @@ def preflight_commands(target: dict, install: dict) -> list[str]:
 
 
 def storage_command(target: dict, install: dict) -> str:
-    disk, _ = validated_settings(target, install)
-    script = partition_script(target, install)
-    encoded = q(script)
-    _, layout = validated_settings(target, install)
-    root = next(item["device"] for item in layout if item.get("mount") == "/")
-    swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), None)
-    recovery_checks = [
-        f"test \"$(findmnt -rn -o SOURCE -T {q(MOUNT_ROOT)})\" = {q(root)}",
-    ]
-    if swap:
-        recovery_checks.append(
-            f"swapon --show=NAME --noheadings | awk -v expected={q(swap)} '$1 == expected {{found=1}} END {{exit found ? 0 : 1}}'"
-        )
-    recovery_checks_text = "\n".join(recovery_checks)
+    """Erase the install disk and partition it. It does this every time, whatever the disk holds.
+
+    There is no branch that keeps anything: whatever is mounted or swapped on the disk is released
+    first (a disk that cannot be released stops the program before any write), then the disk is
+    discarded, wiped, partitioned, and the new partitions are wiped too, because sfdisk leaves the
+    old contents of a new partition alone and a filesystem at the same offset would survive.
+    """
+    disk, layout = validated_settings(target, install)
+    encoded = q(partition_script(target, install))
+    in_use = (
+        "lsblk -nr -o MOUNTPOINTS \"$disk\" | grep -q '[^[:space:]]' || "
+        "swapon --show=NAME --noheadings | awk -v disk=\"$disk\" 'index($1, disk) == 1 {found=1} END {exit found ? 0 : 1}'"
+    )
     return "\n".join([
         "set -eu",
         f"disk={q(disk)}",
         "test -b \"$disk\"",
-        "if lsblk -nr -o MOUNTPOINTS \"$disk\" | grep -q '[^[:space:]]' || swapon --show=NAME --noheadings | awk -v disk=\"$disk\" '$1 != disk && index($1, disk) == 1 && substr($1, length(disk) + 1) ~ /^p?[0-9]+$/ {found=1} END {exit found ? 0 : 1}'; then",
-        f"  {recovery_checks_text}",
-        f"  printf %s {encoded} | sfdisk --no-reread --force \"$disk\"",
-        "else",
-        "  wipefs -a -f \"$disk\"",
-        f"  printf %s {encoded} | sfdisk --wipe always \"$disk\"",
-        # sfdisk leaves the old contents of a new partition alone. A partition that starts where an old
-        # one did would keep its filesystem signature, and the filesystems phase would skip mkfs.
-        "  partprobe \"$disk\" || true",
-        "  udevadm settle || true",
-        f"  wipefs -a {' '.join(q(item['device']) for item in layout)}",
+        f"umount -R {q(MOUNT_ROOT)} 2>/dev/null || true",
+        "for dev in $(lsblk -nr -o PATH \"$disk\"); do",
+        "  swapoff \"$dev\" 2>/dev/null || true",
+        "  umount \"$dev\" 2>/dev/null || true",
+        "done",
+        f"if {in_use}; then",
+        "  printf '%s\\n' \"$disk is still mounted or used as swap and could not be released\" >&2",
+        "  exit 1",
         "fi",
+        "blkdiscard -f \"$disk\" || true",
+        "wipefs -a -f \"$disk\"",
+        f"printf %s {encoded} | sfdisk --wipe always \"$disk\"",
+        "partprobe \"$disk\" || true",
+        "udevadm settle || true",
+        f"wipefs -a {' '.join(q(item['device']) for item in layout)}",
         "partprobe \"$disk\" || true",
         "udevadm settle || true",
         "lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINTS \"$disk\"",

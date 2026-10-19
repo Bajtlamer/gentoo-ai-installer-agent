@@ -34,9 +34,9 @@ The operator machine holds the configuration, plans, approvals, run logs, and
 the SSH key. The target only needs a booted live environment, networking, and
 an SSH server. Each phase first runs a read-only check: if it passes, the phase
 is skipped. Otherwise it applies the change and runs the check again as
-verification. The exception is `storage`: a new run always partitions the
-disk, even when an old layout matches the plan, so nothing of an old install
-survives; only a resumed run may skip it. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the
+verification. The exception is `storage`: it never takes the shortcut. The install disk is
+erased and partitioned in every run, a resume included, whatever it holds, so
+nothing of an old install survives. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the
 internals.
 
 ## Choose your path

@@ -105,7 +105,6 @@ def execute_plan(
             f"Run {run_id} must be claimed before execution (status {record.get('status')}).",
             {"run_id": run_id},
         )
-    resumed = record.get("resumed_from") is not None
     phases = plan["phases"]
     if phase_ids is not None:
         known = {phase["id"] for phase in phases}
@@ -128,10 +127,11 @@ def execute_plan(
                 return finish("cancelled")
             current = phase["id"]
             update_run(run_id, current_phase=current, phase_index=index, completed_phases=list(completed))
-            if current == "storage" and not resumed:
-                # A new run erases the disk even when an old layout happens to match the plan; only a
-                # resume may find it done. Otherwise the old filesystems and the old system were reused.
-                emit(f"===== {current} ({index}/{len(phases)}): a new run always partitions the disk =====")
+            if current == "storage":
+                # The disk is erased every time, in every run including a resume. No check may decide
+                # it is already done: an old install with the same layout passes the check, and its
+                # filesystems and system were reused instead of erased.
+                emit(f"===== {current} ({index}/{len(phases)}): the disk is always erased and partitioned =====")
             else:
                 emit(f"===== checking {current} ({index}/{len(phases)}) =====")
                 check = step(phase, "check", f"{current}-check", phase["check"])

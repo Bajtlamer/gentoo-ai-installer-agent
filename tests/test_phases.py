@@ -122,52 +122,87 @@ class StorageCheckTests(unittest.TestCase):
 class StorageApplyTests(unittest.TestCase):
     """Runs the generated storage program against stub commands that only record their calls.
 
-    sfdisk does not clear the signatures inside new partitions. A new partition that starts where an
-    old one did keeps the old filesystem signature, and the filesystems phase then skips mkfs because
-    it sees a filesystem already: the 512 MB EFI partition kept a 16 MB vfat from a failed run.
+    The program erases the install disk every time, whatever it holds: it releases what is mounted
+    or swapped on it, discards it, wipes it, writes the table, and wipes the new partitions (sfdisk
+    leaves the old contents of a new partition alone, so a filesystem at the same offset survived).
+    It has no branch that keeps anything.
     """
 
-    def run_apply(self, config_name: str, mounted: bool) -> list[str]:
+    def run_apply(self, config_name: str, *, in_use: bool = False, stubborn: bool = False,
+                  discard_fails: bool = False):
         install = fixture(config_name)
         command = phases.storage_command(TARGET, install)
         disk, layout = phases.validated_settings(TARGET, install)
-        root = next(item["device"] for item in layout if item.get("mount") == "/")
-        swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), "")
+        devices = [disk] + [item["device"] for item in layout]
         with tempfile.TemporaryDirectory() as tmp:
             stubs = Path(tmp)
             log = stubs / "calls"
             log.write_text("", encoding="utf-8")
-            outputs = {"lsblk": "/mnt/gentoo" if mounted else "", "findmnt": root if mounted else "",
-                       "swapon": swap if mounted else ""}
-            for name in ("wipefs", "sfdisk", "partprobe", "udevadm", "lsblk", "findmnt", "swapon"):
+            if in_use:
+                (stubs / "inuse").touch()
+            if stubborn:
+                (stubs / "stubborn").touch()
+            busy = f'[ -e {shlex.quote(str(stubs / "inuse"))} ] && [ ! -e {shlex.quote(str(stubs / "released"))} ]'
+            scripts = {
+                "lsblk": 'case "$*" in\n  *"-o MOUNTPOINTS"*) ' + busy + ' && echo /mnt/gentoo;;\n'
+                         '  *"-o PATH"*) printf "%s\\n" ' + " ".join(shlex.quote(d) for d in devices) + ';;\nesac',
+                "swapon": busy + f' && echo {shlex.quote(layout[1]["device"])}',
+                "umount": f'[ -e {shlex.quote(str(stubs / "stubborn"))} ] || touch {shlex.quote(str(stubs / "released"))}',
+                "swapoff": f'[ -e {shlex.quote(str(stubs / "stubborn"))} ] || touch {shlex.quote(str(stubs / "released"))}',
+                "blkdiscard": "exit 1" if discard_fails else "",
+                "sfdisk": "cat >/dev/null",
+                "wipefs": "", "partprobe": "", "udevadm": "", "findmnt": "",
+            }
+            for name, body in scripts.items():
                 (stubs / name).write_text(
-                    f'#!/bin/sh\necho "{name} $*" >> {shlex.quote(str(log))}\n'
-                    + ('cat >/dev/null\n' if name == "sfdisk" else "")
-                    + (f"printf '%s\\n' {shlex.quote(outputs[name])}\n" if name in outputs and outputs[name] else ""),
-                    encoding="utf-8")
+                    f'#!/bin/sh\necho "{name} $*" >> {shlex.quote(str(log))}\n{body}\ntrue\n'
+                    if name != "blkdiscard" else
+                    f'#!/bin/sh\necho "{name} $*" >> {shlex.quote(str(log))}\n{body}\n', encoding="utf-8")
                 (stubs / name).chmod(0o755)
             program = 'test() { if [ "$1" = -b ]; then return 0; fi; command test "$@"; }\n' + command
             result = subprocess.run(["sh", "-c", program], capture_output=True, text=True,
                                     env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"})
-            self.assertEqual(result.returncode, 0, result.stderr)
             self.layout = [item["device"] for item in layout]
-            return log.read_text(encoding="utf-8").splitlines()
+            self.disk = disk
+            return result, log.read_text(encoding="utf-8").splitlines()
 
-    def test_a_fresh_table_clears_the_signatures_of_every_new_partition(self):
+    @staticmethod
+    def index(calls, prefix):
+        return next(i for i, call in enumerate(calls) if call.startswith(prefix))
+
+    def test_every_run_discards_wipes_partitions_and_wipes_the_new_partitions_in_order(self):
         for name in ("uefi_gpt_user_sudo", "bios_mbr_user_sudo"):
-            with self.subTest(config=name):
-                calls = self.run_apply(name, mounted=False)
-                sfdisk = next(i for i, c in enumerate(calls) if c.startswith("sfdisk --wipe always"))
-                wiped = [dev for c in calls[sfdisk + 1:] if c.startswith("wipefs -a ") for dev in c.split()[2:]]
-                self.assertEqual(sorted(wiped), sorted(self.layout))
-                self.assertTrue(any(c.startswith("udevadm settle") for c in calls[sfdisk + 1:calls.index(
-                    next(c for c in calls[sfdisk + 1:] if c.startswith("wipefs -a ")))]),
-                    "the partition nodes must exist before they are wiped")
+            for in_use in (False, True):
+                with self.subTest(config=name, in_use=in_use):
+                    result, calls = self.run_apply(name, in_use=in_use)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    discard = self.index(calls, f"blkdiscard -f {self.disk}")
+                    wipe_disk = self.index(calls, f"wipefs -a -f {self.disk}")
+                    sfdisk = self.index(calls, "sfdisk --wipe always")
+                    self.assertLess(discard, wipe_disk)
+                    self.assertLess(wipe_disk, sfdisk)
+                    wiped = [dev for call in calls[sfdisk + 1:] if call.startswith("wipefs -a ") for dev in call.split()[2:]]
+                    self.assertEqual(sorted(wiped), sorted(self.layout))
+                    self.assertFalse(any("--no-reread" in call for call in calls))
 
-    def test_a_disk_in_use_keeps_its_filesystems(self):
-        calls = self.run_apply("uefi_gpt_user_sudo", mounted=True)
-        self.assertTrue(any(c.startswith("sfdisk --no-reread --force") for c in calls))
-        self.assertEqual([c for c in calls if c.startswith("wipefs")], [])
+    def test_anything_mounted_or_swapped_on_the_disk_is_released_first(self):
+        result, calls = self.run_apply("uefi_gpt_user_sudo", in_use=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        discard = self.index(calls, "blkdiscard")
+        released = [i for i, call in enumerate(calls) if call.startswith(("umount", "swapoff"))]
+        self.assertTrue(released and max(released) < discard)
+        self.assertTrue(any(call.startswith("umount -R /mnt/gentoo") for call in calls))
+        self.assertTrue(any(call.startswith("swapoff") and self.layout[1] in call for call in calls))
+
+    def test_a_disk_that_cannot_be_released_stops_before_any_write(self):
+        result, calls = self.run_apply("uefi_gpt_user_sudo", in_use=True, stubborn=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([call for call in calls if call.startswith(("blkdiscard", "wipefs", "sfdisk"))], [])
+
+    def test_a_failed_discard_does_not_stop_the_wipe(self):
+        result, calls = self.run_apply("uefi_gpt_user_sudo", discard_fails=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call.startswith("sfdisk --wipe always") for call in calls))
 
 
 class PhaseGeneratorTests(unittest.TestCase):

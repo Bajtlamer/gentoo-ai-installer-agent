@@ -47,11 +47,12 @@ class FakeShell:
                 "stdout": stdout, "stderr": "", "finished_at": "now"}
 
 
-class StorageOnNewRunTests(unittest.TestCase):
-    """A new run always partitions the disk; only a resume may find storage already done.
+class StorageAlwaysAppliedTests(unittest.TestCase):
+    """The storage phase erases the disk in every run: no check can decide it is already done.
 
-    A target disk with an old install of the same layout passes the storage check. Skipping the
-    phase then reused the old filesystems and the old system instead of erasing the disk.
+    A disk with an old installation of the same layout passes the check. Skipping the phase reused
+    the old filesystems and the old system instead of erasing the disk. This holds for a resumed
+    run too.
     """
 
     def run_storage_plan(self, shell, resumed_from=None):
@@ -59,20 +60,21 @@ class StorageOnNewRunTests(unittest.TestCase):
         runs.write_run(run_id, {"run_id": run_id, "plan_id": STORAGE_PLAN["plan_id"], "status": "running",
                                 "pid": None, "started_at": runs.now(), "resumed_from": resumed_from})
         with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
-            result = runner.execute_plan(STORAGE_PLAN, run_id, RECORDS)
-        return result
+            return runner.execute_plan(STORAGE_PLAN, run_id, RECORDS)
 
-    def test_a_new_run_applies_storage_even_when_its_check_passes(self):
-        with temp_home():
-            shell = FakeShell()
-            result = self.run_storage_plan(shell)
-        labels = [call[0] for call in shell.calls]
-        self.assertIn("storage", labels)
-        self.assertLess(labels.index("storage"), labels.index("storage-verify"))
-        self.assertEqual(result["status"], "installed_pending_reboot")
-        self.assertEqual(result["completed_phases"], ["preflight", "storage", "kernel"])
+    def test_storage_is_applied_in_a_new_run_even_when_its_check_would_pass(self):
+        for resumed_from in (None, "20261019T000000Z-abcdef"):
+            with self.subTest(resumed_from=resumed_from), temp_home():
+                shell = FakeShell()
+                result = self.run_storage_plan(shell, resumed_from)
+                labels = [call[0] for call in shell.calls]
+                self.assertIn("storage", labels)
+                self.assertNotIn("storage-check", labels)
+                self.assertLess(labels.index("storage"), labels.index("storage-verify"))
+                self.assertEqual(result["status"], "installed_pending_reboot")
+                self.assertEqual(result["completed_phases"], ["preflight", "storage", "kernel"])
 
-    def test_a_new_run_still_skips_other_completed_phases(self):
+    def test_other_completed_phases_are_still_skipped(self):
         with temp_home():
             shell = FakeShell()
             self.run_storage_plan(shell)
@@ -81,21 +83,20 @@ class StorageOnNewRunTests(unittest.TestCase):
         self.assertNotIn("kernel", labels)
         self.assertNotIn("preflight", labels)
 
-    def test_a_resumed_run_skips_storage_when_its_check_passes(self):
-        with temp_home():
-            shell = FakeShell()
-            result = self.run_storage_plan(shell, resumed_from="20261019T000000Z-abcdef")
-        labels = [call[0] for call in shell.calls]
-        self.assertEqual(labels, ["preflight-check", "storage-check", "kernel-check"])
-        self.assertEqual(result["completed_phases"], ["preflight", "storage", "kernel"])
-
-    def test_a_failed_storage_apply_on_a_new_run_stops_the_run(self):
+    def test_a_failed_storage_apply_stops_the_run(self):
         with temp_home():
             shell = FakeShell({"storage": 1})
             result = self.run_storage_plan(shell)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["failed_phase"], "storage")
         self.assertNotIn("kernel-check", [call[0] for call in shell.calls])
+
+    def test_the_verify_after_apply_still_runs(self):
+        with temp_home():
+            shell = FakeShell({"storage-verify": 1})
+            result = self.run_storage_plan(shell)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("storage-verify", [call[0] for call in shell.calls])
 
 
 class ExecutePlanTests(unittest.TestCase):
