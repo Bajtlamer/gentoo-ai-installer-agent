@@ -20,6 +20,10 @@ from gentoo_agent.core.phases import PHASES, command_for
 from gentoo_agent.core.runs import append_log, cancel_requested, read_run, update_run
 from gentoo_agent.core.ssh import remote_shell
 
+DEFAULT_TIMEOUT_SECONDS = 3600
+# The Plasma world update and install can compile for hours.
+PHASE_TIMEOUT_SECONDS = {"plasma-update": 21600, "plasma-install": 21600}
+
 
 EventSink = Callable[[str], None]
 OUTPUT_TAIL_LINES = 40
@@ -91,9 +95,10 @@ def execute_plan(
             "authentication_applied": authentication_applied,
         }
 
-    def step(phase: dict, log_kind: str, label: str, command: str, input_data: str | None = None) -> dict:
-        result = remote_shell(target, label, command, stream=True, input_data=input_data, on_output=on_output,
-                              keep_fds=keep_fds, holder_python=holder_python)
+    def step(phase: dict, log_kind: str, label: str, command: str, input_data: str | None = None,
+             timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+        result = remote_shell(target, label, command, timeout=timeout, stream=True, input_data=input_data,
+                              on_output=on_output, keep_fds=keep_fds, holder_python=holder_python)
         append_log(run_id, {
             "phase": phase["id"],
             "kind": log_kind,
@@ -158,12 +163,13 @@ def execute_plan(
             if phase.get("destructive", True):
                 emit(f"{current}: re-checking that the target still matches the plan")
                 guard()
+            phase_timeout = PHASE_TIMEOUT_SECONDS.get(current, DEFAULT_TIMEOUT_SECONDS)
             emit(f"===== applying {current} =====")
             input_data = None
             if current == "authentication":
                 input_data = password_records
                 authentication_applied = True  # apply was attempted; passwords may be set even if it failed
-            result = step(phase, "apply", current, phase["apply"], input_data)
+            result = step(phase, "apply", current, phase["apply"], input_data, timeout=phase_timeout)
             if result["returncode"] != 0:
                 return finish(
                     "failed",
@@ -171,7 +177,7 @@ def execute_plan(
                     tail=output_tail(result["stdout"]),
                 )
             emit(f"===== verifying {current} =====")
-            verify = step(phase, "verify", f"{current}-verify", phase["check"])
+            verify = step(phase, "verify", f"{current}-verify", phase["check"], timeout=phase_timeout)
             if verify["returncode"] != 0:
                 return finish(
                     "failed",

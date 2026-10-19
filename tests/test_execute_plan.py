@@ -50,10 +50,12 @@ class FakeShell:
         self.raise_on = raise_on or {}
         self.calls = []
         self.keep_fds = []
+        self.timeouts = {}
 
     def __call__(self, target, label, command, timeout=3600, stream=False, input_data=None, on_output=None,
                  keep_fds=(), holder_python=None):
         self.calls.append((label, command, input_data))
+        self.timeouts[label] = timeout
         self.keep_fds.append((keep_fds, holder_python))
         if label in self.raise_on:
             raise self.raise_on[label]
@@ -112,6 +114,26 @@ class StorageAlwaysAppliedTests(unittest.TestCase):
             result = self.run_storage_plan(shell)
         self.assertEqual(result["status"], "failed")
         self.assertIn("storage-verify", [call[0] for call in shell.calls])
+
+
+class PhaseTimeoutTests(unittest.TestCase):
+    def test_long_phases_get_six_hours_for_apply_and_verify_only(self):
+        plan = {**PROVISION_PLAN, "phases": [
+            {"id": "preflight", "destructive": False, "run": True, "apply": "a", "check": "c"},
+            {"id": "plasma-update", "destructive": True, "run": True, "apply": "a", "check": "c"},
+        ]}
+        shell = FakeShell({"plasma-update-check": 1})
+        run_id = runs.new_run_id()
+        with temp_home():
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": plan["plan_id"], "status": "running",
+                                    "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_identity"):
+                runner.execute_plan(plan, run_id, None)
+        self.assertEqual(runner.PHASE_TIMEOUT_SECONDS, {"plasma-update": 21600, "plasma-install": 21600})
+        self.assertEqual(shell.timeouts["plasma-update-check"], 3600)
+        self.assertEqual(shell.timeouts["plasma-update"], 21600)
+        self.assertEqual(shell.timeouts["plasma-update-verify"], 21600)
+        self.assertEqual(shell.timeouts["preflight-check"], 3600)
 
 
 class ProvisionPlanTests(unittest.TestCase):
