@@ -263,6 +263,8 @@ rules in `.claude/settings.json` are a convention.
 | `layout.py` | Partition layout from disk, boot mode, and swap size |
 | `provision.py` | Validated provision settings (`validated_provision()`, `validated_tuning()`) and the Portage tuning rule (`derive_tuning()`) |
 | `provision_facts.py` | Strict parsers for GPU, CPU, memory, kernel, and `make.conf` facts; `summarize_provision_inventory()` |
+| `hardware_profile.py` | Pure `hardware_profile()`: architecture, threads, memory, GPUs, vendors, `video_cards` from a fixed vendor map (an unknown vendor gives `None` and `unknown_vendors`), `virtual` |
+| `profiles.py` | The profile registry (`PROFILES`, `Profile`, `get_profile()`, `profile_overview()`, `provision_overview()`) |
 | `provision_phases.py` | `PHASES` and `PHASE_FLAGS` of a provision plan and the apply and check generators |
 | `provision_plan.py` | `create_provision_plan()` |
 | `paths.py` | Every directory, resolved per call, overridable with `GENTOO_AGENT_HOME` |
@@ -349,12 +351,25 @@ The provision inventory is a second allowlist, `PROVISION_READ_ONLY_COMMANDS` in
 | `gpu` | one line per PCI device from `/sys/bus/pci/devices` (address, class, vendor, device); no `lspci`, a stage3 has none |
 | `portage_conf` | the user's own `MAKEOPTS` and `EMERGE_DEFAULT_OPTS`, outside the plan's block |
 | `kernel` | `uname -r` |
+| `arch` | `uname -m`, mapped to `amd64` or `arm64` |
+| `portage_profile` | `eselect profile show`, the current Portage profile |
+| `portage_profiles` | `eselect profile list`, every profile with its stability and the current one |
+| `binrepos` | the https `sync-uri` values of `/etc/portage/binrepos.conf/*.conf` |
 
 Every value is parsed strictly and reaches the summary only in a known format; the GPU name is built in code
 from the vendor id. `create_provision_plan()` needs `root` as the SSH user, an inventory under 24 hours old,
-and exactly one NVIDIA GPU. A provision plan changes files named `gentoo-agent-*` or blocks between
+and a profile that applies to the hardware. A provision plan changes files named `gentoo-agent-*` or blocks between
 `gentoo-agent` markers, and a test scans every generated program for disk, mount, and reboot commands. See
 [guides/provision.md](guides/provision.md).
+
+### Hardware profile and profile registry
+
+`hardware_profile(facts)` turns the summarized provision inventory into one data record that profiles decide
+on. `profiles.PROFILES` maps a profile id to a `Profile` (title, `applicable`, `validate`, phases, flags, and the
+apply and check generators). `applicable(hardware)` returns `None` when the profile fits and a reason text
+otherwise; a profile applies only when its reason is `None`. `create_provision_plan()` looks the profile up with
+`get_profile()` and refuses when it does not apply. `detect_provision` adds `hardware` and `profiles` to its
+result. Only `nvidia-driver` exists (it needs exactly one NVIDIA GPU); `desktop-plasma` follows in plan 2b.
 
 ## Phases and the phase contract
 

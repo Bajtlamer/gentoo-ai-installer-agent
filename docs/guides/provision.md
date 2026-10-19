@@ -12,6 +12,7 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 - [Prerequisites](#prerequisites)
 - [Steps with the CLI](#steps-with-the-cli)
 - [Steps with the MCP tools](#steps-with-the-mcp-tools)
+- [Hardware profile and profiles](#hardware-profile-and-profiles)
 - [What the plan changes](#what-the-plan-changes)
 - [Resume](#resume)
 - [Not yet verified on a real server](#not-yet-verified-on-a-real-server)
@@ -103,6 +104,27 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 4. `start_install`, then `get_run_status` and `get_run_log` until the run ends.
 5. The human reboots the target.
 6. `verify_install` with the plan id. All seven phases must report `complete`, including `gpu-online`.
+
+## Hardware profile and profiles
+
+The provision inventory also reads the architecture (`uname -m`), the current Portage profile
+(`eselect profile show`), the available Portage profiles (`eselect profile list`), and the https `sync-uri`
+values of `/etc/portage/binrepos.conf/*.conf`. All four are read-only. An inventory saved before these
+commands existed still works; the new facts are then empty.
+
+From the inventory the code builds a hardware profile: architecture, CPU threads, memory, the GPUs, the GPU
+vendors, `video_cards` (the `VIDEO_CARDS` values from a fixed vendor map in code: `nvidia`, `amdgpu` and
+`radeonsi`, `intel`; `None` when a vendor is unknown, listed in `unknown_vendors`), and `virtual` (all GPUs
+belong to a hypervisor vendor). Nothing in it is guessed.
+
+Provision profiles live in a registry (`gentoo_agent/core/profiles.py`). A profile applies to a machine only
+when its reason is `None`: each profile returns either no reason or a text that says why it does not fit.
+`detect_provision` returns `hardware` and a `profiles` list with `id`, `title`, `applicable`, and `reason` for
+each profile, and `create_provision_plan` refuses a profile that does not apply.
+
+Only `nvidia-driver` exists. It applies to exactly one NVIDIA GPU and refuses everything else. The
+`desktop-plasma` profile follows in plan 2b, after real data from the target. Profiles for AMD, Intel, hybrid,
+virtual, and no-GPU machines are not written yet (see the [roadmap](../ROADMAP.md)).
 
 ## What the plan changes
 

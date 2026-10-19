@@ -44,6 +44,14 @@ computer, with any graphics hardware, and every setting must follow the data of
 the FIRST hardware inventory of the target, never an assumption about one
 machine.
 
+Status: the framework is done. `hardware_profile.py` derives the profile from the
+provision inventory, `profiles.py` holds the registry, and `detect_provision`
+reports `hardware` and `profiles` with an applicability reason. `VIDEO_CARDS` is
+derived from the GPU vendors by a fixed map. Only `nvidia-driver` is registered.
+Remaining: profiles for AMD, Intel, hybrid, virtual, and no GPU; the desktop
+purposes (`desktop-plasma` in plan 2b, GNOME and others later); vLLM; and the
+`CPU_FLAGS_X86` and `-march=native` derivation.
+
 - **One hardware profile per target, from the first inventory.** CPU threads and
   memory (compile settings), the exact GPU vendor, PCI id and, where known, the
   model, the firmware boot mode, and the architecture are recorded once and read
