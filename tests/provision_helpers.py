@@ -165,26 +165,20 @@ def binrepos_result(text: str = "[gentoobinhost]\npriority = 1\nsync-uri = https
 
 # Real output of eselect profile show / list and binrepos.conf on the real server 10.0.1.17, 2026-10-20
 # (profile names as recorded in the desktop-plasma plan facts; list indexes follow the order recorded there).
-REAL_PORTAGE_PROFILE_STDOUT = (
-    "Current /etc/portage/make.profile symlink:\n"
-    "  default/linux/amd64/23.0\n"
-)
+REAL_PORTAGE_PROFILE_STDOUT = 'Current /etc/portage/make.profile symlink:\n  default/linux/amd64/23.0\n'
 
-REAL_PORTAGE_PROFILES_STDOUT = (
-    "Available profile symlink targets:\n"
-    "  [1]   default/linux/amd64/23.0 (stable) *\n"
-    "  [2]   default/linux/amd64/23.0/desktop (stable)\n"
-    "  [3]   default/linux/amd64/23.0/desktop/plasma (stable)\n"
-    "  [4]   default/linux/amd64/23.0/desktop/plasma/systemd (stable)\n"
-    "  [5]   default/linux/amd64/23.0/split-usr (stable)\n"
-    "  [6]   default/linux/amd64/23.0/split-usr/desktop (stable)\n"
-    "  [7]   default/linux/amd64/23.0/split-usr/desktop/plasma (stable)\n"
-)
+# Captured from the real server 10.0.1.17 (eselect profile list) on 2026-10-20.
+REAL_PORTAGE_PROFILES_STDOUT = 'Available profile symlink targets:\n  [1]   default/linux/amd64/23.0 (stable) *\n  [2]   default/linux/amd64/23.0/systemd (stable)\n  [3]   default/linux/amd64/23.0/desktop (stable)\n  [4]   default/linux/amd64/23.0/desktop/systemd (stable)\n  [5]   default/linux/amd64/23.0/desktop/gnome (stable)\n  [6]   default/linux/amd64/23.0/desktop/gnome/systemd (stable)\n  [7]   default/linux/amd64/23.0/desktop/plasma (stable)\n  [8]   default/linux/amd64/23.0/desktop/plasma/systemd (stable)\n  [9]   default/linux/amd64/23.0/no-multilib (stable)\n  [10]  default/linux/amd64/23.0/no-multilib/systemd (stable)\n  [11]  default/linux/amd64/23.0/no-multilib/hardened (stable)\n  [12]  default/linux/amd64/23.0/no-multilib/hardened/systemd (stable)\n  [13]  default/linux/amd64/23.0/no-multilib/hardened/selinux (stable)\n  [14]  default/linux/amd64/23.0/no-multilib/hardened/selinux/systemd (stable)\n  [15]  default/linux/amd64/23.0/no-multilib/prefix (exp)\n  [16]  default/linux/amd64/23.0/no-multilib/prefix/kernel-2.6.32+ (exp)\n  [17]  default/linux/amd64/23.0/no-multilib/prefix/kernel-2.6.16+ (exp)\n  [18]  default/linux/amd64/23.0/no-multilib/prefix/kernel-3.2+ (exp)\n  [19]  default/linux/amd64/23.0/llvm (exp)\n  [20]  default/linux/amd64/23.0/llvm/systemd (exp)\n  [21]  default/linux/amd64/23.0/hardened (stable)\n  [22]  default/linux/amd64/23.0/hardened/systemd (stable)\n  [23]  default/linux/amd64/23.0/hardened/selinux (stable)\n  [24]  default/linux/amd64/23.0/hardened/selinux/systemd (stable)\n  [25]  default/linux/amd64/23.0/split-usr (stable)\n  [26]  default/linux/amd64/23.0/split-usr/desktop (stable)\n  [27]  default/linux/amd64/23.0/split-usr/desktop/gnome (stable)\n  [28]  default/linux/amd64/23.0/split-usr/desktop/plasma (stable)\n  [29]  default/linux/amd64/23.0/split-usr/no-multilib (stable)\n  [30]  default/linux/amd64/23.0/split-usr/no-multilib/selinux (stable)\n  [31]  default/linux/amd64/23.0/split-usr/no-multilib/hardened (stable)\n  [32]  default/linux/amd64/23.0/split-usr/no-multilib/hardened/selinux (stable)\n  [33]  default/linux/amd64/23.0/split-usr/no-multilib/prefix (exp)\n  [34]  default/linux/amd64/23.0/split-usr/no-multilib/prefix/kernel-2.6.32+ (exp)\n  [35]  default/linux/amd64/23.0/split-usr/no-multilib/prefix/kernel-2.6.16+ (exp)\n  [36]  default/linux/amd64/23.0/split-usr/no-multilib/prefix/kernel-3.2+ (exp)\n  [37]  default/linux/amd64/23.0/split-usr/llvm (exp)\n  [38]  default/linux/amd64/23.0/split-usr/hardened (stable)\n  [39]  default/linux/amd64/23.0/split-usr/hardened/selinux (stable)\n  [40]  default/linux/amd64/23.0/x32 (dev)\n  [41]  default/linux/amd64/23.0/x32/systemd (exp)\n  [42]  default/linux/amd64/23.0/split-usr/x32 (exp)\n  [43]  default/hurd/amd64/23.0 (exp)\n  [44]  default/linux/amd64/23.0/musl (dev)\n  [45]  default/linux/amd64/23.0/musl/systemd (dev)\n  [46]  default/linux/amd64/23.0/musl/llvm (exp)\n  [47]  default/linux/amd64/23.0/musl/llvm/systemd (exp)\n  [48]  default/linux/amd64/23.0/musl/hardened (exp)\n  [49]  default/linux/amd64/23.0/musl/hardened/systemd (exp)\n  [50]  default/linux/amd64/23.0/musl/hardened/selinux (exp)\n  [51]  default/linux/amd64/23.0/split-usr/musl (dev)\n  [52]  default/linux/amd64/23.0/split-usr/musl/llvm (exp)\n  [53]  default/linux/amd64/23.0/split-usr/musl/hardened (exp)\n  [54]  default/linux/amd64/23.0/split-usr/musl/hardened/selinux (exp)\n'
 
 REAL_BINREPOS_STDOUT = (
-    "[gentoobinhost]\n"
+    "# These settings were set by the catalyst build script that automatically\n"
+    "# built this stage.\n"
+    "# Please consider using a local mirror.\n"
+    "\n"
+    "[gentoo]\n"
     "priority = 1\n"
     "sync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64\n"
+    "location = /var/cache/binhost/gentoo\n"
     "verify-signature = true\n"
 )
 
