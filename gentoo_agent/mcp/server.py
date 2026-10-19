@@ -19,7 +19,6 @@ from pydantic import BaseModel, StrictBool, StrictStr
 from gentoo_agent.core import (
     paths,
     phases as core_phases,
-    provision_phases as core_provision_phases,
     provision_plan as core_provision_plan,
 )
 from gentoo_agent.core.approval import (
@@ -50,7 +49,7 @@ from gentoo_agent.core.inventory import (
     latest_provision_inventory,
     record_inventory,
 )
-from gentoo_agent.core.profiles import provision_overview
+from gentoo_agent.core.profiles import get_profile, provision_overview
 from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runner import output_tail
 from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
@@ -376,7 +375,8 @@ def verify_install(plan_id: str) -> CallToolResult:
         for phase in plan["phases"]:
             # Only run checks this code would generate for the plan; never trust the stored text alone.
             if plan_kind(plan) == "provision":
-                expected = core_provision_phases.check_command_for(phase["id"], plan["target"], plan["provision"])
+                profile = get_profile(plan["provision"].get("profile"))
+                expected = profile.check_command_for(phase["id"], plan["target"], plan["provision"])
             else:
                 expected = core_phases.check_command_for(phase["id"], plan["target"], plan["install"])
             if phase["check"] != expected:

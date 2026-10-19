@@ -24,6 +24,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.install_plan import load_install_plan, plan_kind, plan_path
+from gentoo_agent.core.profiles import get_profile
 from gentoo_agent.core.provision_plan import verify_provision_programs
 from gentoo_agent.core.provision_phases import (
     GRUB_DEFAULTS,
@@ -86,22 +87,11 @@ def _shown(value: object) -> str:
     return text
 
 
-def _provision_summary(plan: dict) -> str:
-    verify_provision_programs(plan)
-    target, provision, identity = plan["target"], plan["provision"], plan["identity"]
+def nvidia_summary(plan: dict) -> list[str]:
+    """The lines of the approval dialog that belong to the nvidia-driver profile."""
+    provision = plan["provision"]
     tuning, gpu, cpu = provision["tuning"], provision["gpu"], provision["cpu"]
-    changing = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]
-    lines = [
-        f"Plan: {_shown(plan['plan_id'])}",
-        f"Plan hash: {_shown(plan['plan_hash'])}",
-        "Kind: provision (changes the installed system; no disk is erased)",
-        "Disk erase: no",
-        "Phases that change the system: " + ", ".join(changing),
-        *(f"WARNING: {_shown(warning)}" for warning in plan.get("warnings", [])),
-        f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
-        f"({_shown(target['name'])})",
-        f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
-        f"host key {_shown(identity['hostkey'])}",
+    return [
         f"GPU: {_shown(gpu['name'])} [{_shown(gpu['pci_id'])}]",
         f"CPU: {_shown(cpu['model'])}, {_shown(str(cpu['threads']))} threads; "
         f"memory {_shown(str(provision['memory_gib']))} GiB",
@@ -117,6 +107,25 @@ def _provision_summary(plan: dict) -> str:
         f"Packages: {NVIDIA_PACKAGE} and its dependencies (USE {NVIDIA_USE}), built for the running kernel",
         "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"])
         + f" (only for {NVIDIA_PACKAGE})",
+    ]
+
+
+def _provision_summary(plan: dict) -> str:
+    verify_provision_programs(plan)
+    target, provision, identity = plan["target"], plan["provision"], plan["identity"]
+    changing = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]
+    lines = [
+        f"Plan: {_shown(plan['plan_id'])}",
+        f"Plan hash: {_shown(plan['plan_hash'])}",
+        "Kind: provision (changes the installed system; no disk is erased)",
+        "Disk erase: no",
+        "Phases that change the system: " + ", ".join(changing),
+        *(f"WARNING: {_shown(warning)}" for warning in plan.get("warnings", [])),
+        f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
+        f"({_shown(target['name'])})",
+        f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
+        f"host key {_shown(identity['hostkey'])}",
+        *get_profile(provision["profile"]).summary(plan),
         "Reboot: required afterwards; the installer never reboots",
     ]
     return "\n".join(lines)

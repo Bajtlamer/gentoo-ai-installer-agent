@@ -20,7 +20,6 @@ from gentoo_agent.core.install_plan import (
 )
 from gentoo_agent.core.hardware_profile import hardware_profile
 from gentoo_agent.core.profiles import get_profile
-from gentoo_agent.core.provision import derive_tuning, validated_tuning
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
 
 
@@ -34,16 +33,11 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
     check_inventory_fresh(inventory)
     facts = summarize_provision_inventory(inventory)
     nvidia = [gpu for gpu in facts["gpus"] if gpu["vendor"] == "nvidia"]
-    reason = profile.applicable(hardware_profile(facts))
+    hardware = hardware_profile(facts)
+    reason = profile.applicable(hardware)
     if reason:
         raise AgentError(CONFIG_INVALID, reason, {"profile": profile.id, "nvidia_gpus": len(nvidia)})
-    provision = {
-        **settings,
-        "gpu": nvidia[0],
-        "cpu": facts["cpu"],
-        "memory_gib": facts["memory_gib"],
-        "tuning": validated_tuning(derive_tuning(facts["cpu"]["threads"], facts["memory_kib"])),
-    }
+    provision = profile.build(settings, facts, hardware)
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "kind": "provision",

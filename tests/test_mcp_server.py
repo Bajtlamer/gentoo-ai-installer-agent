@@ -724,6 +724,21 @@ class ProvisionToolTests(unittest.TestCase):
         self.assertEqual(seen, [phase["check"] for phase in plan["phases"]])
         self.assertEqual(len(result.structured_content["phases"]), 7)
 
+    def test_verify_install_takes_the_expected_check_from_the_registry(self):
+        from tests.helpers import temp_home
+
+        def fake_shell(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            return {"label": label, "command": command, "returncode": 0, "stdout": "ok\n", "stderr": "",
+                    "finished_at": "t"}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell):
+            write_provision_home(home)
+            plan_id = call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"]}).structured_content["plan_id"]
+            with patch("gentoo_agent.core.profiles.check_command_for", return_value="echo registry"):
+                result = call("verify_install", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "PLAN_HASH_MISMATCH")
+
     def make_plan(self, home):
         write_provision_home(home)
         return call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"]}).structured_content["plan_id"]

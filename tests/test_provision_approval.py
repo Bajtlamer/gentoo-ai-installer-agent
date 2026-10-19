@@ -110,3 +110,28 @@ class ProvisionApprovalTests(unittest.TestCase):
         self.assertEqual(listed, changing)
         for name in ("preflight", "nvidia-verify", "gpu-online"):
             self.assertNotIn(name, listed)
+
+# Everything after the plan and hash lines, captured from the code before the summary moved to the registry.
+NVIDIA_SUMMARY = 'Kind: provision (changes the installed system; no disk is erased)\nDisk erase: no\nPhases that change the system: portage-tuning, portage-sync, nvidia-config, nvidia-drivers\nTarget: root@192.0.2.10:22 (gentoo-server2)\nHost: gentoo root-uuid=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d host key SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nGPU: NVIDIA display controller [10de:2f04]\nCPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB\nPortage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24\nUSE changes: none besides the nvidia-drivers line\nEdits: /etc/portage/make.conf (plan block), /etc/portage/package.license/gentoo-agent-nvidia, /etc/portage/package.use/gentoo-agent-nvidia, /etc/default/grub (plan block adding the kernel parameter nvidia-drm.modeset=1)\nRegenerates: /boot/grub/grub.cfg (the boot menu)\nNetwork: emerge-webrsync and package downloads\nKernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)\nPackages: x11-drivers/nvidia-drivers and its dependencies (USE dist-kernel -tools), built for the running kernel\nLicenses accepted: NVIDIA-r2 (only for x11-drivers/nvidia-drivers)\nReboot: required afterwards; the installer never reboots'
+
+class SummaryRegistryTests(unittest.TestCase):
+    def test_the_nvidia_summary_is_unchanged(self):
+        with temp_home():
+            summary = approval.approval_summary(save_provision_plan())
+        lines = summary.split("\n")
+        self.assertTrue(lines[0].startswith("Plan: ") and lines[1].startswith("Plan hash: "))
+        self.assertEqual("\n".join(lines[2:]), NVIDIA_SUMMARY)
+
+    def test_the_profile_lines_come_from_the_registry(self):
+        from gentoo_agent.core import profiles
+        from dataclasses import replace
+        with temp_home():
+            plan = save_provision_plan()
+            fake = replace(profiles.PROFILES["nvidia-driver"], summary=lambda stored: ["Purpose: registry"])
+            with patch.dict(profiles.PROFILES, {"nvidia-driver": fake}):
+                summary = approval.approval_summary(plan)
+        lines = summary.split("\n")
+        self.assertIn("Purpose: registry", lines)
+        self.assertNotIn("Reboot: required afterwards; the installer never reboots", lines[:-1])
+        self.assertEqual(lines[-1], "Reboot: required afterwards; the installer never reboots")
+        self.assertFalse(any(line.startswith("GPU:") for line in lines))
