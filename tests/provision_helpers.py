@@ -13,6 +13,8 @@ GPU_SYSFS = (
     "0000:01:00.0 0x030000 0x10de 0x2f04\n"
     "0000:01:00.1 0x040300 0x10de 0x22eb\n"
 )
+AMD_GPU_SYSFS = "0000:03:00.0 0x030000 0x1002 0x744c\n"
+INTEL_GPU_SYSFS = "0000:00:02.0 0x030000 0x8086 0x46a6\n"
 
 # Real output of the inventory commands on the first real server (Gentoo, OpenRC), collected 2026-10-19.
 REAL_CPU_STDOUT = (
@@ -139,6 +141,26 @@ def portage_conf_result(text: str = "") -> dict:
 
 def kernel_result(release: str = "6.18.57-gentoo-dist-bin") -> dict:
     return result("kernel", release + "\n")
+
+
+def arch_result(machine: str = "x86_64") -> dict:
+    return result("arch", machine + "\n")
+
+
+def portage_profile_result(name: str = "default/linux/amd64/23.0") -> dict:
+    return result("portage_profile", f"Current /etc/portage/make.profile symlink:\n  {name}\n")
+
+
+def portage_profiles_result() -> dict:
+    return result("portage_profiles",
+                  "Available profile symlink targets:\n"
+                  "  [1]   default/linux/amd64/23.0 (stable) *\n"
+                  "  [2]   default/linux/amd64/23.0/desktop (stable)\n"
+                  "  [3]   default/linux/amd64/23.0/desktop/plasma (stable)\n")
+
+
+def binrepos_result(text: str = "[gentoobinhost]\npriority = 1\nsync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/\n") -> dict:
+    return result("binrepos", text)
 
 
 def provision_inventory(**replace: dict) -> dict:

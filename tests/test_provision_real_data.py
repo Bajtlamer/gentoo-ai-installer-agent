@@ -29,7 +29,7 @@ class RealDataTests(unittest.TestCase):
         self.assertEqual([g["vendor"] for g in gpus].count("nvidia"), 1)
         nvidia = next(g for g in gpus if g["vendor"] == "nvidia")
         self.assertEqual(nvidia["pci_id"], "10de:2c05")
-        self.assertEqual([g["vendor"] for g in gpus if g["vendor"] != "nvidia"], ["other"])
+        self.assertEqual([g["vendor"] for g in gpus if g["vendor"] != "nvidia"], ["intel"])
 
     def test_the_real_kernel_passes_the_preflight_pattern(self):
         self.assertTrue(fnmatch(REAL_KERNEL_STDOUT.strip(), "*-gentoo-dist*"))

@@ -68,6 +68,10 @@ PROVISION_READ_ONLY_COMMANDS = {
         "-e '/^\\(MAKEOPTS\\|EMERGE_DEFAULT_OPTS\\)=/p' /etc/portage/make.conf 2>/dev/null || true"
     ),
     "kernel": "uname -r",
+    "arch": "uname -m",
+    "portage_profile": "eselect profile show",
+    "portage_profiles": "eselect profile list",
+    "binrepos": "cat /etc/portage/binrepos.conf/*.conf 2>/dev/null || true",
 }
 
 HOST_KEY_FAILURE = "Host key verification failed"

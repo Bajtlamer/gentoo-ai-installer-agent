@@ -15,7 +15,8 @@ def fake(target, label, command):
 class ProvisionCommandsTests(unittest.TestCase):
     def test_the_allowlist_has_the_expected_labels(self):
         self.assertEqual(list(ssh.PROVISION_READ_ONLY_COMMANDS),
-                         ["host_identity", "cpu", "memory", "gpu", "portage_conf", "kernel"])
+                         ["host_identity", "cpu", "memory", "gpu", "portage_conf", "kernel",
+                      "arch", "portage_profile", "portage_profiles", "binrepos"])
 
     def test_no_command_changes_anything(self):
         forbidden = re.compile(r">|\b(rm|mv|cp|tee|dd|emerge|rc-service|rc-update|mkdir|touch|chmod|chown|"

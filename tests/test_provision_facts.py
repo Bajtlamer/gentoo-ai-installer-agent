@@ -18,7 +18,7 @@ class ParseGpuTests(unittest.TestCase):
                 "0000:00:02.0 0x038000 0x8086 0x46a6\n")
         self.assertEqual([(gpu["vendor"], gpu["pci_id"], gpu["name"]) for gpu in facts.parse_gpus(text)],
                          [("nvidia", "10de:1234", "NVIDIA display controller"),
-                          ("other", "8086:46a6", "Unknown vendor display controller")])
+                          ("intel", "8086:46a6", "Intel display controller")])
 
     def test_no_gpu_is_an_empty_list(self):
         self.assertEqual(facts.parse_gpus("0000:00:00.0 0x060000 0x1022 0x14d8\n"), [])
