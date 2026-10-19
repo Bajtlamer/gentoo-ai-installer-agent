@@ -84,6 +84,9 @@ class MakeConfTests(unittest.TestCase):
         text = 'MAKEOPTS="-j4"\nEMERGE_DEFAULT_OPTS="--quiet-build"\n'
         self.assertEqual(facts.make_conf_overrides(text), ["EMERGE_DEFAULT_OPTS", "MAKEOPTS"])
 
+    def test_video_cards_is_reported_too(self):
+        self.assertEqual(facts.make_conf_overrides('VIDEO_CARDS="nvidia"\n'), ["VIDEO_CARDS"])
+
     def test_comments_and_values_do_not_count(self):
         self.assertEqual(facts.make_conf_overrides('#MAKEOPTS="-j2"\n'), [])
         self.assertEqual(facts.make_conf_overrides('FOO="MAKEOPTS=1"\n'), [])

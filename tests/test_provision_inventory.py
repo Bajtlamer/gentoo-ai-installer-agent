@@ -25,6 +25,12 @@ class ProvisionCommandsTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIsNone(forbidden.search(command.replace("2>/dev/null", "")), command)
 
+    def test_the_portage_conf_command_reads_the_three_variables_outside_the_plan_blocks(self):
+        command = ssh.PROVISION_READ_ONLY_COMMANDS["portage_conf"]
+        self.assertIn("MAKEOPTS\\|EMERGE_DEFAULT_OPTS\\|VIDEO_CARDS", command)
+        self.assertIn("# gentoo-agent portage-tuning begin", command)
+        self.assertIn("# gentoo-agent desktop begin", command)
+
     def test_the_gpu_command_reads_sysfs_and_needs_no_lspci(self):
         command = ssh.PROVISION_READ_ONLY_COMMANDS["gpu"]
         self.assertIn("/sys/bus/pci/devices", command)

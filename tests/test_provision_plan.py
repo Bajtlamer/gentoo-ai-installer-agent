@@ -106,6 +106,10 @@ class CreateProvisionPlanTests(unittest.TestCase):
         self.assertEqual(plan["warnings"],
                          ["/etc/portage/make.conf already sets MAKEOPTS; the plan's value replaces it."])
 
+    def test_a_video_cards_assignment_is_no_nvidia_plan_warning(self):
+        plan = create(provision_inventory(portage_conf=portage_conf_result('VIDEO_CARDS="intel"\n')))
+        self.assertEqual(plan["warnings"], [])
+
 
 class RefusalTests(unittest.TestCase):
     def refused(self, **kwargs):

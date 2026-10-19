@@ -79,6 +79,14 @@ class DesktopPlanTests(unittest.TestCase):
         self.assertIn("Binary host: none found in /etc/portage/binrepos.conf "
                       "(emerge uses whatever Portage is configured with)", text)
 
+    def test_warnings_are_per_profile(self):
+        from tests.provision_helpers import portage_conf_result
+        conf = portage_conf_result('MAKEOPTS="-j2"\nVIDEO_CARDS="intel"\n')
+        plan = make(inventory=desktop_inventory(gpu=gpu_result(GPU_SYSFS), portage_conf=conf))
+        self.assertEqual(plan["warnings"],
+                         ["/etc/portage/make.conf already sets VIDEO_CARDS; the plan's value replaces it."])
+        self.assertEqual(make()["warnings"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

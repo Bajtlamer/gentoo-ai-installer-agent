@@ -44,8 +44,7 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
         "target": {field: target.get(field) for field in TARGET_FIELDS},
         "identity": facts["identity"],
         "provision": provision,
-        "warnings": [f"/etc/portage/make.conf already sets {name}; the plan's value replaces it."
-                     for name in facts["portage_overrides"]],
+        "warnings": profile.warnings(facts),
         "inventory_hash": hashlib.sha256(canonical(inventory)).hexdigest(),
         "phases": [
             {

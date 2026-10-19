@@ -29,6 +29,8 @@ class Profile:
     build: Callable[[dict, dict, dict], dict]
     # stored plan -> the profile-specific lines of the approval dialog
     summary: Callable[[dict], list[str]]
+    # provision facts -> the plan's warnings (what the user already sets and the plan will replace)
+    warnings: Callable[[dict], list[str]]
 
 
 def _nvidia_applicable(hardware: dict) -> str | None:
@@ -54,6 +56,13 @@ def _nvidia_summary(plan: dict) -> list[str]:
     # approval imports provision_plan, which imports this module; import it only when the summary is built.
     from gentoo_agent.core.approval import nvidia_summary
     return nvidia_summary(plan)
+
+
+def _overrides_warnings(names: tuple[str, ...]) -> Callable[[dict], list[str]]:
+    def warnings(facts: dict) -> list[str]:
+        return [f"/etc/portage/make.conf already sets {name}; the plan's value replaces it."
+                for name in facts["portage_overrides"] if name in names]
+    return warnings
 
 
 PLASMA_SUFFIX = "/desktop/plasma"
@@ -155,6 +164,7 @@ PROFILES: dict[str, Profile] = {
         check_command_for=lambda phase, target, provision: check_command_for(phase, target, provision),
         build=_nvidia_build,
         summary=_nvidia_summary,
+        warnings=_overrides_warnings(("EMERGE_DEFAULT_OPTS", "MAKEOPTS")),
     ),
     PROFILE_DESKTOP: Profile(
         id=PROFILE_DESKTOP,
@@ -167,6 +177,7 @@ PROFILES: dict[str, Profile] = {
         check_command_for=lambda phase, target, provision: desktop_phases.check_command_for(phase, target, provision),
         build=desktop_build,
         summary=_desktop_summary,
+        warnings=_overrides_warnings(("VIDEO_CARDS",)),
     ),
 }
 

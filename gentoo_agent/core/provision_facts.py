@@ -137,7 +137,7 @@ def make_conf_overrides(stdout: object) -> list[str]:
     """
     if not isinstance(stdout, str):
         return []
-    return sorted(set(re.findall(r"^(MAKEOPTS|EMERGE_DEFAULT_OPTS)=", stdout, re.MULTILINE)))
+    return sorted(set(re.findall(r"^(MAKEOPTS|EMERGE_DEFAULT_OPTS|VIDEO_CARDS)=", stdout, re.MULTILINE)))
 
 
 def summarize_provision_inventory(inventory: dict) -> dict:

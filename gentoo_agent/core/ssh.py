@@ -62,10 +62,11 @@ PROVISION_READ_ONLY_COMMANDS = {
         "for d in /sys/bus/pci/devices/*; do [ -r \"$d/class\" ] || continue; "
         "printf '%s %s %s %s\\n' \"${d##*/}\" \"$(cat \"$d/class\")\" \"$(cat \"$d/vendor\")\" \"$(cat \"$d/device\")\"; done"
     ),
-    # The user's own MAKEOPTS and EMERGE_DEFAULT_OPTS, outside the block that a plan writes.
+    # The user's own MAKEOPTS, EMERGE_DEFAULT_OPTS and VIDEO_CARDS, outside the blocks that a plan writes.
     "portage_conf": (
         "sed -n -e '/^# gentoo-agent portage-tuning begin$/,/^# gentoo-agent portage-tuning end$/d' "
-        "-e '/^\\(MAKEOPTS\\|EMERGE_DEFAULT_OPTS\\)=/p' /etc/portage/make.conf 2>/dev/null || true"
+        "-e '/^# gentoo-agent desktop begin$/,/^# gentoo-agent desktop end$/d' "
+        "-e '/^\\(MAKEOPTS\\|EMERGE_DEFAULT_OPTS\\|VIDEO_CARDS\\)=/p' /etc/portage/make.conf 2>/dev/null || true"
     ),
     "kernel": "uname -r",
     "arch": "uname -m",
