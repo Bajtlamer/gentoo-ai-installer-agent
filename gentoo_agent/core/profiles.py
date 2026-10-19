@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.hardware_profile import hardware_profile
-from gentoo_agent.core.provision import PROFILE_NVIDIA, derive_tuning, validated_provision, validated_tuning
+from gentoo_agent.core.provision import (PROFILE_NVIDIA, derive_tuning, validated_desktop,
+                                           validated_provision, validated_tuning)
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.provision_phases import PHASE_FLAGS, PHASES, check_command_for, command_for
 
@@ -51,6 +53,60 @@ def _nvidia_summary(plan: dict) -> list[str]:
     # approval imports provision_plan, which imports this module; import it only when the summary is built.
     from gentoo_agent.core.approval import nvidia_summary
     return nvidia_summary(plan)
+
+
+PLASMA_SUFFIX = "/desktop/plasma"
+PLAIN_PROFILE = re.compile(r"default/linux/amd64/[0-9]+\.[0-9]+")
+
+
+def plasma_profile(hardware: dict) -> tuple[str | None, str | None]:
+    """(target Portage profile, refusal reason). Exactly one of them is None."""
+    if hardware.get("architecture") != "amd64":
+        return None, "The desktop-plasma profile supports only amd64."
+    current = hardware.get("portage_profile")
+    if current is None:
+        return None, "The inventory has no Portage profile facts: collect the provision inventory again (refresh=true)."
+    if current.endswith(PLASMA_SUFFIX) and PLAIN_PROFILE.fullmatch(current[:-len(PLASMA_SUFFIX)]):
+        base = current[:-len(PLASMA_SUFFIX)]
+    elif PLAIN_PROFILE.fullmatch(current):
+        base = current
+    else:
+        # The name was parsed by a strict regex in provision_facts, so it is safe to show.
+        return None, f"Only the plain OpenRC profile default/linux/amd64/<version> is supported, found {current}."
+    target = base + PLASMA_SUFFIX
+    offered = sum(1 for entry in hardware.get("portage_profiles") or [] if entry.get("name") == target)
+    if offered == 0:
+        return None, f"The Plasma profile {target} is not offered by this system."
+    if offered > 1:
+        return None, f"The Plasma profile {target} is offered more than once."
+    return target, None
+
+
+def desktop_applicable(hardware: dict) -> str | None:
+    _, reason = plasma_profile(hardware)
+    if reason is not None:
+        return reason
+    if hardware.get("video_cards") is None:
+        return "A display device has an unknown vendor."
+    if not hardware.get("gpus"):
+        return "No display device was detected."
+    return None
+
+
+def desktop_build(settings: dict, facts: dict, hardware: dict) -> dict:
+    # applicable() already ran plasma_profile successfully.
+    target, _ = plasma_profile(hardware)
+    return {
+        **settings,
+        "gpus": hardware["gpus"],
+        "video_cards": hardware["video_cards"],
+        "nvidia": "nvidia" in hardware["gpu_vendors"],
+        "portage_profile": hardware["portage_profile"],
+        "plasma_profile": target,
+        "binrepos": hardware["binrepos"] or {"uris": []},
+        "cpu": facts["cpu"],
+        "memory_gib": facts["memory_gib"],
+    }
 
 
 PROFILES: dict[str, Profile] = {

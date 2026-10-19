@@ -8,6 +8,7 @@ from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 
 
 PROFILE_NVIDIA = "nvidia-driver"
+PROFILE_DESKTOP = "desktop-plasma"
 LICENSE = re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}")
 MAX_LICENSES = 8
 MAX_PACKAGE_USE = 8
@@ -42,6 +43,17 @@ def validated_provision(provision: object) -> dict:
         )
     return {"profile": provision["profile"], "accept_licenses": list(licenses),
             "package_use": _validated_package_use(provision.get("package_use", []))}
+
+
+def validated_desktop(settings: object) -> dict:
+    """The settings of the desktop-plasma profile: only package_use; licenses are refused."""
+    if not isinstance(settings, dict):
+        raise AgentError(CONFIG_INVALID, "The provision settings must be an object.", {"field": "provision"})
+    if settings.get("profile") != PROFILE_DESKTOP:
+        raise AgentError(CONFIG_INVALID, f"Unknown provision profile: {settings.get('profile')!r}.", {"field": "profile"})
+    if settings.get("accept_licenses"):
+        raise AgentError(CONFIG_INVALID, "The desktop-plasma profile accepts no licenses.", {"field": "accept_licenses"})
+    return {"profile": PROFILE_DESKTOP, "package_use": _validated_package_use(settings.get("package_use", []))}
 
 
 def _validated_package_use(lines: object) -> list[str]:

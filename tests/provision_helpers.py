@@ -163,6 +163,45 @@ def binrepos_result(text: str = "[gentoobinhost]\npriority = 1\nsync-uri = https
     return result("binrepos", text)
 
 
+# Real output of eselect profile show / list and binrepos.conf on the real server 10.0.1.17, 2026-10-20
+# (profile names as recorded in the desktop-plasma plan facts; list indexes follow the order recorded there).
+REAL_PORTAGE_PROFILE_STDOUT = (
+    "Current /etc/portage/make.profile symlink:\n"
+    "  default/linux/amd64/23.0\n"
+)
+
+REAL_PORTAGE_PROFILES_STDOUT = (
+    "Available profile symlink targets:\n"
+    "  [1]   default/linux/amd64/23.0 (stable) *\n"
+    "  [2]   default/linux/amd64/23.0/desktop (stable)\n"
+    "  [3]   default/linux/amd64/23.0/desktop/plasma (stable)\n"
+    "  [4]   default/linux/amd64/23.0/desktop/plasma/systemd (stable)\n"
+    "  [5]   default/linux/amd64/23.0/split-usr (stable)\n"
+    "  [6]   default/linux/amd64/23.0/split-usr/desktop (stable)\n"
+    "  [7]   default/linux/amd64/23.0/split-usr/desktop/plasma (stable)\n"
+)
+
+REAL_BINREPOS_STDOUT = (
+    "[gentoobinhost]\n"
+    "priority = 1\n"
+    "sync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64\n"
+    "verify-signature = true\n"
+)
+
+
+def desktop_inventory(**replace: dict) -> dict:
+    """A provision inventory with the real Portage facts and the real hardware of the first server."""
+    results = {
+        "cpu": result("cpu", REAL_CPU_STDOUT), "memory": result("memory", REAL_MEMORY_STDOUT),
+        "gpu": result("gpu", REAL_GPU_STDOUT), "kernel": result("kernel", REAL_KERNEL_STDOUT),
+        "arch": arch_result(), "portage_profile": result("portage_profile", REAL_PORTAGE_PROFILE_STDOUT),
+        "portage_profiles": result("portage_profiles", REAL_PORTAGE_PROFILES_STDOUT),
+        "binrepos": result("binrepos", REAL_BINREPOS_STDOUT),
+    }
+    results.update(replace)
+    return provision_inventory(**results)
+
+
 def provision_inventory(**replace: dict) -> dict:
     """A provision inventory collected now. replace maps a label to the result that replaces the default."""
     results = {

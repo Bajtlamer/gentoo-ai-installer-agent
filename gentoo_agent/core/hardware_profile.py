@@ -37,5 +37,8 @@ def hardware_profile(facts: dict) -> dict:
         "gpu_vendors": sorted({gpu["vendor"] for gpu in gpus}),
         "video_cards": None if unknown else video_cards(gpus),
         "unknown_vendors": unknown,
+        "portage_profile": facts.get("portage_profile"),
+        "portage_profiles": facts.get("portage_profiles"),
+        "binrepos": facts.get("binrepos"),
         "virtual": bool(gpus) and all(gpu.get("vendor_id") in VIRTUAL_VENDOR_IDS for gpu in gpus),
     }
