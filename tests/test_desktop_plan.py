@@ -41,7 +41,7 @@ class DesktopPlanTests(unittest.TestCase):
             "VIDEO_CARDS: nvidia",
             "Portage profile: default/linux/amd64/23.0 -> default/linux/amd64/23.0/desktop/plasma (system-wide change)",
             "World update: emerge --getbinpkg --update --deep --newuse @world (system-wide, can take hours;",
-            "Binary host: https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64",
+            "Binary host (read from /etc/portage/binrepos.conf): https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64",
             "Kernel: the world update may install a newer distribution kernel, rebuild the NVIDIA modules and "
             "regenerate the boot menu; the check verifies the NVIDIA modules exist for the newest installed kernel",
             "USE changes: x11-drivers/nvidia-drivers wayland; media-libs/a Y",
@@ -70,6 +70,14 @@ class DesktopPlanTests(unittest.TestCase):
         self.assertNotIn("NVIDIA modules", text)
         self.assertIn("USE changes: none", text)
         self.assertIn("VIDEO_CARDS: amdgpu radeonsi", text)
+
+    def test_binary_host_line_when_none_is_configured(self):
+        from tests.provision_helpers import result
+        plan = make(inventory=desktop_inventory(gpu=gpu_result(GPU_SYSFS), binrepos=result("binrepos", "")))
+        with temp_home():
+            text = approval_summary(save_install_plan(plan))
+        self.assertIn("Binary host: none found in /etc/portage/binrepos.conf "
+                      "(emerge uses whatever Portage is configured with)", text)
 
 
 if __name__ == "__main__":

@@ -125,7 +125,8 @@ def _desktop_summary(plan: dict) -> list[str]:
         "(system-wide change)",
         "World update: emerge --getbinpkg --update --deep --newuse @world (system-wide, can take hours; "
         "binary packages where the USE flags match, otherwise compiled)",
-        "Binary host: " + (", ".join(_shown(uri) for uri in uris) or "none"),
+        ("Binary host (read from /etc/portage/binrepos.conf): " + ", ".join(_shown(uri) for uri in uris)) if uris
+        else "Binary host: none found in /etc/portage/binrepos.conf (emerge uses whatever Portage is configured with)",
         "Kernel: the world update may install a newer distribution kernel, rebuild the NVIDIA modules and "
         "regenerate the boot menu; the check verifies the NVIDIA modules exist for the newest installed kernel"
         if provision["nvidia"] else
