@@ -10,7 +10,7 @@ from tests.provision_helpers import (
 class ParseGpuTests(unittest.TestCase):
     def test_only_display_devices_are_listed(self):
         self.assertEqual(facts.parse_gpus(GPU_SYSFS), [
-            {"vendor": "nvidia", "pci_id": "10de:2f04", "name": "NVIDIA display controller"},
+            {"vendor": "nvidia", "pci_id": "10de:2f04", "vendor_id": "10de", "name": "NVIDIA display controller"},
         ])
 
     def test_other_vendors_and_3d_controllers(self):

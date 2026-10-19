@@ -56,7 +56,7 @@ def parse_gpus(stdout: object) -> list[dict]:
             continue
         vendor = match["vendor"]
         gpus.append({"vendor": VENDORS.get(vendor, "other"),
-                     "pci_id": f"{vendor}:{match['device']}",
+                     "pci_id": f"{vendor}:{match['device']}", "vendor_id": vendor,
                      "name": f"{VENDOR_NAMES.get(vendor, 'Unknown vendor')} display controller"})
     return gpus
 
