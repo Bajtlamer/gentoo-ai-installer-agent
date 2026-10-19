@@ -53,12 +53,13 @@ def parse_gpus(stdout: object) -> list[dict]:
 
 
 def parse_cpu(stdout: object) -> dict:
+    # The first "Model name:" line wins: lscpu on hybrid and ARM CPUs can print several.
     if not isinstance(stdout, str):
         raise _unusable("cpu")
     threads = re.search(r"^threads=(\d{1,4})$", stdout, re.MULTILINE)
     if threads is None or int(threads[1]) < 1:
         raise _unusable("cpu")
-    model = re.search(r"^Model name:\s+(.+)$", stdout, re.MULTILINE)
+    model = re.search(r"^Model name:[ \t]+(.+)$", stdout, re.MULTILINE)
     return {"threads": int(threads[1]), "model": _text(model[1].strip(), "cpu") if model else "unknown"}
 
 
@@ -66,14 +67,17 @@ def parse_memory(stdout: object) -> int:
     """MemTotal in KiB."""
     if not isinstance(stdout, str):
         raise _unusable("memory")
-    total = re.search(r"^MemTotal:\s+(\d{1,12}) kB$", stdout, re.MULTILINE)
+    total = re.search(r"^MemTotal:[ \t]+(\d{1,12}) kB$", stdout, re.MULTILINE)
     if total is None or int(total[1]) < 1:
         raise _unusable("memory")
     return int(total[1])
 
 
 def make_conf_overrides(stdout: object) -> list[str]:
-    """Names of the Portage variables the user already sets outside the plan's own block."""
+    """Names of the Portage variables the user already sets outside the plan's own block.
+
+    Matches the same plain assignments as the portage_conf sed command: not "export" and not indented lines.
+    """
     if not isinstance(stdout, str):
         return []
     return sorted(set(re.findall(r"^(MAKEOPTS|EMERGE_DEFAULT_OPTS)=", stdout, re.MULTILINE)))
@@ -88,7 +92,10 @@ def summarize_provision_inventory(inventory: dict) -> dict:
             raise _unusable(label)
         return item.get("stdout")
 
-    kernel = str(stdout("kernel")).strip()
+    raw = stdout("kernel")
+    if not isinstance(raw, str):
+        raise _unusable("kernel")
+    kernel = raw.strip()
     if not KERNEL_RELEASE.fullmatch(kernel):
         raise _unusable("kernel")
     memory_kib = parse_memory(stdout("memory"))
@@ -99,6 +106,7 @@ def summarize_provision_inventory(inventory: dict) -> dict:
         "kernel": kernel,
         "cpu": parse_cpu(stdout("cpu")),
         "memory_kib": memory_kib,
+        # memory_gib is the floored value in GiB.
         "memory_gib": memory_kib // (1024 * 1024),
         "gpus": parse_gpus(stdout("gpu")),
         "portage_overrides": make_conf_overrides(conf.get("stdout")) if conf.get("returncode") == 0 else [],
