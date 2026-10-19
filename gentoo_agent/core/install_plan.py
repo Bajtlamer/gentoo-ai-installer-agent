@@ -72,7 +72,7 @@ def _check_erase_authorized(target: dict, install: dict) -> None:
         )
 
 
-def _check_inventory_fresh(inventory: dict) -> None:
+def check_inventory_fresh(inventory: dict) -> None:
     collected = inventory.get("collected_at")
     try:
         moment = dt.datetime.fromisoformat(collected) if isinstance(collected, str) else None
@@ -178,7 +178,7 @@ def create_install_plan(target: dict, install: dict, project_plan: dict, invento
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No inventory exists; run inspect first.", {})
     _check_erase_authorized(target, install)
-    _check_inventory_fresh(inventory)
+    check_inventory_fresh(inventory)
     live = live_architecture(inventory)
     if install.get("architecture") != live:
         raise AgentError(CONFIG_CONFLICT, f"The configuration is for {install.get('architecture')}, "

@@ -1,12 +1,13 @@
 import copy
 import unittest
+from unittest import mock
 
 from gentoo_agent.core import install_plan
 from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, PLAN_HASH_MISMATCH, AgentError
 from gentoo_agent.core.provision_plan import create_provision_plan
 from tests.helpers import temp_home
 from tests.provision_helpers import (
-    GPU_SYSFS, MACHINE_ID, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
+    GPU_SYSFS, MACHINE_ID, host_identity_result, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
     provision_inventory, provision_settings, result, save_provision_plan,
 )
 
@@ -44,6 +45,34 @@ class CreateProvisionPlanTests(unittest.TestCase):
     def test_the_same_inputs_give_the_same_plan_id(self):
         inventory = provision_inventory()
         self.assertEqual(create(inventory)["plan_id"], create(inventory)["plan_id"])
+
+    def plan_id(self, inventory=None, **kwargs):
+        return create(inventory, **kwargs)["plan_id"]
+
+    def test_the_plan_id_changes_with_the_gpu_pci_id(self):
+        other = GPU_SYSFS.replace("0x2f04", "0x2f05")
+        self.assertNotEqual(self.plan_id(), self.plan_id(provision_inventory(gpu=gpu_result(other))))
+
+    def test_the_plan_id_changes_with_the_cpu_thread_count(self):
+        self.assertNotEqual(self.plan_id(), self.plan_id(provision_inventory(cpu=cpu_result(16))))
+
+    def test_the_plan_id_changes_with_the_machine_id(self):
+        other = provision_inventory(host_identity=host_identity_result(machine_id="f" * 32))
+        self.assertNotEqual(self.plan_id(), self.plan_id(other))
+
+    def test_the_plan_id_changes_with_the_host_key(self):
+        other = provision_inventory(host_identity=host_identity_result(hostkey="SHA256:" + "B" * 43))
+        self.assertNotEqual(self.plan_id(), self.plan_id(other))
+
+    def test_the_plan_id_changes_with_the_hostname(self):
+        other = provision_inventory(host_identity=host_identity_result(hostname="other"))
+        self.assertNotEqual(self.plan_id(), self.plan_id(other))
+
+    def test_the_plan_id_changes_with_the_ssh_target_host(self):
+        self.assertNotEqual(self.plan_id(), self.plan_id(target={**PROVISION_TARGET, "host": "192.0.2.11"}))
+
+    def test_the_plan_id_changes_with_the_memory_size(self):
+        self.assertNotEqual(self.plan_id(), self.plan_id(provision_inventory(memory=memory_result(65536000))))
 
     def test_different_licenses_give_a_different_plan(self):
         inventory = provision_inventory()
@@ -114,6 +143,13 @@ class FailClosedAndShapeTests(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             create(provision_inventory(cpu=cpu_result(5000)))
         self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_the_tuning_is_refused_before_any_program_is_generated(self):
+        with mock.patch("gentoo_agent.core.provision_plan.command_for") as command_for:
+            with self.assertRaises(AgentError) as caught:
+                create(provision_inventory(cpu=cpu_result(5000)))
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        command_for.assert_not_called()
 
     def test_the_inputs_are_not_modified(self):
         settings = provision_settings()

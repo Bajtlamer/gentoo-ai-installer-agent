@@ -14,11 +14,11 @@ from gentoo_agent.core.install_plan import (
     PLAN_ID_LENGTH,
     PLAN_SCHEMA_VERSION,
     TARGET_FIELDS,
-    _check_inventory_fresh,
+    check_inventory_fresh,
     canonical,
     compute_plan_hash,
 )
-from gentoo_agent.core.provision import derive_tuning, validated_provision
+from gentoo_agent.core.provision import derive_tuning, validated_provision, validated_tuning
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.provision_phases import PHASE_FLAGS, PHASES, check_command_for, command_for
 
@@ -29,7 +29,7 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
     settings = validated_provision(settings)
     if inventory is None:
         raise AgentError(INVENTORY_MISSING, "No provision inventory exists; collect it first.", {})
-    _check_inventory_fresh(inventory)
+    check_inventory_fresh(inventory)
     facts = summarize_provision_inventory(inventory)
     nvidia = [gpu for gpu in facts["gpus"] if gpu["vendor"] == "nvidia"]
     if len(nvidia) != 1:
@@ -40,7 +40,7 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
         "gpu": nvidia[0],
         "cpu": facts["cpu"],
         "memory_gib": facts["memory_gib"],
-        "tuning": derive_tuning(facts["cpu"]["threads"], facts["memory_kib"]),
+        "tuning": validated_tuning(derive_tuning(facts["cpu"]["threads"], facts["memory_kib"])),
     }
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
