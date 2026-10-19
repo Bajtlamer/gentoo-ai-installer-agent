@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {
     "detect_hardware", "list_phases", "resolve_config", "create_plan", "get_plan", "approve_plan",
     "start_install", "run_phase", "resume_run", "cancel_run", "get_run_status", "get_run_log",
-    "verify_install",
+    "verify_install", "detect_provision", "create_provision_plan",
 }
 
 
@@ -52,6 +52,17 @@ def write_home(home, *, boot="uefi", disks=("/dev/nvme0n1",), machine="x86_64", 
         partitions or partitions_result(*disks),
         secure_boot_result(secure_boot),
     ))
+
+
+def write_provision_home(home):
+    from gentoo_agent.core.config import save_json
+    from tests.provision_helpers import provision_inventory
+
+    save_json(home / "config" / "target.json", {
+        "name": "gentoo-server2", "host": "192.0.2.10", "port": 22, "user": "root", "identity_file": "~/.ssh/id_test",
+        "target_is_disposable": False, "disk_erase_authorized": False,
+    })
+    save_json(home / "inventory" / "provision-inventory-20261019T120000Z.json", provision_inventory())
 
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")
@@ -629,3 +640,117 @@ class ResourceAndPromptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ProvisionToolTests(unittest.TestCase):
+    def test_detect_provision_summarizes_the_saved_inventory(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_provision_home(home)
+            result = call("detect_provision")
+        self.assertFalse(result.is_error, result.content[0].text)
+        data = result.structured_content
+        self.assertEqual(data["identity"]["hostname"], "gentoo")
+        self.assertEqual(data["cpu"]["threads"], 24)
+        self.assertEqual(data["gpus"][0]["vendor"], "nvidia")
+        self.assertEqual(data["memory_gib"], 31)
+
+    def test_detect_provision_without_an_inventory(self):
+        from tests.helpers import temp_home
+
+        with temp_home():
+            result = call("detect_provision")
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "INVENTORY_MISSING")
+
+    def test_create_provision_plan_then_get_plan(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_provision_home(home)
+            created = call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"]})
+            shown = call("get_plan", {"plan_id": created.structured_content["plan_id"]})
+        self.assertFalse(created.is_error, created.content[0].text)
+        data = created.structured_content
+        self.assertEqual(data["kind"], "provision")
+        self.assertIn("Licenses accepted: NVIDIA-r2", data["summary"])
+        self.assertEqual(data["disks"], [])
+        self.assertEqual(data["provision"]["tuning"]["jobs"], 15)
+        self.assertEqual(data["identity"]["hostname"], "gentoo")
+        self.assertEqual(shown.structured_content["plan_hash"], data["plan_hash"])
+        self.assertFalse(shown.structured_content["approval"]["approved"])
+
+    def test_create_provision_plan_refuses_missing_licenses(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_provision_home(home)
+            result = call("create_provision_plan", {"accept_licenses": []})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+
+    def test_verify_install_runs_the_provision_checks(self):
+        from gentoo_agent.core.install_plan import load_install_plan
+        from tests.helpers import temp_home
+
+        seen = []
+
+        def fake_shell(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            seen.append(command)
+            return {"label": label, "command": command, "returncode": 0, "stdout": "ok\n", "stderr": "",
+                    "finished_at": "t"}
+
+        with temp_home() as home, patch("gentoo_agent.mcp.server.remote_shell", fake_shell):
+            write_provision_home(home)
+            plan_id = call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"]}).structured_content["plan_id"]
+            plan = load_install_plan(plan_id)
+            result = call("verify_install", {"plan_id": plan_id})
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertEqual(seen, [phase["check"] for phase in plan["phases"]])
+        self.assertEqual(len(result.structured_content["phases"]), 7)
+
+    def make_plan(self, home):
+        write_provision_home(home)
+        return call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"]}).structured_content["plan_id"]
+
+    def test_approve_plan_dialog_for_a_provision_plan(self):
+        from mcp.types import ElicitResult
+        from gentoo_agent.core.approval import approval_status
+        from tests.helpers import temp_home
+
+        seen = []
+
+        async def accept(context, params):
+            seen.append(params.message)
+            return ElicitResult(action="accept", content={"approve": True})
+
+        with temp_home() as home:
+            plan_id = self.make_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id}, elicitation_callback=accept)
+            status = approval_status(plan_id)
+        self.assertFalse(result.is_error, result.content[0].text)
+        self.assertTrue(status["approved"])
+        self.assertIn("Kind: provision", seen[0])
+        self.assertNotIn("ERASE WINDOWS", seen[0])
+
+    def test_approve_plan_without_elicitation_returns_the_terminal_command(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            plan_id = self.make_plan(home)
+            result = call("approve_plan", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
+        self.assertEqual(result.structured_content["details"]["command"], f"gentoo-agent approve {plan_id}")
+
+    def test_start_install_for_an_unapproved_provision_plan_needs_approval(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home, patch("gentoo_agent.jobs.launcher.subprocess.Popen") as popen:
+            plan_id = self.make_plan(home)
+            result = call("start_install", {"plan_id": plan_id})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "APPROVAL_REQUIRED")
+        popen.assert_not_called()

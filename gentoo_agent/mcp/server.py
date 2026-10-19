@@ -16,7 +16,12 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, StrictBool, StrictStr
 
-from gentoo_agent.core import paths, phases as core_phases
+from gentoo_agent.core import (
+    paths,
+    phases as core_phases,
+    provision_phases as core_provision_phases,
+    provision_plan as core_provision_plan,
+)
 from gentoo_agent.core.approval import (
     APPROVAL_TTL_MINUTES,
     approval_status,
@@ -37,8 +42,15 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.hardware import summarize_inventory
-from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
-from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
+from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, plan_kind, save_install_plan
+from gentoo_agent.core.inventory import (
+    collect_inventory,
+    collect_provision_inventory,
+    latest_inventory,
+    latest_provision_inventory,
+    record_inventory,
+)
+from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runner import output_tail
 from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
@@ -85,20 +97,26 @@ def respond(function, *args, **kwargs) -> CallToolResult:
 
 
 def plan_view(plan: dict) -> dict:
-    return {
+    kind = plan_kind(plan)
+    view = {
         "plan_id": plan["plan_id"],
+        "kind": kind,
         "plan_hash": plan["plan_hash"],
         "created_at": plan["created_at"],
         "summary": approval_summary(plan),
         "target": plan["target"],
-        "disks": plan["disks"],
-        "dual_boot_entries": plan["install"].get("dual_boot_entries", []),
+        "disks": plan.get("disks", []),
+        "dual_boot_entries": (plan.get("install") or {}).get("dual_boot_entries", []),
         "erases_existing_os": plan.get("erases_existing_os"),
         "secure_boot": plan.get("secure_boot"),
         "warnings": plan.get("warnings", []),
         "phases": [{"id": phase["id"], "destructive": phase["destructive"]} for phase in plan["phases"]],
         "approval": approval_status(plan["plan_id"]),
     }
+    if kind == "provision":
+        view["identity"] = plan["identity"]
+        view["provision"] = plan["provision"]
+    return view
 
 
 @server.tool(annotations=READ_ONLY)
@@ -170,6 +188,34 @@ def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) ->
     return respond(run)
 
 
+@server.tool(annotations=REFRESHABLE_READ)
+def detect_provision(refresh: bool = False) -> CallToolResult:
+    """Summarize the running, installed system for provisioning: host identity, CPU threads, memory, GPUs,
+    kernel, and the Portage settings a plan would replace. refresh=true runs the read-only SSH inventory
+    first; otherwise the latest saved provision inventory is used."""
+    def run() -> dict:
+        if refresh:
+            inventory, _ = collect_provision_inventory(target_config())
+        else:
+            inventory = latest_provision_inventory()
+            if inventory is None:
+                raise AgentError(INVENTORY_MISSING, "No provision inventory exists; call detect_provision with refresh=true.", {})
+        return summarize_provision_inventory(inventory)
+    return respond(run)
+
+
+@server.tool(annotations=LOCAL_WRITE)
+def create_provision_plan(accept_licenses: list[str], profile: str = "nvidia-driver") -> CallToolResult:
+    """Freeze a provision plan for the running system: Portage tuning for all CPU threads and the NVIDIA
+    driver. accept_licenses lists the license names the plan accepts; they are accepted only if a human
+    approves the plan. The plan erases no disk. Returns plan_id, plan_hash, and a summary for the human."""
+    def run() -> dict:
+        plan = core_provision_plan.create_provision_plan(
+            target_config(), {"profile": profile, "accept_licenses": accept_licenses}, latest_provision_inventory())
+        return plan_view(save_install_plan(plan))
+    return respond(run)
+
+
 class ApprovalAnswer(BaseModel):
     approve: StrictBool
 
@@ -234,7 +280,7 @@ PROMPT_UNAVAILABLE = (
 
 
 def _refuse_prompt(plan_id: str) -> None:
-    if load_install_plan(plan_id)["install"].get("password_source") == "prompt":
+    if (load_install_plan(plan_id).get("install") or {}).get("password_source") == "prompt":
         raise AgentError(CONFIG_INVALID, PROMPT_UNAVAILABLE, {"field": "password_source"})
 
 
@@ -246,7 +292,7 @@ def _start(plan_id: str, phase_ids: list[str] | None = None) -> dict:
 
 @server.tool(annotations=DESTRUCTIVE, meta=HUMAN_CONFIRMS)
 def start_install(plan_id: str) -> CallToolResult:
-    """Start the approved plan in the background. Erases the target disk. Returns run_id."""
+    """Start the approved plan in the background. An install plan erases the target disk; a provision plan changes the installed system and erases nothing. Returns run_id."""
     return respond(_start, plan_id)
 
 
@@ -313,7 +359,10 @@ def verify_install(plan_id: str) -> CallToolResult:
         phases = []
         for phase in plan["phases"]:
             # Only run checks this code would generate for the plan; never trust the stored text alone.
-            expected = core_phases.check_command_for(phase["id"], plan["target"], plan["install"])
+            if plan_kind(plan) == "provision":
+                expected = core_provision_phases.check_command_for(phase["id"], plan["target"], plan["provision"])
+            else:
+                expected = core_phases.check_command_for(phase["id"], plan["target"], plan["install"])
             if phase["check"] != expected:
                 raise AgentError(PLAN_HASH_MISMATCH, f"The stored {phase['id']} check does not match the plan.",
                                  {"plan_id": plan_id, "phase": phase["id"]})
