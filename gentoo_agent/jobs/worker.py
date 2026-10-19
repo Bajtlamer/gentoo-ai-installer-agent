@@ -20,6 +20,7 @@ import sys
 from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.errors import CONFIG_INVALID, PLAN_HASH_MISMATCH, AgentError
+from gentoo_agent.core.install_plan import plan_kind
 from gentoo_agent.core.runner import execute_plan
 from gentoo_agent.core.runs import claim_run, hold_worker_lock, release_lock, update_run, write_credentials
 
@@ -60,6 +61,8 @@ def fail_unstarted(run_id: str, error: AgentError) -> None:
 
 
 def plan_needs_passwords(plan: dict) -> bool:
+    if plan_kind(plan) != "install":
+        return False
     install = plan.get("install") or {}
     return bool(install.get("set_root_password", True) or install.get("create_user", True))
 

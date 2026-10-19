@@ -179,6 +179,48 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(record["resumed_from"], first)
         self.assertEqual(record["plan_id"], plan["plan_id"])
 
+    def test_a_provision_plan_starts_without_passwords_and_counts_only_run_phases(self):
+        from tests.provision_helpers import save_provision_plan
+
+        process = FakeProcess()
+        with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=process):
+            plan = save_provision_plan()
+            approval.record_approval(plan, "cli")
+            run_id = launcher.start_run(plan["plan_id"])
+            record = runs.read_run(run_id)
+        self.assertEqual(record["phase_count"], 6)  # gpu-online is verify-only
+        self.assertEqual(json.loads(process.written.decode("utf-8")),
+                         {"password_records": None, "generated_credentials": {}})
+
+    def test_a_verify_only_phase_cannot_be_selected_for_a_run(self):
+        from gentoo_agent.core.errors import CONFIG_INVALID
+        from tests.provision_helpers import save_provision_plan
+
+        with temp_home(), patch.object(launcher.subprocess, "Popen") as popen:
+            plan = save_provision_plan()
+            approval.record_approval(plan, "cli")
+            with self.assertRaises(AgentError) as caught:
+                launcher.start_run(plan["plan_id"], phase_ids=["gpu-online"])
+            lock_exists = runs.lock_path().exists()
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+        popen.assert_not_called()
+        self.assertFalse(lock_exists)
+
+    def test_resume_of_a_finished_provision_run_starts_a_new_run(self):
+        from tests.provision_helpers import save_provision_plan
+
+        with temp_home(), patch.object(launcher.subprocess, "Popen", return_value=FakeProcess()):
+            plan = save_provision_plan()
+            approval.record_approval(plan, "cli")
+            first = launcher.start_run(plan["plan_id"])
+            runs.update_run(first, status="failed")
+            runs.release_lock(first)
+            second = launcher.resume_run(first)
+            record = runs.read_run(second)
+        self.assertNotEqual(first, second)
+        self.assertEqual(record["resumed_from"], first)
+        self.assertEqual(record["phase_count"], 6)
+
     def test_phase_subset_is_validated_and_recorded(self):
         from gentoo_agent.core.errors import CONFIG_INVALID
 

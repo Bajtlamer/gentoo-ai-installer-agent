@@ -35,6 +35,19 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(credentials["applied"])
         self.assertFalse(lock_exists)
 
+    def test_a_provision_plan_runs_without_password_records(self):
+        from tests.provision_helpers import save_provision_plan
+
+        with temp_home():
+            plan = save_provision_plan()
+            approval.record_approval(plan, "cli")
+            run_id = self.new_run(plan)
+            outcome = {"status": "installed_pending_reboot", "authentication_applied": False}
+            with patch.object(worker, "execute_plan", return_value=outcome) as execute:
+                result = worker.run(run_id, {"password_records": None, "generated_credentials": {}})
+        self.assertEqual(result, outcome)
+        self.assertIsNone(execute.call_args.args[2])
+
     def test_worker_passes_the_recorded_phase_subset_to_execute_plan(self):
         with temp_home():
             plan = approved_plan()

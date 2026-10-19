@@ -21,6 +21,7 @@ from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.credentials import PasswordPrompt, password_input
 from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, RUN_ALREADY_ACTIVE, AgentError
+from gentoo_agent.core.install_plan import plan_kind
 from gentoo_agent.core.runs import (
     ACTIVE_STATUSES,
     acquire_lock,
@@ -57,17 +58,22 @@ def start_run(
     phase_ids: list[str] | None = None,
 ) -> str:
     plan = require_approved_plan(plan_id)
+    runnable = [phase for phase in plan["phases"] if phase.get("run", True)]
     if phase_ids is not None:
-        known = {phase["id"] for phase in plan["phases"]}
+        known = {phase["id"] for phase in runnable}
         unknown = sorted(set(phase_ids) - known)
         if unknown or not phase_ids:
             raise AgentError(CONFIG_INVALID, f"Unknown or empty phase selection: {unknown or list(phase_ids)}",
                              {"phase_ids": list(phase_ids)})
-    install = plan["install"]
-    password_variables = {
-        str(name) for name in (install.get("root_password_env"), install.get("user_password_env")) if name
-    }
-    password_records, generated = password_input(install, prompt)
+    if plan_kind(plan) == "install":
+        install = plan["install"]
+        password_variables = {
+            str(name) for name in (install.get("root_password_env"), install.get("user_password_env")) if name
+        }
+        password_records, generated = password_input(install, prompt)
+    else:
+        # A provision plan sets no passwords.
+        password_variables, password_records, generated = set(), None, {}
     run_id = new_run_id()
     acquire_lock(run_id, {
         "run_id": run_id,
@@ -77,7 +83,7 @@ def start_run(
         "pid": None,
         "started_at": now(),
         "phase_ids": phase_ids,
-        "phase_count": len(phase_ids) if phase_ids else len(plan["phases"]),
+        "phase_count": len(phase_ids) if phase_ids else len(runnable),
         "phase_index": 0,
         "current_phase": None,
         "completed_phases": [],
