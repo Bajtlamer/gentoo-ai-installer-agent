@@ -16,6 +16,7 @@ the background stores the same object in `error` (and the message in
 - [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso)
 - [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick)
 - [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)
+- [Root filesystem far too small after the storage phase](#root-filesystem-far-too-small-after-the-storage-phase)
 - [Run stuck in starting, or interrupted](#run-stuck-in-starting-or-interrupted)
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
@@ -184,7 +185,9 @@ mounts from someone else's.
 
 Choose one:
 
-- Keep the configuration: run `gentoo-agent run resume <run_id>` (MCP:
+- Keep the configuration: run `gentoo-agent run resume <run_id>` (not after the
+  storage mistake in
+  [Root filesystem far too small after the storage phase](#root-filesystem-far-too-small-after-the-storage-phase); MCP:
   `resume_run`). A resume runs the already approved plan, which needs no new
   plan; approve it again first if the 60 minutes have passed. Completed phases
   are checked and skipped.
@@ -195,6 +198,35 @@ Choose one:
   BIOS; skip it when `swap_mb` is 0), or reboot the live ISO (then verify the
   new host key). Then run `inspect` again and `plan create`. Do not use
   `swapoff -a`: it would also turn off any other swap on the live system.
+
+## Root filesystem far too small after the storage phase
+
+Symptom: `base-system` fails while unpacking stage3 with `No space left on
+device`, and the `filesystems` log shows a root of a few hundred MB (for
+example `/dev/nvme0n1p3 ext4 856.3M`) or `Setting up swapspace version 1, size =
+1.8 TiB`. The partition IDs in the `blkid` output at the end of the
+`filesystems` step are the old ones of the previous disk contents.
+
+Cause (fixed in plans created after 2026-10-19): the storage check only asked
+whether the disk had a GPT label and partitions with the planned numbers. A
+disk that already had three partitions, for example an old Windows disk with
+MSR, NTFS, and recovery, passed it, so the runner skipped the partitioning and
+the `filesystems` phase formatted the old partitions: the old data partition
+became swap and the small recovery partition became the root. Only the chosen
+install disk is affected. The check now also compares each partition's type and
+size, and the last partition has to fill the rest of the disk.
+
+Do not resume the run. A resume runs the commands frozen in the old plan,
+including the old check. Instead:
+
+1. On the live system, release the disk: `umount -R /mnt/gentoo` and
+   `swapoff <planned swap partition>` (see
+   [Disk mounted after a failed run](#disk-mounted-after-a-failed-run); not
+   `swapoff -a`).
+2. Restart the MCP server (restart Claude Code) so it runs the fixed code.
+3. Run `inspect` (MCP: `detect_hardware` with `refresh=true`), create a new
+   plan, approve it, and start it. The storage check now fails on the old
+   layout, so the disk is wiped and partitioned as planned.
 
 ## Run stuck in starting, or interrupted
 

@@ -62,6 +62,15 @@ def public_key_for_target(target: dict) -> str:
     return public_key
 
 
+# Partition type as lsblk PARTTYPE prints it: GPT type GUIDs, MBR type bytes (sfdisk U, S, L and 82, 83).
+PARTITION_TYPE_IDS = {
+    "gpt": {"efi-system": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "linux-swap": "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
+            "linux-root": "0fc63daf-8483-4772-8e79-3d69d8477de4"},
+    "mbr": {"efi-system": "0x83", "linux-swap": "0x82", "linux-root": "0x83"},
+}
+
+
 def partition_script(target: dict, install: dict) -> str:
     disk, layout = validated_settings(target, install)
     label = "dos" if install["partition_table"] == "mbr" else install["partition_table"]
@@ -487,10 +496,28 @@ def storage_check_command(target: dict, install: dict) -> str:
         "test \"$(lsblk -dn -o TYPE \"$disk\")\" = disk",
         f"fdisk -l \"$disk\" | grep -Eq 'Disklabel type: {'dos' if install['partition_table'] == 'mbr' else 'gpt'}$'",
     ]
+    # A disk that already has partitions with the planned numbers (an old Windows disk with three) must not
+    # pass: the runner would skip the partitioning and the next phase would format the old partitions.
+    # So every partition needs its planned type and size; the last one only has to fill the disk.
+    fixed_bytes = sum(item["size_mib"] * 1024 * 1024 for item in layout if item.get("size_mib"))
+    lines += [
+        "disk_bytes=$(lsblk -bdn -o SIZE \"$disk\")",
+        "parts=$(lsblk -nrb -o PATH,TYPE,SIZE,PARTTYPE \"$disk\")",
+    ]
     for item in layout:
         device = item["device"]
+        kind = PARTITION_TYPE_IDS["mbr" if install["partition_table"] == "mbr" else "gpt"][
+            item["type"] if item.get("type") in ("efi-system", "linux-swap") else "linux-root"]
+        if item.get("size_mib"):
+            size_test = f"$3 == {item['size_mib'] * 1024 * 1024}"
+            minimum = ""
+        else:
+            # Room is left for the alignment before the first partition and the backup GPT.
+            size_test = "$3 >= m"
+            minimum = f" -v m=\"$(( disk_bytes - {fixed_bytes} - 2 * 1024 * 1024 ))\""
         lines.append(
-            f"lsblk -nr -o PATH,TYPE \"$disk\" | awk -v p={q(device)} '$1 == p && $2 == \"part\" {{found=1}} END {{exit found ? 0 : 1}}'"
+            f"printf '%s\\n' \"$parts\" | awk -v p={q(device)} -v t={q(kind)}{minimum} "
+            f"'$1 == p && $2 == \"part\" && {size_test} && tolower($4) == t {{found=1}} END {{exit found ? 0 : 1}}'"
         )
     lines.append("printf 'storage-ok\\n'")
     return "\n".join(lines)

@@ -20,6 +20,105 @@ def fixture(name: str) -> dict:
     return json.loads((ROOT / "tests" / "golden" / "configs" / f"{name}.json").read_text(encoding="utf-8"))
 
 
+GPT_TYPES = {"efi-system": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+             "linux-swap": "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
+             "linux-root": "0fc63daf-8483-4772-8e79-3d69d8477de4"}
+MBR_TYPES = {"linux-swap": "0x82", "linux-root": "0x83"}
+MSR_TYPE = "e3c9e316-0b5c-4db8-817d-f92df00215ae"
+BASIC_DATA_TYPE = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+RECOVERY_TYPE = "de94bba4-06d1-4d40-a16a-bfd50179d6ac"
+MIB = 1024 * 1024
+
+
+class StorageCheckTests(unittest.TestCase):
+    """Runs the generated storage check against stub lsblk and fdisk commands.
+
+    The check must tell the planned layout from an old disk that merely has partitions with the
+    same numbers: a Windows disk with three partitions once passed it, so the apply was skipped
+    and the filesystems phase formatted the old partitions.
+    """
+
+    DISK_BYTES = 2000398934016
+
+    def run_check(self, config_name: str, rows: list[tuple[str, str, int, str]], disk_bytes: int | None = None):
+        install = fixture(config_name)
+        command = phases.storage_check_command(TARGET, install)
+        disk, _ = phases.validated_settings(TARGET, install)
+        disk_bytes = disk_bytes or self.DISK_BYTES
+        label = "dos" if install["partition_table"] == "mbr" else "gpt"
+        table = "\n".join([f"{disk} disk {disk_bytes} "] + [f"{path} part {size} {kind}" for path, _t, size, kind in rows])
+        with tempfile.TemporaryDirectory() as tmp:
+            stubs = Path(tmp)
+            (stubs / "rows").write_text(table + "\n", encoding="utf-8")
+            (stubs / "lsblk").write_text(
+                '#!/bin/sh\ncase "$*" in\n'
+                f'  *"-o SIZE"*) echo {disk_bytes};;\n'
+                '  *"-o TYPE"*) echo disk;;\n'
+                f'  *) cat {shlex.quote(str(stubs / "rows"))};;\nesac\n', encoding="utf-8")
+            (stubs / "fdisk").write_text(f'#!/bin/sh\necho "Disklabel type: {label}"\n', encoding="utf-8")
+            for name in ("lsblk", "fdisk"):
+                (stubs / name).chmod(0o755)
+            program = 'test() { if [ "$1" = -b ]; then return 0; fi; command test "$@"; }\n' + command
+            return subprocess.run(["sh", "-c", program], capture_output=True, text=True,
+                                  env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"})
+
+    def planned_rows(self, config_name: str, disk_bytes: int | None = None):
+        install = fixture(config_name)
+        _, layout = phases.validated_settings(TARGET, install)
+        types = MBR_TYPES if install["partition_table"] == "mbr" else GPT_TYPES
+        disk_bytes = disk_bytes or self.DISK_BYTES
+        explicit = sum(item["size_mib"] * MIB for item in layout if item.get("size_mib"))
+        rows = []
+        for item in layout:
+            size = item["size_mib"] * MIB if item.get("size_mib") else disk_bytes - explicit - MIB
+            rows.append((item["device"], "part", size, types.get(item["type"], types["linux-root"])))
+        return rows
+
+    def test_the_planned_gpt_layout_passes(self):
+        result = self.run_check("uefi_gpt_user_sudo", self.planned_rows("uefi_gpt_user_sudo"))
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "storage-ok"), result.stderr)
+
+    def test_the_planned_mbr_layout_passes(self):
+        result = self.run_check("bios_mbr_user_sudo", self.planned_rows("bios_mbr_user_sudo"))
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "storage-ok"), result.stderr)
+
+    def test_an_old_windows_disk_with_three_partitions_fails(self):
+        disk = phases.validated_settings(TARGET, fixture("uefi_gpt_user_sudo"))[0]
+        old = [(f"{disk}p1" if disk[-1].isdigit() else f"{disk}1", "part", 16 * MIB, MSR_TYPE),
+               (f"{disk}p2" if disk[-1].isdigit() else f"{disk}2", "part", 1999448834048, BASIC_DATA_TYPE),
+               (f"{disk}p3" if disk[-1].isdigit() else f"{disk}3", "part", 931135488, RECOVERY_TYPE)]
+        result = self.run_check("uefi_gpt_user_sudo", old)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("storage-ok", result.stdout)
+
+    def test_a_wrong_partition_type_fails(self):
+        for index, kind in ((0, MSR_TYPE), (1, BASIC_DATA_TYPE), (2, MSR_TYPE)):
+            with self.subTest(index=index):
+                rows = self.planned_rows("uefi_gpt_user_sudo")
+                rows[index] = (*rows[index][:3], kind)
+                self.assertNotEqual(self.run_check("uefi_gpt_user_sudo", rows).returncode, 0)
+
+    def test_a_wrong_fixed_size_fails(self):
+        for index in (0, 1):
+            with self.subTest(index=index):
+                rows = self.planned_rows("uefi_gpt_user_sudo")
+                rows[index] = (rows[index][0], "part", rows[index][2] + MIB, rows[index][3])
+                self.assertNotEqual(self.run_check("uefi_gpt_user_sudo", rows).returncode, 0)
+
+    def test_a_root_partition_that_does_not_fill_the_disk_fails(self):
+        rows = self.planned_rows("uefi_gpt_user_sudo")
+        rows[-1] = (rows[-1][0], "part", 931135488, rows[-1][3])
+        self.assertNotEqual(self.run_check("uefi_gpt_user_sudo", rows).returncode, 0)
+
+    def test_a_wrong_mbr_type_fails(self):
+        rows = self.planned_rows("bios_mbr_user_sudo")
+        rows[0] = (*rows[0][:3], "0x83" if rows[0][3] == "0x82" else "0x82")
+        self.assertNotEqual(self.run_check("bios_mbr_user_sudo", rows).returncode, 0)
+
+    def test_a_missing_partition_fails(self):
+        self.assertNotEqual(self.run_check("uefi_gpt_user_sudo", self.planned_rows("uefi_gpt_user_sudo")[:-1]).returncode, 0)
+
+
 class PhaseGeneratorTests(unittest.TestCase):
     def test_phases_module_does_not_load_target_config_itself(self):
         self.assertFalse(hasattr(phases, "target_config"))

@@ -75,8 +75,10 @@ disk=/dev/sda
 test -b "$disk"
 test "$(lsblk -dn -o TYPE "$disk")" = disk
 fdisk -l "$disk" | grep -Eq 'Disklabel type: dos$'
-lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/sda1 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
-lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/sda2 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
+disk_bytes=$(lsblk -bdn -o SIZE "$disk")
+parts=$(lsblk -nrb -o PATH,TYPE,SIZE,PARTTYPE "$disk")
+printf '%s\n' "$parts" | awk -v p=/dev/sda1 -v t=0x82 '$1 == p && $2 == "part" && $3 == 2147483648 && tolower($4) == t {found=1} END {exit found ? 0 : 1}'
+printf '%s\n' "$parts" | awk -v p=/dev/sda2 -v t=0x83 -v m="$(( disk_bytes - 2147483648 - 2 * 1024 * 1024 ))" '$1 == p && $2 == "part" && $3 >= m && tolower($4) == t {found=1} END {exit found ? 0 : 1}'
 printf 'storage-ok\n'
 ===== filesystems apply =====
 set -eu

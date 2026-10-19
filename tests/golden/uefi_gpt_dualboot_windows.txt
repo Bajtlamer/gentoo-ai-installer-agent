@@ -71,9 +71,11 @@ disk=/dev/nvme0n1
 test -b "$disk"
 test "$(lsblk -dn -o TYPE "$disk")" = disk
 fdisk -l "$disk" | grep -Eq 'Disklabel type: gpt$'
-lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p1 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
-lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p2 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
-lsblk -nr -o PATH,TYPE "$disk" | awk -v p=/dev/nvme0n1p3 '$1 == p && $2 == "part" {found=1} END {exit found ? 0 : 1}'
+disk_bytes=$(lsblk -bdn -o SIZE "$disk")
+parts=$(lsblk -nrb -o PATH,TYPE,SIZE,PARTTYPE "$disk")
+printf '%s\n' "$parts" | awk -v p=/dev/nvme0n1p1 -v t=c12a7328-f81f-11d2-ba4b-00a0c93ec93b '$1 == p && $2 == "part" && $3 == 536870912 && tolower($4) == t {found=1} END {exit found ? 0 : 1}'
+printf '%s\n' "$parts" | awk -v p=/dev/nvme0n1p2 -v t=0657fd6d-a4ab-43c4-84e5-0933c84b4f4f '$1 == p && $2 == "part" && $3 == 4294967296 && tolower($4) == t {found=1} END {exit found ? 0 : 1}'
+printf '%s\n' "$parts" | awk -v p=/dev/nvme0n1p3 -v t=0fc63daf-8483-4772-8e79-3d69d8477de4 -v m="$(( disk_bytes - 4831838208 - 2 * 1024 * 1024 ))" '$1 == p && $2 == "part" && $3 >= m && tolower($4) == t {found=1} END {exit found ? 0 : 1}'
 printf 'storage-ok\n'
 ===== filesystems apply =====
 set -eu
