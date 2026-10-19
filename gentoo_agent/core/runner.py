@@ -14,6 +14,8 @@ from typing import Callable
 from gentoo_agent.core.config import now
 from gentoo_agent.core.disks import check_drift
 from gentoo_agent.core.errors import CONFIG_INVALID, PHASE_FAILED, TARGET_DRIFT, AgentError
+from gentoo_agent.core.identity import check_identity
+from gentoo_agent.core.install_plan import plan_kind
 from gentoo_agent.core.phases import PHASES, command_for
 from gentoo_agent.core.runs import append_log, cancel_requested, read_run, update_run
 from gentoo_agent.core.ssh import remote_shell
@@ -62,6 +64,14 @@ def execute_plan(
     completed: list[str] = []
     authentication_applied = False
     current: str | None = None
+    kind = plan_kind(plan)
+
+    def guard() -> None:
+        # What identifies the target: the install disks, or the host a provision plan was made for.
+        if kind == "provision":
+            check_identity(target, plan["identity"])
+        else:
+            check_drift(target, plan["disks"])
 
     def finish(status: str, *, error: dict | None = None, tail: str = "") -> dict:
         update_run(
@@ -105,7 +115,8 @@ def execute_plan(
             f"Run {run_id} must be claimed before execution (status {record.get('status')}).",
             {"run_id": run_id},
         )
-    phases = plan["phases"]
+    # Phases marked run: false are checked by verify_install only (for example the GPU after a reboot).
+    phases = [phase for phase in plan["phases"] if phase.get("run", True)]
     if phase_ids is not None:
         known = {phase["id"] for phase in phases}
         unknown = sorted(set(phase_ids) - known)
@@ -116,10 +127,15 @@ def execute_plan(
         phases = [phase for phase in phases if phase["id"] in selected]
     update_run(run_id, phase_count=len(phases), phase_index=0)
     try:
-        if not isinstance(plan.get("disks"), list) or not plan["disks"]:
-            raise AgentError(TARGET_DRIFT, "The plan has no disk identity to verify.", {})
-        emit("checking that the target disk still matches the plan")
-        check_drift(target, plan["disks"])
+        if kind == "provision":
+            if not isinstance(plan.get("identity"), dict) or not plan["identity"]:
+                raise AgentError(TARGET_DRIFT, "The plan has no host identity to verify.", {})
+            emit("checking that the target host still matches the plan")
+        else:
+            if not isinstance(plan.get("disks"), list) or not plan["disks"]:
+                raise AgentError(TARGET_DRIFT, "The plan has no disk identity to verify.", {})
+            emit("checking that the target disk still matches the plan")
+        guard()
         for index, phase in enumerate(phases, start=1):
             if cancel_requested(run_id):
                 emit("cancel requested; stopping before the next phase")
@@ -140,8 +156,8 @@ def execute_plan(
                     completed.append(current)
                     continue
             if phase.get("destructive", True):
-                emit(f"{current}: re-checking that the target disk still matches the plan")
-                check_drift(target, plan["disks"])
+                emit(f"{current}: re-checking that the target still matches the plan")
+                guard()
             emit(f"===== applying {current} =====")
             input_data = None
             if current == "authentication":

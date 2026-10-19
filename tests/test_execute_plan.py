@@ -29,6 +29,21 @@ STORAGE_PLAN = {
 }
 
 
+IDENTITY = {"hostname": "gentoo", "machine_id": "0" * 32, "hostkey": "SHA256:" + "A" * 43}
+PROVISION_PLAN = {
+    "plan_id": "b" * 16,
+    "plan_hash": "b" * 64,
+    "kind": "provision",
+    "target": TARGET,
+    "identity": IDENTITY,
+    "phases": [
+        {"id": "preflight", "destructive": False, "run": True, "apply": "apply-preflight", "check": "check-preflight"},
+        {"id": "nvidia-drivers", "destructive": True, "run": True, "apply": "apply-drivers", "check": "check-drivers"},
+        {"id": "gpu-online", "destructive": False, "run": False, "apply": "apply-online", "check": "check-online"},
+    ],
+}
+
+
 class FakeShell:
     def __init__(self, returncodes=None, raise_on=None):
         self.returncodes = returncodes or {}
@@ -97,6 +112,83 @@ class StorageAlwaysAppliedTests(unittest.TestCase):
             result = self.run_storage_plan(shell)
         self.assertEqual(result["status"], "failed")
         self.assertIn("storage-verify", [call[0] for call in shell.calls])
+
+
+class ProvisionPlanTests(unittest.TestCase):
+    def run_provision(self, shell, plan=PROVISION_PLAN, phase_ids=None, identity_error=None):
+        run_id = runs.new_run_id()
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": plan["plan_id"], "status": "running",
+                                "pid": None, "started_at": runs.now()})
+        with patch.object(runner, "remote_shell", shell), \
+                patch.object(runner, "check_identity", side_effect=identity_error) as identity, \
+                patch.object(runner, "check_drift") as drift:
+            result = runner.execute_plan(plan, run_id, None, phase_ids=phase_ids)
+        return result, identity, drift
+
+    def test_the_host_identity_is_checked_instead_of_disks(self):
+        with temp_home():
+            shell = FakeShell({"nvidia-drivers-check": 1})
+            result, identity, drift = self.run_provision(shell)
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        self.assertEqual(identity.call_count, 2)  # before the run, and before the destructive apply
+        identity.assert_called_with(TARGET, IDENTITY)
+        self.assertEqual(drift.call_count, 0)
+        self.assertEqual([call[0] for call in shell.calls],
+                         ["preflight-check", "nvidia-drivers-check", "nvidia-drivers", "nvidia-drivers-verify"])
+
+    def test_a_verify_only_phase_is_never_run(self):
+        with temp_home():
+            shell = FakeShell()
+            result, _, _ = self.run_provision(shell)
+        self.assertFalse(any(call[0].startswith("gpu-online") for call in shell.calls))
+        self.assertEqual(result["completed_phases"], ["preflight", "nvidia-drivers"])
+
+    def test_a_verify_only_phase_cannot_be_selected(self):
+        with temp_home():
+            with self.assertRaises(AgentError) as caught:
+                self.run_provision(FakeShell(), phase_ids=["gpu-online"])
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_a_plan_without_an_identity_fails_before_any_command(self):
+        plan = {key: value for key, value in PROVISION_PLAN.items() if key != "identity"}
+        with temp_home():
+            shell = FakeShell()
+            result, identity, _ = self.run_provision(shell, plan=plan)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertEqual(shell.calls, [])
+        self.assertEqual(identity.call_count, 0)
+
+    def test_a_different_host_stops_the_run_before_any_phase(self):
+        error = AgentError(TARGET_DRIFT, "The target does not match the approved plan.")
+        with temp_home():
+            shell = FakeShell()
+            result, _, _ = self.run_provision(shell, identity_error=error)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertEqual(shell.calls, [])
+
+
+class InstallPlanKeepsItsGuardTests(unittest.TestCase):
+    def test_an_install_plan_checks_disks_and_runs_every_phase_without_a_run_key(self):
+        self.assertTrue(all("run" not in phase and "kind" not in PLAN for phase in PLAN["phases"]))
+        with temp_home():
+            shell = FakeShell({"preflight-check": 1, "authentication-check": 1, "kernel-check": 1})
+            run_id = runs.new_run_id()
+            runs.write_run(run_id, {"run_id": run_id, "plan_id": PLAN["plan_id"], "status": "running",
+                                    "pid": None, "started_at": runs.now()})
+            with patch.object(runner, "remote_shell", shell), \
+                    patch.object(runner, "check_identity") as identity, \
+                    patch.object(runner, "check_drift") as drift:
+                result = runner.execute_plan(PLAN, run_id, RECORDS)
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        self.assertEqual(identity.call_count, 0)
+        self.assertEqual(drift.call_count, 3)
+        drift.assert_called_with(TARGET, PLAN["disks"])
+        self.assertEqual(result["completed_phases"], ["preflight", "authentication", "kernel"])
+        applied = [call[0] for call in shell.calls]
+        for label in ("preflight", "authentication", "kernel"):
+            self.assertIn(label, applied)
 
 
 class ExecutePlanTests(unittest.TestCase):
