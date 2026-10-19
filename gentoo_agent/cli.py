@@ -25,7 +25,7 @@ from gentoo_agent.core.inventory import (
 )
 from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
 from gentoo_agent.core.phases import PHASES
-from gentoo_agent.core.provision_facts import summarize_provision_inventory
+from gentoo_agent.core.profiles import provision_overview
 from gentoo_agent.core.provision_plan import create_provision_plan
 from gentoo_agent.core.runner import render_dry_run, select_phases
 from gentoo_agent.core.runs import ACTIVE_STATUSES, read_log, run_status, take_credentials
@@ -96,7 +96,7 @@ def cmd_provision_inspect(_: argparse.Namespace) -> int:
     target = target_config()
     inventory, path = collect_provision_inventory(
         target, on_progress=lambda label: print(f"Inspecting {label}...", file=sys.stderr))
-    print(json.dumps(summarize_provision_inventory(inventory), indent=2))
+    print(json.dumps(provision_overview(inventory), indent=2))
     print(path)
     return 0
 

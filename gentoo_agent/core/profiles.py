@@ -6,7 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
+from gentoo_agent.core.hardware_profile import hardware_profile
 from gentoo_agent.core.provision import PROFILE_NVIDIA, validated_provision
+from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.provision_phases import PHASE_FLAGS, PHASES, check_command_for, command_for
 
 
@@ -55,3 +57,10 @@ def profile_overview(hardware: dict) -> list[dict]:
         reason = profile.applicable(hardware)
         rows.append({"id": profile.id, "title": profile.title, "applicable": reason is None, "reason": reason})
     return rows
+
+
+def provision_overview(inventory: dict) -> dict:
+    """The provision facts plus the hardware profile and which profiles apply to it."""
+    facts = summarize_provision_inventory(inventory)
+    hardware = hardware_profile(facts)
+    return {**facts, "hardware": hardware, "profiles": profile_overview(hardware)}

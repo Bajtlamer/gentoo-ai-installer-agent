@@ -4,7 +4,7 @@ import unittest
 from gentoo_agent.core import provision_phases
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.hardware_profile import hardware_profile
-from gentoo_agent.core.profiles import get_profile, profile_overview
+from gentoo_agent.core.profiles import get_profile, profile_overview, provision_overview
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.provision_plan import create_provision_plan, verify_provision_programs
 from tests.helpers import temp_home
@@ -34,6 +34,12 @@ class RegistryTests(unittest.TestCase):
         row = profile_overview(hardware_profile(summarize_provision_inventory(inventory)))[0]
         self.assertFalse(row["applicable"])
         self.assertEqual(row["reason"], "Expected exactly one NVIDIA GPU on the target, found 0.")
+
+    def test_provision_overview_adds_hardware_and_profiles(self):
+        data = provision_overview(provision_inventory())
+        self.assertEqual(data["hardware"]["video_cards"], ["nvidia"])
+        self.assertEqual([(row["id"], row["applicable"]) for row in data["profiles"]], [("nvidia-driver", True)])
+        self.assertEqual(data["identity"], summarize_provision_inventory(provision_inventory())["identity"])
 
 
 class DispatchTests(unittest.TestCase):

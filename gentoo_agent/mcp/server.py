@@ -50,7 +50,7 @@ from gentoo_agent.core.inventory import (
     latest_provision_inventory,
     record_inventory,
 )
-from gentoo_agent.core.provision_facts import summarize_provision_inventory
+from gentoo_agent.core.profiles import provision_overview
 from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runner import output_tail
 from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
@@ -197,7 +197,8 @@ def create_plan(overrides: dict | None = None, fallbacks: dict | None = None) ->
 @server.tool(annotations=REFRESHABLE_READ)
 def detect_provision(refresh: bool = False) -> CallToolResult:
     """Summarize the running, installed system for provisioning: host identity, CPU threads, memory, GPUs,
-    kernel, and the Portage settings a plan would replace. refresh=true runs the read-only SSH inventory
+    kernel, and the Portage settings a plan would replace, plus the hardware profile and the list of
+    provision profiles with whether each applies and why not. refresh=true runs the read-only SSH inventory
     first; otherwise the latest saved provision inventory is used."""
     def run() -> dict:
         if refresh:
@@ -206,7 +207,7 @@ def detect_provision(refresh: bool = False) -> CallToolResult:
             inventory = latest_provision_inventory()
             if inventory is None:
                 raise AgentError(INVENTORY_MISSING, "No provision inventory exists; call detect_provision with refresh=true.", {})
-        return summarize_provision_inventory(inventory)
+        return provision_overview(inventory)
     return respond(run)
 
 
