@@ -23,6 +23,17 @@
 3. A new first phase, `portage-tuning`, writes `MAKEOPTS` and `EMERGE_DEFAULT_OPTS` into a block it owns in `/etc/portage/make.conf`. The values come from the CPU thread count and the RAM (rule of thumb from the Handbook: the smaller of the thread count and the RAM in GiB divided by 2, to be confirmed against the Handbook in Task 13). Reason: the installer never wrote any compile setting, so the installed system uses the stage3 defaults.
 4. The post-reboot check is a separate phase, `gpu-online`, with `run: false`, so the run ends in `installed_pending_reboot` and `verify_install` proves the GPU after the reboot.
 
+## Amendment 1 (found while reviewing Task 1): GPU detection reads sysfs
+
+`lspci` comes from `sys-apps/pciutils`, which a stage3 installation does not include, so an `lspci`-based
+`gpu` command would fail on the server before anything starts. The `gpu` command reads `/sys/bus/pci/devices`
+instead (always present). Its output is one line per PCI device: `<address> <class> <vendor> <device>` with
+the hex values as sysfs prints them (`0000:01:00.0 0x030000 0x10de 0x2f04`). A display device is a class whose
+first byte is `03`. The GPU name is built by the code from the vendor id, never taken from the target, so no
+text from the target reaches the approval dialog for it. The unused `timeout` argument of `run_ssh_readonly` is
+removed (nothing uses it). Task 1b applies the code change; Tasks 3, 6, 8, and 13 below already use the new
+format.
+
 ## File structure
 
 Create:
@@ -515,25 +526,27 @@ import unittest
 from gentoo_agent.core import provision_facts as facts
 from gentoo_agent.core.errors import INVENTORY_MISSING, AgentError
 from tests.provision_helpers import (
-    LSPCI, cpu_result, gpu_result, host_identity_result, kernel_result, memory_result, portage_conf_result,
+    GPU_SYSFS, cpu_result, gpu_result, host_identity_result, kernel_result, memory_result, portage_conf_result,
     provision_inventory, result,
 )
 
 
 class ParseGpuTests(unittest.TestCase):
     def test_only_display_devices_are_listed(self):
-        self.assertEqual(facts.parse_gpus(LSPCI), [
-            {"vendor": "nvidia", "pci_id": "10de:2f04", "name": "NVIDIA Corporation GB205 [GeForce RTX 5070]"},
+        self.assertEqual(facts.parse_gpus(GPU_SYSFS), [
+            {"vendor": "nvidia", "pci_id": "10de:2f04", "name": "NVIDIA display controller"},
         ])
 
     def test_other_vendors_and_3d_controllers(self):
-        text = ("0000:03:00.0 3D controller [0302]: NVIDIA Corporation Device [10de:1234] (rev a1)\n"
-                "00:02.0 Display controller [0380]: Example Corp Graphics [8086:46a6] (rev 0c)\n")
-        self.assertEqual([(gpu["vendor"], gpu["pci_id"]) for gpu in facts.parse_gpus(text)],
-                         [("nvidia", "10de:1234"), ("other", "8086:46a6")])
+        text = ("0000:03:00.0 0x030200 0x10de 0x1234\n"
+                "0000:00:02.0 0x038000 0x8086 0x46a6\n")
+        self.assertEqual([(gpu["vendor"], gpu["pci_id"], gpu["name"]) for gpu in facts.parse_gpus(text)],
+                         [("nvidia", "10de:1234", "NVIDIA display controller"),
+                          ("other", "8086:46a6", "Unknown vendor display controller")])
 
     def test_no_gpu_is_an_empty_list(self):
-        self.assertEqual(facts.parse_gpus("00:00.0 Host bridge [0600]: Example [1022:14d8]\n"), [])
+        self.assertEqual(facts.parse_gpus("0000:00:00.0 0x060000 0x1022 0x14d8\n"), [])
+        self.assertEqual(facts.parse_gpus(""), [])
 
     def test_unusable_text(self):
         for value in (None, 5):
@@ -541,11 +554,10 @@ class ParseGpuTests(unittest.TestCase):
                 facts.parse_gpus(value)
             self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
-    def test_an_unprintable_or_huge_name_is_unusable(self):
-        for name in ("Bad\x1b[2K Name", "N" * 200):
-            text = f"01:00.0 VGA compatible controller [0300]: {name} [10de:2f04]\n"
-            with self.subTest(name=name[:10]), self.assertRaises(AgentError):
-                facts.parse_gpus(text)
+    def test_lines_that_do_not_match_the_format_are_ignored(self):
+        text = ("garbage\n0000:01:00.0 0x030000 0x10DE 0x2f04\n0000:01:00.0 030000 10de 2f04\n"
+                "0000:01:00.0 0x030000 0x10de 0x2f04; reboot\n")
+        self.assertEqual(facts.parse_gpus(text), [])
 
 
 class ParseCpuAndMemoryTests(unittest.TestCase):
@@ -632,11 +644,13 @@ from gentoo_agent.core.identity import IDENTITY_LABEL, parse_identity
 
 
 VENDORS = {"10de": "nvidia"}
-GPU_CLASSES = ("VGA compatible controller", "3D controller", "Display controller")
-DEVICE = re.compile(
-    r"(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7] (?P<class>.+?) \[[0-9a-f]{4}\]: (?P<name>.+) "
-    r"\[(?P<vendor>[0-9a-f]{4}):(?P<device>[0-9a-f]{4})\]( \(rev [0-9a-f]{2}\))?"
+VENDOR_NAMES = {"10de": "NVIDIA"}
+# One line per PCI device from the gpu command: address, class, vendor, device (hex as sysfs prints it).
+SYSFS_DEVICE = re.compile(
+    r"(?P<address>[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]) 0x(?P<class>[0-9a-f]{6}) "
+    r"0x(?P<vendor>[0-9a-f]{4}) 0x(?P<device>[0-9a-f]{4})"
 )
+DISPLAY_BASE_CLASS = "03"
 KERNEL_RELEASE = re.compile(r"[0-9A-Za-z._+-]{1,64}")
 TEXT_LIMIT = 120
 
@@ -653,17 +667,18 @@ def _text(value: str, label: str) -> str:
 
 
 def parse_gpus(stdout: object) -> list[dict]:
-    """Display devices from lspci -nnk, with the vendor (nvidia or other), PCI id, and name."""
+    """Display devices (PCI base class 03) with the vendor (nvidia or other), PCI id, and a name built here."""
     if not isinstance(stdout, str):
         raise _unusable("gpu")
     gpus = []
     for line in stdout.splitlines():
-        match = DEVICE.fullmatch(line)
-        if match is None or match["class"] not in GPU_CLASSES:
+        match = SYSFS_DEVICE.fullmatch(line)
+        if match is None or match["class"][:2] != DISPLAY_BASE_CLASS:
             continue
-        gpus.append({"vendor": VENDORS.get(match["vendor"], "other"),
-                     "pci_id": f"{match['vendor']}:{match['device']}",
-                     "name": _text(match["name"], "gpu")})
+        vendor = match["vendor"]
+        gpus.append({"vendor": VENDORS.get(vendor, "other"),
+                     "pci_id": f"{vendor}:{match['device']}",
+                     "name": f"{VENDOR_NAMES.get(vendor, 'Unknown vendor')} display controller"})
     return gpus
 
 
@@ -1271,7 +1286,7 @@ from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, PLAN_HAS
 from gentoo_agent.core.provision_plan import create_provision_plan
 from tests.helpers import temp_home
 from tests.provision_helpers import (
-    LSPCI, MACHINE_ID, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
+    GPU_SYSFS, MACHINE_ID, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
     provision_inventory, provision_settings, result, save_provision_plan,
 )
 
@@ -1353,13 +1368,13 @@ class RefusalTests(unittest.TestCase):
         self.assertEqual(self.refused(inventory=inventory).code, INVENTORY_MISSING)
 
     def test_no_nvidia_gpu(self):
-        text = "00:00.0 Host bridge [0600]: Example [1022:14d8]\n"
+        text = "0000:00:00.0 0x060000 0x1022 0x14d8\n"
         error = self.refused(inventory=provision_inventory(gpu=gpu_result(text)))
         self.assertEqual(error.code, CONFIG_INVALID)
         self.assertEqual(error.details["nvidia_gpus"], 0)
 
     def test_two_nvidia_gpus_are_ambiguous(self):
-        text = LSPCI + "02:00.0 VGA compatible controller [0300]: NVIDIA Corporation Device [10de:2f05] (rev a1)\n"
+        text = GPU_SYSFS + "0000:02:00.0 0x030000 0x10de 0x2f05\n"
         error = self.refused(inventory=provision_inventory(gpu=gpu_result(text)))
         self.assertEqual(error.code, CONFIG_INVALID)
         self.assertEqual(error.details["nvidia_gpus"], 2)
@@ -1670,7 +1685,7 @@ class ProvisionApprovalTests(unittest.TestCase):
             "Phases that change the system: portage-tuning, portage-sync, nvidia-config, nvidia-drivers",
             "Target: root@192.0.2.10:22 (gentoo-server2)",
             "machine-id=" + MACHINE_ID,
-            "GPU: NVIDIA Corporation GB205 [GeForce RTX 5070] [10de:2f04]",
+            "GPU: NVIDIA display controller [10de:2f04]",
             "CPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB",
             "Portage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24",
             "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel)",
@@ -2251,7 +2266,7 @@ completed phases are checked and skipped.
 - `docs/ROADMAP.md`: under "Inferred Portage settings" note that `MAKEOPTS` and `EMERGE_DEFAULT_OPTS` are now derived by the provision plan; `CPU_FLAGS_X86`, `-march=native`, and `VIDEO_CARDS` stay with plan 4.
 - `README.md`: one sentence in the status paragraph that provision plans change an installed system (Portage tuning and the NVIDIA driver), linking `docs/guides/provision.md`.
 - `CLAUDE.md`: add a bullet under Architecture for the plan kinds and the new modules, and add `provision inspect` and `provision plan` to the commands that touch the target and are operator actions.
-- The spec: apply the four decisions from the top of this plan (explicit license list, `/etc/default/grub` block, the `portage-tuning` phase, the `gpu-online` verify-only phase with `run: false`) and add `cpu`, `memory`, and `portage_conf` to the inventory section.
+- The spec: apply the four decisions from the top of this plan (explicit license list, `/etc/default/grub` block, the `portage-tuning` phase, the `gpu-online` verify-only phase with `run: false`) and add `cpu`, `memory`, and `portage_conf` to the inventory section. The `gpu` command reads `/sys/bus/pci/devices` instead of `lspci` (Amendment 1): replace the `lspci -nnk` wording in the spec and drop `provision_state`.
 
 - [ ] **Step 3: Check the text and run everything**
 
@@ -2272,7 +2287,7 @@ git commit -m "Document provision plans, the Portage tuning, and the NVIDIA driv
 This task confirms the assumptions that tests cannot check. Do not start a run before the first four steps are done and their output is saved.
 
 - [ ] **Step 1: Replace the SSH host key (the operator, see the guide).** Then confirm: `ssh -o BatchMode=yes root@10.0.1.17 true` exits 0.
-- [ ] **Step 2: Read the real settings.** `detect_provision` with `refresh=true`. Record the CPU threads, the memory, the GPU name and PCI id, and the `portage_overrides`. If `gpus` is empty or has no `nvidia` entry, stop: the `lspci` format differs from the parser, so save the raw `gpu` result from the `provision-inventory-*.json` file and fix `parse_gpus` with a test built from it.
+- [ ] **Step 2: Read the real settings.** `detect_provision` with `refresh=true`. Record the CPU threads, the memory, the GPU name and PCI id, and the `portage_overrides`. If `gpus` is empty or has no `nvidia` entry, stop: save the raw `gpu` result from the `provision-inventory-*.json` file and compare it with the parser (the sysfs format `<address> 0x<class> 0x<vendor> 0x<device>`); fix `parse_gpus` with a test built from the real output. The summary names the card only as `NVIDIA display controller [10de:xxxx]`, so check the PCI id against the card you expect (RTX 5070).
 - [ ] **Step 3: Confirm the tuning rule against the Handbook.** Fetch `https://wiki.gentoo.org/wiki/Handbook:AMD64/Installation/Base` (the section on `MAKEOPTS`), record the URL, section, and retrieval time in `docs/guides/provision.md`, and compare the wording with `derive_tuning`. If the Handbook says something different, change the rule and its tests.
 - [ ] **Step 4: Learn the licenses.** The operator runs `emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target and gives the license names it lists. Use exactly those names as `accept_licenses`.
 - [ ] **Step 5: Create the plan and read the summary.** `create_provision_plan` with the licenses. The summary must show the real GPU, CPU, memory, and `MAKEOPTS`. Check that `MAKEOPTS` equals the smaller of the thread count and half the memory in GiB.
