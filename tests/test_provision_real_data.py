@@ -47,3 +47,20 @@ class RealDataTests(unittest.TestCase):
             plan = create_provision_plan(PROVISION_TARGET, provision_settings(), inventory)
         self.assertEqual(plan["provision"]["gpu"]["pci_id"], "10de:2c05")
         self.assertEqual(plan["provision"]["tuning"], {"jobs": 15, "emerge_jobs": 2, "load_average": 20})
+
+    def test_the_real_licenses_and_use_changes_reach_the_programs_and_the_summary(self):
+        from gentoo_agent.core.approval import approval_summary
+        from gentoo_agent.core.install_plan import save_install_plan
+        inventory = provision_inventory(
+            cpu=result("cpu", REAL_CPU_STDOUT), memory=result("memory", REAL_MEMORY_STDOUT),
+            gpu=result("gpu", REAL_GPU_STDOUT), kernel=result("kernel", REAL_KERNEL_STDOUT))
+        settings = provision_settings(accept_licenses=["NVIDIA-2025"], package_use=[">=media-libs/libglvnd-1.7.0 X"])
+        with temp_home():
+            plan = save_install_plan(create_provision_plan(PROVISION_TARGET, settings, inventory))
+            summary = approval_summary(plan)
+        apply = next(p["apply"] for p in plan["phases"] if p["id"] == "nvidia-config")
+        self.assertIn("'x11-drivers/nvidia-drivers NVIDIA-2025' > /etc/portage/package.license/gentoo-agent-nvidia", apply)
+        self.assertIn("'x11-drivers/nvidia-drivers dist-kernel -tools' '>=media-libs/libglvnd-1.7.0 X' "
+                      "> /etc/portage/package.use/gentoo-agent-nvidia", apply)
+        self.assertEqual(plan["provision"]["package_use"], [">=media-libs/libglvnd-1.7.0 X"])
+        self.assertIn("USE changes: >=media-libs/libglvnd-1.7.0 X", summary)

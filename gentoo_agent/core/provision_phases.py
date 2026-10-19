@@ -33,12 +33,14 @@ GRUB_DEFAULTS = "/etc/default/grub"
 LICENSE_FILE = "/etc/portage/package.license/gentoo-agent-nvidia"
 USE_FILE = "/etc/portage/package.use/gentoo-agent-nvidia"
 NVIDIA_PACKAGE = "x11-drivers/nvidia-drivers"
-NVIDIA_USE = "kernel-open dist-kernel"
+NVIDIA_USE = "dist-kernel -tools"
 TUNING_BEGIN = "# gentoo-agent portage-tuning begin"
 TUNING_END = "# gentoo-agent portage-tuning end"
 GRUB_BEGIN = "# gentoo-agent nvidia begin"
 GRUB_END = "# gentoo-agent nvidia end"
 GRUB_LINE = 'GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX:+$GRUB_CMDLINE_LINUX }nvidia-drm.modeset=1"'
+RESOLVE_FAILED = ("nvidia-config: Portage cannot resolve x11-drivers/nvidia-drivers with these licenses and USE "
+                  "settings; run emerge --pretend by hand to see what is missing")
 MIN_FREE_KIB = 8 * 1024 * 1024
 
 
@@ -133,11 +135,15 @@ def _license_line(provision: dict) -> str:
     return f"{NVIDIA_PACKAGE} " + " ".join(validated_provision(provision)["accept_licenses"])
 
 
+def _use_lines(provision: dict) -> list[str]:
+    return [NVIDIA_PACKAGE + " " + NVIDIA_USE, *validated_provision(provision)["package_use"]]
+
+
 def _config_apply(provision: dict) -> str:
     return _program(
         "mkdir -p /etc/portage/package.license /etc/portage/package.use",
         f"printf '%s\\n' {q(_license_line(provision))} > {q(LICENSE_FILE)}",
-        f"printf '%s\\n' {q(NVIDIA_PACKAGE + ' ' + NVIDIA_USE)} > {q(USE_FILE)}",
+        "printf '%s\\n' " + " ".join(q(line) for line in _use_lines(provision)) + f" > {q(USE_FILE)}",
         *_block_apply(GRUB_DEFAULTS, GRUB_BEGIN, GRUB_END, [GRUB_LINE]),
         'eselect kernel set "linux-$(uname -r)"',
     )
@@ -147,9 +153,11 @@ def _config_check(provision: dict) -> str:
     return _program(
         f"test -s {q(LICENSE_FILE)}",
         f"grep -Fqx {q(_license_line(provision))} {q(LICENSE_FILE)}",
-        f"grep -Fqx {q(NVIDIA_PACKAGE + ' ' + NVIDIA_USE)} {q(USE_FILE)}",
+        *(f"grep -Fqx {q(line)} {q(USE_FILE)}" for line in _use_lines(provision)),
         *_block_check(GRUB_DEFAULTS, GRUB_BEGIN, GRUB_END, [GRUB_LINE]),
         'test "$(readlink -f /usr/src/linux)" = "/usr/src/linux-$(uname -r)"',
+        f"emerge --pretend --nospinner --autounmask-write=n {NVIDIA_PACKAGE} >/dev/null || "
+        f"{{ printf '%s\\n' {q(RESOLVE_FAILED)} >&2; exit 1; }}",
         "printf 'nvidia-config-ok\\n'",
     )
 

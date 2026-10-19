@@ -318,6 +318,16 @@ class ProvisionCommandTests(unittest.TestCase):
         self.assertIn("Licenses accepted: NVIDIA-r2", stdout.getvalue())
         self.assertIn(f"gentoo-agent approve {plans[0].stem}", stdout.getvalue())
 
+    def test_provision_plan_takes_repeatable_package_use_lines(self):
+        stdout = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            with redirect_stdout(stdout):
+                code = cli.main(["provision", "plan", "--accept-license", "NVIDIA-r2",
+                                 "--package-use", ">=media-libs/libglvnd-1.7.0 X", "--package-use", "media-libs/a Y"])
+        self.assertEqual(code, 0)
+        self.assertIn("USE changes: >=media-libs/libglvnd-1.7.0 X; media-libs/a Y", stdout.getvalue())
+
     def test_provision_plan_needs_a_license(self):
         stderr = io.StringIO()
         with temp_home() as home, redirect_stderr(stderr):

@@ -10,7 +10,7 @@ class ValidatedProvisionTests(unittest.TestCase):
     def test_a_valid_setting_is_returned_without_extra_keys(self):
         settings = {"profile": "nvidia-driver", "accept_licenses": ["NVIDIA-r2", "Apache-2.0"], "extra": 1}
         self.assertEqual(provision.validated_provision(settings),
-                         {"profile": "nvidia-driver", "accept_licenses": ["NVIDIA-r2", "Apache-2.0"]})
+                         {"profile": "nvidia-driver", "accept_licenses": ["NVIDIA-r2", "Apache-2.0"], "package_use": []})
 
     def test_invalid_settings_are_refused(self):
         cases = {
@@ -40,6 +40,68 @@ class ValidatedProvisionTests(unittest.TestCase):
     def test_a_64_character_name_is_accepted(self):
         settings = {"profile": "nvidia-driver", "accept_licenses": ["A" * 64]}
         self.assertEqual(provision.validated_provision(settings)["accept_licenses"], ["A" * 64])
+
+
+LIBGLVND = ">=media-libs/libglvnd-1.7.0 X"
+
+
+def with_use(lines):
+    return {"profile": "nvidia-driver", "accept_licenses": ["X"], "package_use": lines}
+
+
+class PackageUseTests(unittest.TestCase):
+    def test_a_real_line_is_accepted(self):
+        self.assertEqual(provision.validated_provision(with_use([LIBGLVND]))["package_use"], [LIBGLVND])
+
+    def test_the_default_is_empty(self):
+        settings = {"profile": "nvidia-driver", "accept_licenses": ["X"]}
+        self.assertEqual(provision.validated_provision(settings)["package_use"], [])
+
+    def test_more_forms_are_accepted(self):
+        lines = ["media-libs/freetype harfbuzz", ">=x11-libs/cairo-1.18.4-r1 X -gtk_doc", "dev-libs/c_d.e+ X"]
+        self.assertEqual(provision.validated_provision(with_use(lines))["package_use"], lines)
+
+    def test_refused(self):
+        cases = {
+            "not a list": "media-libs/a X",
+            "tuple": ("media-libs/a X",),
+            "non-text item": [5],
+            "duplicates": [LIBGLVND, LIBGLVND],
+            "more than 8": [f"media-libs/a{i} X" for i in range(9)],
+            "wildcard package": ["media-libs/* X"],
+            "wildcard flag": ["media-libs/a *"],
+            "newline": ["media-libs/a X\nmedia-libs/b Y"],
+            "trailing newline": ["media-libs/a X\n"],
+            "shell text": ["media-libs/a X; reboot"],
+            "command substitution": ["media-libs/a $(reboot)"],
+            "backticks": ["media-libs/a `reboot`"],
+            "no flag": ["media-libs/a"],
+            "no category": ["a X"],
+            "doubled space": ["media-libs/a  X"],
+            "leading space": [" media-libs/a X"],
+            "trailing space": ["media-libs/a X "],
+            "9 flags": ["media-libs/a " + " ".join("f%d" % i for i in range(9))],
+            "over 200 characters": ["media-libs/a " + "X" * 200],
+            "empty": [""],
+            "comment": ["# media-libs/a X"],
+            "nvidia plain": ["x11-drivers/nvidia-drivers kernel"],
+            "nvidia with operator and version": [">=x11-drivers/nvidia-drivers-595 tools"],
+            "nvidia exact version": ["=x11-drivers/nvidia-drivers-595.104.02 -tools"],
+            "nvidia tilde": ["~x11-drivers/nvidia-drivers-595 X"],
+        }
+        for name, lines in cases.items():
+            with self.subTest(name), self.assertRaises(AgentError) as caught:
+                provision.validated_provision(with_use(lines))
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+            self.assertEqual(caught.exception.details["field"], "package_use")
+
+    def test_eight_lines_are_accepted(self):
+        lines = [f"media-libs/a{i} X" for i in range(8)]
+        self.assertEqual(provision.validated_provision(with_use(lines))["package_use"], lines)
+
+    def test_a_similarly_named_package_is_not_the_driver(self):
+        lines = ["x11-drivers/nvidia-drivers-extra X", "x11-drivers/nvidia-settings X"]
+        self.assertEqual(provision.validated_provision(with_use(lines))["package_use"], lines)
 
 
 class TuningTests(unittest.TestCase):

@@ -10,6 +10,14 @@ from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 PROFILE_NVIDIA = "nvidia-driver"
 LICENSE = re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}")
 MAX_LICENSES = 8
+MAX_PACKAGE_USE = 8
+MAX_PACKAGE_USE_LENGTH = 200
+OWNED_PACKAGE = "x11-drivers/nvidia-drivers"
+_ATOM = r"(?:[<>]=?|=|~)?[a-z0-9][a-z0-9+_.-]*/[A-Za-z0-9][A-Za-z0-9+_.-]*"
+_FLAG = r"-?[A-Za-z0-9][A-Za-z0-9+_@-]*"
+PACKAGE_USE = re.compile(rf"({_ATOM})((?: {_FLAG}){{1,8}})")
+_OPERATOR = re.compile(r"^(?:[<>]=?|=|~)")
+_VERSION = re.compile(r"-[0-9].*$")
 TUNING_KEYS = ("jobs", "emerge_jobs", "load_average")
 GIB_IN_KIB = 1024 * 1024
 
@@ -32,7 +40,25 @@ def validated_provision(provision: object) -> dict:
             f"accept_licenses must be 1 to {MAX_LICENSES} distinct license names (letters, digits, +, _, ., -).",
             {"field": "accept_licenses"},
         )
-    return {"profile": provision["profile"], "accept_licenses": list(licenses)}
+    return {"profile": provision["profile"], "accept_licenses": list(licenses),
+            "package_use": _validated_package_use(provision.get("package_use", []))}
+
+
+def _validated_package_use(lines: object) -> list[str]:
+    """0 to 8 distinct package.use lines (ATOM FLAG...); the code owns the nvidia-drivers line."""
+    problem = f"package_use must be 0 to {MAX_PACKAGE_USE} distinct package.use lines of the form ATOM FLAG [FLAG ...]."
+    if not isinstance(lines, list) or len(lines) > MAX_PACKAGE_USE or len(set(map(str, lines))) != len(lines):
+        raise AgentError(CONFIG_INVALID, problem, {"field": "package_use"})
+    for line in lines:
+        match = (PACKAGE_USE.fullmatch(line)
+                 if isinstance(line, str) and len(line) <= MAX_PACKAGE_USE_LENGTH else None)
+        if match is None:
+            raise AgentError(CONFIG_INVALID, problem, {"field": "package_use"})
+        package = _VERSION.sub("", _OPERATOR.sub("", match.group(1)))
+        if package == OWNED_PACKAGE:
+            raise AgentError(CONFIG_INVALID, f"package_use must not contain a line for {OWNED_PACKAGE}; the plan writes it.",
+                             {"field": "package_use"})
+    return list(lines)
 
 
 def derive_tuning(threads: int, mem_kib: int) -> dict:

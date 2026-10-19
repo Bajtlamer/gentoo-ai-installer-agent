@@ -682,6 +682,17 @@ class ProvisionToolTests(unittest.TestCase):
         self.assertEqual(shown.structured_content["plan_hash"], data["plan_hash"])
         self.assertFalse(shown.structured_content["approval"]["approved"])
 
+    def test_create_provision_plan_passes_package_use(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_provision_home(home)
+            created = call("create_provision_plan", {"accept_licenses": ["NVIDIA-r2"],
+                                                     "package_use": [">=media-libs/libglvnd-1.7.0 X"]})
+        self.assertFalse(created.is_error, created.content[0].text)
+        self.assertEqual(created.structured_content["provision"]["package_use"], [">=media-libs/libglvnd-1.7.0 X"])
+        self.assertIn("USE changes: >=media-libs/libglvnd-1.7.0 X", created.structured_content["summary"])
+
     def test_create_provision_plan_refuses_missing_licenses(self):
         from tests.helpers import temp_home
 
@@ -778,7 +789,7 @@ class ProvisionGuidanceTests(unittest.TestCase):
         text = mcp_server.server.instructions
         for name in ("detect_provision", "create_provision_plan", "verify_install"):
             self.assertIn(name, text)
-        self.assertIn("never invent or guess license names", text)
+        self.assertIn("never invent or guess license names or package.use lines", text)
 
     def test_the_install_prompt_mentions_provisioning(self):
         async def go():
@@ -786,6 +797,7 @@ class ProvisionGuidanceTests(unittest.TestCase):
                 return await client.get_prompt("install_gentoo", {"request": ""})
         text = anyio.run(go).messages[0].content.text
         self.assertIn("create_provision_plan", text)
+        self.assertIn("package.use lines", text)
 
     def test_the_provision_tool_description_does_not_overpromise_threads(self):
         async def go():
@@ -795,3 +807,4 @@ class ProvisionGuidanceTests(unittest.TestCase):
         description = " ".join(tools["create_provision_plan"].description.split())
         self.assertNotIn("all CPU threads", description)
         self.assertIn("parallel jobs derived from the CPU threads and the memory", description)
+        self.assertIn("package_use lines come only from the human's emerge --pretend output", description)

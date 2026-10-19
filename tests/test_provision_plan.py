@@ -79,6 +79,13 @@ class CreateProvisionPlanTests(unittest.TestCase):
         other = create(inventory, provision_settings(accept_licenses=["NVIDIA-r2", "Apache-2.0"]))
         self.assertNotEqual(create(inventory)["plan_id"], other["plan_id"])
 
+    def test_different_package_use_gives_a_different_plan_that_holds_it(self):
+        inventory = provision_inventory()
+        other = create(inventory, provision_settings(package_use=[">=media-libs/libglvnd-1.7.0 X"]))
+        self.assertNotEqual(create(inventory)["plan_id"], other["plan_id"])
+        self.assertEqual(other["provision"]["package_use"], [">=media-libs/libglvnd-1.7.0 X"])
+        self.assertEqual(create(inventory)["provision"]["package_use"], [])
+
     def test_the_plan_can_be_saved_and_loaded(self):
         with temp_home():
             saved = save_provision_plan()

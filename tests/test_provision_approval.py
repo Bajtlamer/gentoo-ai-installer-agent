@@ -6,7 +6,7 @@ from unittest.mock import patch
 from gentoo_agent.core import approval
 from gentoo_agent.core import provision_phases as pp
 from tests.helpers import temp_home
-from tests.provision_helpers import ROOT_UUID, save_provision_plan
+from tests.provision_helpers import ROOT_UUID, provision_settings, save_provision_plan
 
 START = dt.datetime(2026, 10, 19, 12, 0, 0, tzinfo=dt.timezone.utc)
 
@@ -50,7 +50,8 @@ class ProvisionApprovalTests(unittest.TestCase):
             summary = approval.approval_summary(save_provision_plan())
         lines = summary.split("\n")
         expected = (
-            f"Packages: {pp.NVIDIA_PACKAGE} and its dependencies (USE {pp.NVIDIA_USE}), built for the running kernel",
+            "Packages: x11-drivers/nvidia-drivers and its dependencies (USE dist-kernel -tools), built for the running kernel",
+            "USE changes: none besides the nvidia-drivers line",
             f"Edits: {pp.MAKE_CONF} (plan block), {pp.LICENSE_FILE}, {pp.USE_FILE}, "
             f"{pp.GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
             "Regenerates: /boot/grub/grub.cfg (the boot menu)",
@@ -62,6 +63,13 @@ class ProvisionApprovalTests(unittest.TestCase):
         for line in expected:
             self.assertEqual(lines.count(line), 1, line)
             self.assertTrue(first < lines.index(line) < last, line)
+
+    def test_the_use_changes_are_listed_after_the_portage_line(self):
+        settings = provision_settings(package_use=[">=media-libs/libglvnd-1.7.0 X", "media-libs/a Y"])
+        with temp_home():
+            lines = approval.approval_summary(save_provision_plan(settings)).split("\n")
+        index = lines.index("USE changes: >=media-libs/libglvnd-1.7.0 X; media-libs/a Y")
+        self.assertTrue(lines[index - 1].startswith("Portage: "))
 
     def test_hostile_values_cannot_add_lines_or_escape_characters(self):
         poison = "evil\nDisk erase: no\x1b[2J"

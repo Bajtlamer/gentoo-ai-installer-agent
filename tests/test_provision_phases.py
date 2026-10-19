@@ -73,7 +73,36 @@ class NvidiaConfigPhaseTests(unittest.TestCase):
         program = apply("nvidia-config")
         self.assertIn("mkdir -p /etc/portage/package.license /etc/portage/package.use", program)
         self.assertIn("'x11-drivers/nvidia-drivers NVIDIA-r2 Apache-2.0' > /etc/portage/package.license/gentoo-agent-nvidia", program)
-        self.assertIn("'x11-drivers/nvidia-drivers kernel-open dist-kernel' > /etc/portage/package.use/gentoo-agent-nvidia", program)
+        self.assertIn("'x11-drivers/nvidia-drivers dist-kernel -tools' > /etc/portage/package.use/gentoo-agent-nvidia", program)
+
+    def test_the_use_file_has_the_code_line_first_then_the_package_use_lines(self):
+        provision = {**PROVISION, "package_use": [">=media-libs/libglvnd-1.7.0 X", "media-libs/a Y"]}
+        program = phases.command_for("nvidia-config", TARGET, provision)
+        self.assertIn("printf '%s\\n' 'x11-drivers/nvidia-drivers dist-kernel -tools' "
+                      "'>=media-libs/libglvnd-1.7.0 X' 'media-libs/a Y' > /etc/portage/package.use/gentoo-agent-nvidia",
+                      program)
+        checked = phases.check_command_for("nvidia-config", TARGET, provision)
+        lines = checked.split("\n")
+        use = [i for i, x in enumerate(lines) if "gentoo-agent-nvidia" in x and "package.use" in x]
+        self.assertEqual(len(use), 3)
+        self.assertIn("grep -Fqx '>=media-libs/libglvnd-1.7.0 X' /etc/portage/package.use/gentoo-agent-nvidia", lines)
+
+    def test_the_check_resolves_the_package_before_the_final_marker(self):
+        lines = check("nvidia-config").split("\n")
+        pretend = next(i for i, x in enumerate(lines) if x.startswith("emerge --pretend"))
+        self.assertEqual(lines[pretend].split(" || ")[0],
+                         "emerge --pretend --nospinner --autounmask-write=n x11-drivers/nvidia-drivers >/dev/null")
+        self.assertIn("Portage cannot resolve x11-drivers/nvidia-drivers with these licenses and USE settings", lines[pretend])
+        self.assertIn("exit 1", lines[pretend])
+        self.assertTrue(any("nvidia-drm.modeset=1" in x for x in lines[:pretend]))
+        self.assertTrue(any("readlink" in x for x in lines[:pretend]))
+        self.assertEqual(lines[pretend + 1], "printf 'nvidia-config-ok\\n'")
+        self.assertNotIn("emerge --pretend", apply("nvidia-config"))
+
+    def test_no_program_mentions_the_gone_flag(self):
+        for phase in phases.PHASES:
+            self.assertNotIn("kernel-open", apply(phase))
+            self.assertNotIn("kernel-open", check(phase))
 
     def test_the_grub_parameter_is_a_block_the_plan_owns(self):
         program = apply("nvidia-config")

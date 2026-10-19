@@ -107,6 +107,8 @@ def _provision_summary(plan: dict) -> str:
         f"memory {_shown(str(provision['memory_gib']))} GiB",
         f"Portage: MAKEOPTS=-j{int(tuning['jobs'])}, EMERGE_DEFAULT_OPTS=--jobs={int(tuning['emerge_jobs'])} "
         f"--load-average={int(tuning['load_average'])}",
+        "USE changes: " + ("; ".join(_shown(line) for line in provision.get("package_use", []))
+                           or f"none besides the {NVIDIA_PACKAGE.split('/')[1]} line"),
         f"Edits: {MAKE_CONF} (plan block), {LICENSE_FILE}, {USE_FILE}, "
         f"{GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
         "Regenerates: /boot/grub/grub.cfg (the boot menu)",
