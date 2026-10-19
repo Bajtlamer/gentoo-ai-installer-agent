@@ -2306,6 +2306,13 @@ Assumptions that are checked only here (adjust the generators and tests if one i
 6. `sed -i` with the marker pattern removes only the plan's own block, and `/etc/default/grub` is read by `grub-mkconfig`.
 7. `emerge-webrsync` refreshes `/var/db/repos/gentoo/metadata/timestamp.chk`.
 8. The open module builds against `/usr/src/linux-<release>-gentoo-dist-bin` with `dist-kernel` set.
+9. `emerge-webrsync` on an already current tree, and the mtime of `/var/db/repos/gentoo/metadata/timestamp.chk` after a sync (the check allows 2 days; the file's time may be the snapshot's build time).
+10. `portageq envvar EMERGE_DEFAULT_OPTS` prints exactly `--jobs=3 --load-average=24` (quotes stripped, nothing added by the profile) and `portageq envvar MAKEOPTS` prints `-j15` (nothing later overrides it).
+11. `uname -r` matches `*-gentoo-dist*` (the installed kernel is `6.18.57-gentoo-dist-bin` style) and `eselect kernel list` shows `linux-$(uname -r)`; the dist tree is a usable build tree (`.config`, `Module.symvers`) for the module.
+12. The driver version that supports the RTX 5070 is available without `~amd64` (otherwise the run fails at `emerge` and the plan needs a keyword file), and the dependencies need no license besides the ones in `accept_licenses` (the license line is limited to `x11-drivers/nvidia-drivers`).
+13. `modinfo -F license nvidia` reports a license containing `GPL` for the open modules (the `gpu-online` check); if the open module reports something else, change that line, not the install.
+14. `/etc/default/grub` ends in no unfinished construct and nothing after the plan block overrides `GRUB_CMDLINE_LINUX`; the regenerated `grub.cfg` contains `nvidia-drm.modeset=1` on the Gentoo entries and still has the Windows entry.
+15. `/etc/portage/make.conf` is a regular file and `package.use` and `package.license` are directories or absent; `ip`, `findmnt`, `emerge-webrsync`, and `grub-mkconfig` are on the PATH of a non-interactive root ssh shell.
 
 ---
 
