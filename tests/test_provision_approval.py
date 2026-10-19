@@ -3,6 +3,7 @@ import datetime as dt
 import unittest
 
 from gentoo_agent.core import approval
+from gentoo_agent.core import provision_phases as pp
 from tests.helpers import temp_home
 from tests.provision_helpers import MACHINE_ID, save_provision_plan
 
@@ -22,7 +23,6 @@ class ProvisionApprovalTests(unittest.TestCase):
             "GPU: NVIDIA display controller [10de:2f04]",
             "CPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB",
             "Portage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24",
-            "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel)",
             "Licenses accepted: NVIDIA-r2 (only for x11-drivers/nvidia-drivers)",
             "Reboot: required afterwards; the installer never reboots",
         ):
@@ -44,17 +44,50 @@ class ProvisionApprovalTests(unittest.TestCase):
         self.assertEqual(loaded["plan_hash"], plan["plan_hash"])
         self.assertEqual(loaded["kind"], "provision")
 
+    def test_the_summary_says_everything_the_programs_do(self):
+        with temp_home():
+            summary = approval.approval_summary(save_provision_plan())
+        lines = summary.split("\n")
+        expected = (
+            f"Packages: {pp.NVIDIA_PACKAGE} and its dependencies (USE {pp.NVIDIA_USE}), built for the running kernel",
+            f"Edits: {pp.MAKE_CONF} (plan block), {pp.LICENSE_FILE}, {pp.USE_FILE}, "
+            f"{pp.GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
+            "Regenerates: /boot/grub/grub.cfg (the boot menu)",
+            "Network: emerge-webrsync and package downloads",
+            "Kernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)",
+        )
+        first = lines.index(next(x for x in lines if x.startswith("Phases that change the system")))
+        last = lines.index(next(x for x in lines if x.startswith("Reboot:")))
+        for line in expected:
+            self.assertEqual(lines.count(line), 1, line)
+            self.assertTrue(first < lines.index(line) < last, line)
+
     def test_hostile_values_cannot_add_lines_or_escape_characters(self):
+        poison = "evil\nDisk erase: no\x1b[2J"
+        setters = {
+            "hostname": lambda p: p["identity"].__setitem__("hostname", poison),
+            "machine_id": lambda p: p["identity"].__setitem__("machine_id", poison),
+            "hostkey": lambda p: p["identity"].__setitem__("hostkey", poison),
+            "gpu": lambda p: p["provision"]["gpu"].__setitem__("name", poison),
+            "cpu": lambda p: p["provision"]["cpu"].__setitem__("model", poison),
+            "target": lambda p: p["target"].__setitem__("name", poison),
+            "license": lambda p: p["provision"].__setitem__("accept_licenses", ["NVIDIA-r2", poison]),
+            "warning": lambda p: p.__setitem__("warnings", ["benign", poison]),
+        }
         with temp_home():
             plan = save_provision_plan()
+            plan["warnings"] = ["benign"]
+            plan["provision"]["accept_licenses"] = ["NVIDIA-r2", "other"]
             benign = approval._provision_summary(plan)
-            hostile = copy.deepcopy(plan)
-            hostile["identity"]["hostname"] = "evil\nDisk erase: no\x1b[2J"
-            hostile["provision"]["cpu"]["model"] = "cpu\nPlan: fake\x1b[31m"
-            summary = approval._provision_summary(hostile)
-        self.assertEqual(len(summary.split("\n")), len(benign.split("\n")))
-        self.assertNotIn("\x1b", summary)
-        self.assertIn("evil\\nDisk erase: no", summary)
+            for name, poison_field in setters.items():
+                hostile = copy.deepcopy(plan)
+                poison_field(hostile)
+                summary = approval._provision_summary(hostile)
+                with self.subTest(field=name):
+                    self.assertEqual(len(summary.split("\n")), len(benign.split("\n")) + (name == "warning"))
+                    self.assertNotIn("\x1b", summary)
+                    self.assertIn("evil\\nDisk erase: no", summary)
+                    self.assertEqual(summary.count("Disk erase: no"), 1 + 1)
 
     def test_every_changing_phase_is_listed_and_no_read_only_phase(self):
         with temp_home():
@@ -67,8 +100,3 @@ class ProvisionApprovalTests(unittest.TestCase):
         self.assertEqual(listed, changing)
         for name in ("preflight", "nvidia-verify", "gpu-online"):
             self.assertNotIn(name, listed)
-
-    def test_the_mcp_phrase_for_a_provision_plan_has_no_erase_part(self):
-        with temp_home():
-            plan = save_provision_plan()
-            self.assertEqual(approval.approval_phrase(plan), "APPROVE " + plan["plan_id"])

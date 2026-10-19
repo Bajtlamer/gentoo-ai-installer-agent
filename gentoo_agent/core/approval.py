@@ -24,6 +24,14 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.install_plan import load_install_plan, plan_kind, plan_path
+from gentoo_agent.core.provision_phases import (
+    GRUB_DEFAULTS,
+    LICENSE_FILE,
+    MAKE_CONF,
+    NVIDIA_PACKAGE,
+    NVIDIA_USE,
+    USE_FILE,
+)
 from gentoo_agent.core.signing import load_key, load_or_create_key, sign, verify
 
 
@@ -97,9 +105,14 @@ def _provision_summary(plan: dict) -> str:
         f"memory {_shown(str(provision['memory_gib']))} GiB",
         f"Portage: MAKEOPTS=-j{int(tuning['jobs'])}, EMERGE_DEFAULT_OPTS=--jobs={int(tuning['emerge_jobs'])} "
         f"--load-average={int(tuning['load_average'])}",
-        "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel), built for the running kernel",
+        f"Edits: {MAKE_CONF} (plan block), {LICENSE_FILE}, {USE_FILE}, "
+        f"{GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
+        "Regenerates: /boot/grub/grub.cfg (the boot menu)",
+        "Network: emerge-webrsync and package downloads",
+        "Kernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)",
+        f"Packages: {NVIDIA_PACKAGE} and its dependencies (USE {NVIDIA_USE}), built for the running kernel",
         "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"])
-        + " (only for x11-drivers/nvidia-drivers)",
+        + f" (only for {NVIDIA_PACKAGE})",
         "Reboot: required afterwards; the installer never reboots",
     ]
     return "\n".join(lines)
