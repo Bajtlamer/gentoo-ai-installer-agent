@@ -11,6 +11,7 @@ import re
 from gentoo_agent.core.disks import inventory_results
 from gentoo_agent.core.errors import INVENTORY_MISSING, AgentError
 from gentoo_agent.core.identity import IDENTITY_LABEL, parse_identity
+from gentoo_agent.core.provision import GIB_IN_KIB
 
 
 VENDORS = {"10de": "nvidia"}
@@ -107,7 +108,7 @@ def summarize_provision_inventory(inventory: dict) -> dict:
         "cpu": parse_cpu(stdout("cpu")),
         "memory_kib": memory_kib,
         # memory_gib is the floored value in GiB.
-        "memory_gib": memory_kib // (1024 * 1024),
+        "memory_gib": memory_kib // GIB_IN_KIB,
         "gpus": parse_gpus(stdout("gpu")),
         "portage_overrides": make_conf_overrides(conf.get("stdout")) if conf.get("returncode") == 0 else [],
     }

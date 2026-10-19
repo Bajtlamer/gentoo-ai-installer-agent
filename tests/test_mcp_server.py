@@ -757,6 +757,22 @@ class ProvisionToolTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_MCP, "mcp extra not installed")
+class ApprovalQuestionTests(unittest.TestCase):
+    def test_install_question_is_unchanged(self):
+        self.assertEqual(
+            mcp_server.approval_question({"kind": "install"}),
+            "Approve this plan? The approval is valid for 60 minutes "
+            "and covers exactly the commands and disk above. Check 'approve' and accept only if you, "
+            "the human operator, agree.",
+        )
+
+    def test_provision_question_has_no_disk(self):
+        text = mcp_server.approval_question({"kind": "provision"})
+        self.assertNotIn("disk", text)
+        self.assertIn("covers exactly the commands above and the host identity shown", text)
+
+
+@unittest.skipUnless(HAS_MCP, "mcp extra not installed")
 class ProvisionGuidanceTests(unittest.TestCase):
     def test_the_server_instructions_explain_provisioning_and_forbid_invented_licenses(self):
         text = mcp_server.server.instructions

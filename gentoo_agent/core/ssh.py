@@ -56,7 +56,7 @@ PROVISION_READ_ONLY_COMMANDS = {
         "printf 'hostkey='; ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
     ),
     "cpu": "printf 'threads='; nproc --all; lscpu",
-    "memory": "grep -E '^(MemTotal|SwapTotal):' /proc/meminfo",
+    "memory": "grep -E '^MemTotal:' /proc/meminfo",
     # One line per PCI device: address, class, vendor, device (hex as sysfs prints it). No lspci: a stage3 has none.
     "gpu": (
         "for d in /sys/bus/pci/devices/*; do [ -r \"$d/class\" ] || continue; "

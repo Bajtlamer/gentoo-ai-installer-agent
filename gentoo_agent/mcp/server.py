@@ -233,6 +233,16 @@ class EraseWindowsApprovalAnswer(BaseModel):
     confirm: StrictStr
 
 
+def approval_question(plan: dict) -> str:
+    """The question under the approval summary; a provision plan has no disk, only the host identity."""
+    scope = "the commands above and the host identity shown" if plan_kind(plan) == "provision" else "the commands and disk above"
+    return (
+        f"Approve this plan? The approval is valid for {APPROVAL_TTL_MINUTES} minutes "
+        f"and covers exactly {scope}. Check 'approve' and accept only if you, "
+        "the human operator, agree."
+    )
+
+
 @server.tool(annotations=LOCAL_WRITE)
 async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
     """Ask the human, in a dialog built by this server, to approve a stored plan for 60 minutes.
@@ -252,11 +262,7 @@ async def approve_plan(plan_id: str, ctx: Context) -> CallToolResult:
     if capabilities is None or capabilities.elicitation is None:
         return error_result(fallback)
     required = erase_phrase(plan)
-    message = (
-        f"{summary}\n\nApprove this plan? The approval is valid for {APPROVAL_TTL_MINUTES} minutes "
-        "and covers exactly the commands and disk above. Check 'approve' and accept only if you, "
-        "the human operator, agree."
-    )
+    message = f"{summary}\n\n{approval_question(plan)}"
     if required is not None:
         message += f" This plan erases a disk that holds Windows: type exactly {required} in 'confirm'."
     declined = error_result(AgentError(APPROVAL_DECLINED, "Approval not recorded.", {"plan_id": plan_id}))

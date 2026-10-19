@@ -38,8 +38,8 @@ def validated_provision(provision: object) -> dict:
 def derive_tuning(threads: int, mem_kib: int) -> dict:
     """Portage parallelism from the CPU threads and the memory.
 
-    MAKEOPTS jobs: the smaller of the thread count and the RAM in GiB divided by 2 (the rule of thumb of the
-    Gentoo Handbook for MAKEOPTS; confirmed against the Handbook in Task 13 of the plan). Parallel emerge jobs
+    MAKEOPTS jobs: the smaller of the thread count and the RAM in GiB divided by 2 (a rule of thumb for
+    MAKEOPTS; to be checked against the Gentoo Handbook on the real server, not cited as a source). Parallel emerge jobs
     stay small because every one of them runs its own make; the load average keeps the machine busy without
     swamping it.
     """

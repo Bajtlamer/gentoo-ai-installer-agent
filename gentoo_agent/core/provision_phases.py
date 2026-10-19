@@ -33,7 +33,6 @@ GRUB_DEFAULTS = "/etc/default/grub"
 LICENSE_FILE = "/etc/portage/package.license/gentoo-agent-nvidia"
 USE_FILE = "/etc/portage/package.use/gentoo-agent-nvidia"
 NVIDIA_PACKAGE = "x11-drivers/nvidia-drivers"
-LICENSE_PACKAGE = NVIDIA_PACKAGE
 NVIDIA_USE = "kernel-open dist-kernel"
 TUNING_BEGIN = "# gentoo-agent portage-tuning begin"
 TUNING_END = "# gentoo-agent portage-tuning end"
@@ -131,7 +130,7 @@ def _sync_check() -> str:
 
 
 def _license_line(provision: dict) -> str:
-    return f"{LICENSE_PACKAGE} " + " ".join(validated_provision(provision)["accept_licenses"])
+    return f"{NVIDIA_PACKAGE} " + " ".join(validated_provision(provision)["accept_licenses"])
 
 
 def _config_apply(provision: dict) -> str:
