@@ -102,7 +102,7 @@ def cmd_provision_inspect(_: argparse.Namespace) -> int:
 
 
 def cmd_provision_plan(args: argparse.Namespace) -> int:
-    settings = {"profile": args.profile, "accept_licenses": args.accept_license,
+    settings = {"profile": args.profile, "accept_licenses": args.accept_license or [],
                 "package_use": args.package_use or []}
     plan = save_install_plan(create_provision_plan(target_config(), settings, latest_provision_inventory()))
     print(approval_summary(plan))
@@ -250,8 +250,9 @@ def build_parser() -> argparse.ArgumentParser:
     ).set_defaults(func=cmd_provision_inspect)
     provision_plan = provision_sub.add_parser("plan", help="Freeze a provision plan for approval")
     provision_plan.add_argument("--profile", default="nvidia-driver")
-    provision_plan.add_argument("--accept-license", action="append", required=True,
-                                help="A license the plan accepts (repeat for several)")
+    provision_plan.add_argument("--accept-license", action="append",
+                                help="A license the plan accepts (repeat for several); required by the nvidia-driver "
+                                     "profile, refused by desktop-plasma")
     provision_plan.add_argument("--package-use", action="append", metavar="LINE",
                                 help="A package.use line from emerge --pretend output, e.g. "
                                      "'>=media-libs/libglvnd-1.7.0 X' (repeat for several)")

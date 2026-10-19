@@ -704,6 +704,34 @@ class ProvisionToolTests(unittest.TestCase):
         self.assertTrue(result.is_error)
         self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
 
+    def test_create_provision_plan_for_the_desktop_needs_no_licenses(self):
+        from gentoo_agent.core.config import save_json
+        from tests.helpers import temp_home
+        from tests.provision_helpers import desktop_inventory
+
+        with temp_home() as home:
+            write_provision_home(home)
+            save_json(home / "inventory" / "provision-inventory-20261019T120000Z.json", desktop_inventory())
+            created = call("create_provision_plan", {"profile": "desktop-plasma", "package_use": ["media-libs/a Y"]})
+            refused = call("create_provision_plan", {"profile": "desktop-plasma", "accept_licenses": ["NVIDIA-r2"]})
+        self.assertFalse(created.is_error, created.content[0].text)
+        data = created.structured_content
+        self.assertEqual(data["kind"], "provision")
+        self.assertEqual(data["provision"]["plasma_profile"], "default/linux/amd64/23.0/desktop/plasma")
+        self.assertIn("Purpose: desktop-plasma", data["summary"])
+        self.assertIn("; media-libs/a Y", data["summary"])
+        self.assertTrue(refused.is_error)
+        self.assertEqual(refused.structured_content["code"], "CONFIG_INVALID")
+
+    def test_the_nvidia_profile_without_licenses_is_still_refused(self):
+        from tests.helpers import temp_home
+
+        with temp_home() as home:
+            write_provision_home(home)
+            result = call("create_provision_plan", {})
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["code"], "CONFIG_INVALID")
+
     def test_verify_install_runs_the_provision_checks(self):
         from gentoo_agent.core.install_plan import load_install_plan
         from tests.helpers import temp_home
@@ -807,6 +835,8 @@ class ProvisionGuidanceTests(unittest.TestCase):
         for name in ("detect_provision", "create_provision_plan", "verify_install"):
             self.assertIn(name, text)
         self.assertIn("never invent or guess license names or package.use lines", text)
+        self.assertIn('profile="desktop-plasma"', text)
+        self.assertNotIn("\u2014", text)
 
     def test_the_install_prompt_mentions_provisioning(self):
         async def go():

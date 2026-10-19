@@ -111,8 +111,31 @@ def desktop_build(settings: dict, facts: dict, hardware: dict) -> dict:
 
 
 def _desktop_summary(plan: dict) -> list[str]:
-    # Placeholder: the real approval lines are written in the plan's Task 4.
-    return ["Purpose: desktop-plasma"]
+    """The desktop-plasma lines of the approval dialog; every value that came from the target goes through _shown."""
+    # approval imports provision_plan, which imports this module; import it only when the summary is built.
+    from gentoo_agent.core.approval import _shown
+    provision = plan["provision"]
+    use_lines = ([desktop_phases.NVIDIA_USE_LINE] if provision["nvidia"] else []) + list(provision["package_use"])
+    uris = provision["binrepos"]["uris"]
+    lines = ["Purpose: desktop-plasma (KDE Plasma, Wayland session offered, SDDM greeter on X11)"]
+    lines += [f"GPU: {_shown(gpu['vendor'])} {_shown(gpu['name'])} [{_shown(gpu['pci_id'])}]" for gpu in provision["gpus"]]
+    lines += [
+        "VIDEO_CARDS: " + _shown(" ".join(provision["video_cards"])),
+        f"Portage profile: {_shown(provision['portage_profile'])} -> {_shown(provision['plasma_profile'])} "
+        "(system-wide change)",
+        "World update: emerge --getbinpkg --update --deep --newuse @world (system-wide, can take hours; "
+        "binary packages where the USE flags match, otherwise compiled)",
+        "Binary host: " + (", ".join(_shown(uri) for uri in uris) or "none"),
+        "USE changes: " + ("; ".join(_shown(line) for line in use_lines) or "none"),
+        f"Edits: {desktop_phases.MAKE_CONF} (plan block), package.use gentoo-agent-desktop, "
+        f"{desktop_phases.DM_CONF} (plan block), the profile symlink, runlevels elogind (boot) and "
+        "display-manager (default)",
+        "Packages: " + " ".join(desktop_phases.PACKAGES),
+    ]
+    if provision["nvidia"]:
+        lines.append("Requires: the NVIDIA driver already active")
+    lines.append("Services are enabled, not started: the reboot starts them")
+    return lines
 
 
 PROFILES: dict[str, Profile] = {

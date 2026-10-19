@@ -46,9 +46,6 @@ class PhaseListTests(unittest.TestCase):
             self.assertEqual(profile.command_for(phase, TARGET, AMD), apply(phase))
             self.assertEqual(profile.check_command_for(phase, TARGET, AMD), check(phase))
 
-    def test_the_summary_is_a_placeholder_until_the_next_task(self):
-        self.assertEqual(get_profile("desktop-plasma").summary({}), ["Purpose: desktop-plasma"])
-
     def test_an_unknown_phase_is_invalid(self):
         for function in (dp.command_for, dp.check_command_for):
             with self.assertRaises(AgentError) as caught:

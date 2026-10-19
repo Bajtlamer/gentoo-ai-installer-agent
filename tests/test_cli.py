@@ -328,13 +328,31 @@ class ProvisionCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("USE changes: >=media-libs/libglvnd-1.7.0 X; media-libs/a Y", stdout.getvalue())
 
-    def test_provision_plan_needs_a_license(self):
+    def test_provision_plan_without_a_license_is_refused_by_validation_for_nvidia(self):
+        stdout = io.StringIO()
         stderr = io.StringIO()
-        with temp_home() as home, redirect_stderr(stderr):
+        with temp_home() as home, redirect_stdout(stdout), redirect_stderr(stderr):
             self.write_home(home)
-            with self.assertRaises(SystemExit) as caught:
-                cli.main(["provision", "plan"])
-        self.assertNotEqual(caught.exception.code, 0)
+            code = cli.main(["provision", "plan"])
+            plans = list((home / "plans").glob("*.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("error [CONFIG_INVALID]:", stderr.getvalue())
+        self.assertEqual(plans, [])
+
+    def test_provision_plan_accepts_the_desktop_profile_without_a_license(self):
+        from tests.provision_helpers import desktop_inventory
+
+        stdout = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            save_json(home / "inventory" / "provision-inventory-20261019T120000Z.json", desktop_inventory())
+            with redirect_stdout(stdout):
+                code = cli.main(["provision", "plan", "--profile", "desktop-plasma"])
+            plans = list((home / "plans").glob("*.json"))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(plans), 1)
+        self.assertIn("Purpose: desktop-plasma", stdout.getvalue())
+        self.assertIn("Services are enabled, not started", stdout.getvalue())
 
     def test_provision_plan_without_an_inventory_reports_the_core_error(self):
         stdout = io.StringIO()

@@ -67,7 +67,9 @@ INSTRUCTIONS = (
     "To provision an INSTALLED running system instead (it touches no disk): detect_provision(refresh=true), "
     "create_provision_plan(accept_licenses=[...], package_use=[...]), approve_plan (a human confirms in a dialog), start_install, "
     "then get_run_status and get_run_log until the run ends. The HUMAN reboots the target; afterwards "
-    "verify_install proves the GPU. License names and package.use lines come only from the human or from "
+    "verify_install proves the GPU. For the KDE Plasma desktop: detect_provision(refresh=true) lists the profiles "
+    "and whether each applies; create_provision_plan(profile=\"desktop-plasma\", package_use=[...]) takes no "
+    "licenses; the human approves; start_install; after the HUMAN reboots, verify_install. License names and package.use lines come only from the human or from "
     "emerge --pretend output that the human shows you: never invent or guess license names or package.use "
     "lines, and never pass a license the human did not name."
 )
@@ -211,16 +213,17 @@ def detect_provision(refresh: bool = False) -> CallToolResult:
 
 
 @server.tool(annotations=LOCAL_WRITE)
-def create_provision_plan(accept_licenses: list[str], package_use: list[str] | None = None,
+def create_provision_plan(accept_licenses: list[str] | None = None, package_use: list[str] | None = None,
                           profile: str = "nvidia-driver") -> CallToolResult:
     """Freeze a provision plan for the running system: Portage tuning (parallel jobs derived from the CPU
-    threads and the memory) and the NVIDIA driver. accept_licenses lists the license names the plan
+    threads and the memory) and the NVIDIA driver (profile nvidia-driver, the default), or KDE Plasma with an
+    SDDM greeter and a Wayland session (profile desktop-plasma, which takes no licenses). accept_licenses lists the license names the plan
     accepts; they are accepted only if a human approves the plan. package_use lines come only from the human's emerge --pretend output
     (never invent them); they are written to package.use next to the plan's own nvidia-drivers line. The plan erases no disk. Returns
     plan_id, plan_hash, and a summary for the human."""
     def run() -> dict:
         plan = core_provision_plan.create_provision_plan(
-            target_config(), {"profile": profile, "accept_licenses": accept_licenses, "package_use": package_use or []}, latest_provision_inventory())
+            target_config(), {"profile": profile, "accept_licenses": accept_licenses or [], "package_use": package_use or []}, latest_provision_inventory())
         return plan_view(save_install_plan(plan))
     return respond(run)
 
@@ -430,6 +433,7 @@ def install_gentoo(request: str = "") -> str:
         "To provision an already installed running system instead (no disk is touched): "
         "detect_provision(refresh=true), create_provision_plan(accept_licenses=[...], package_use=[...]), approve_plan, "
         "start_install, then get_run_status and get_run_log. The human reboots; then verify_install. "
+        "For KDE Plasma use create_provision_plan(profile=\"desktop-plasma\", package_use=[...]) without licenses. "
         "License names and package.use lines come only from the human or from emerge --pretend output the human shows; "
         "never invent or guess license names or package.use lines."
     )
