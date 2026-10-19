@@ -30,6 +30,29 @@ class ParseIdentityTests(unittest.TestCase):
                 identity.parse_identity(stdout)
             self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
+    def test_a_missing_machine_id_runs_into_the_host_key_line(self):
+        stdout = "hostname=gentoo\nmachine_id=hostkey=256 " + HOSTKEY + " root@gentoo (ED25519)\n"
+        with self.assertRaises(AgentError) as caught:
+            identity.parse_identity(stdout)
+        self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
+    def test_crlf_and_trailing_whitespace_give_the_same_identity(self):
+        clean = host_identity_result()["stdout"]
+        messy = "".join(line + "  \t\r\n" for line in clean.splitlines())
+        self.assertEqual(identity.parse_identity(messy), identity.parse_identity(clean))
+
+    def test_the_key_type_word_is_not_compared(self):
+        stdout = host_identity_result()["stdout"].replace("(ED25519)", "(RSA)")
+        self.assertEqual(identity.parse_identity(stdout), EXPECTED)
+
+    def test_a_second_field_that_is_not_a_sha256_fingerprint_is_refused(self):
+        good = host_identity_result()["stdout"]
+        for name, field in {"short": "SHA256:" + "A" * 42, "long": "SHA256:" + "A" * 44,
+                            "bad characters": "SHA256:" + "A" * 42 + "!", "no prefix": "A" * 43}.items():
+            with self.subTest(name), self.assertRaises(AgentError) as caught:
+                identity.parse_identity(good.replace(HOSTKEY, field))
+            self.assertEqual(caught.exception.code, INVENTORY_MISSING)
+
 
 class CheckIdentityTests(unittest.TestCase):
     def check(self, *, result=None, error=None, expected=EXPECTED):
@@ -69,3 +92,15 @@ class CheckIdentityTests(unittest.TestCase):
         with self.assertRaises(AgentError) as caught:
             self.check(result=failed)
         self.assertEqual(caught.exception.code, SSH_UNREACHABLE)
+
+    def test_a_different_hostname_alone_is_drift(self):
+        with self.assertRaises(AgentError) as caught:
+            self.check(result=host_identity_result(hostname="other"))
+        self.assertEqual(caught.exception.code, TARGET_DRIFT)
+        self.assertEqual(caught.exception.details["actual"]["hostname"], "other")
+
+    def test_a_failed_read_carries_the_return_code(self):
+        failed = {"label": "host_identity", "command": "", "returncode": 7, "stdout": "", "stderr": "boom"}
+        with self.assertRaises(AgentError) as caught:
+            self.check(result=failed)
+        self.assertEqual(caught.exception.details["returncode"], 7)
