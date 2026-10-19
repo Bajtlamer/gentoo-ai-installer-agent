@@ -47,6 +47,7 @@ RESOLVE_FAILED_DESKTOP = ("plasma-config: Portage cannot resolve the Plasma pack
 
 _VIDEO_CARD = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 _PLASMA_PROFILE = re.compile(r"default/linux/amd64/[0-9]+\.[0-9]+/desktop/plasma")
+_PLAIN_PROFILE = re.compile(r"default/linux/amd64/[0-9]+\.[0-9]+")
 
 
 def _settings(provision: object) -> dict:
@@ -61,10 +62,15 @@ def _settings(provision: object) -> dict:
     if not isinstance(target, str) or not _PLASMA_PROFILE.fullmatch(target):
         raise AgentError(CONFIG_INVALID, "plasma_profile must be default/linux/amd64/<version>/desktop/plasma.",
                          {"field": "plasma_profile"})
+    current = provision.get("portage_profile")
+    if not isinstance(current, str) or not _PLAIN_PROFILE.fullmatch(current):
+        raise AgentError(CONFIG_INVALID, "portage_profile must be default/linux/amd64/<version>.",
+                         {"field": "portage_profile"})
     nvidia = provision.get("nvidia")
     if not isinstance(nvidia, bool):
         raise AgentError(CONFIG_INVALID, "nvidia must be true or false.", {"field": "nvidia"})
-    return {**base, "video_cards": list(cards), "plasma_profile": target, "nvidia": nvidia}
+    return {**base, "video_cards": list(cards), "plasma_profile": target,
+            "portage_profile": current, "nvidia": nvidia}
 
 
 def _package_pattern(package: str) -> str:
@@ -95,7 +101,12 @@ def _preflight(settings: dict) -> str:
 def _profile_apply(settings: dict) -> str:
     target = settings["plasma_profile"]
     missing = f"plasma-profile: the profile {target} is no longer offered by eselect profile list"
+    changed = (f"plasma-profile: the current profile is not {settings['portage_profile']} (the one the plan was "
+               f"made from) or {target}; refusing to replace it")
     return _program(
+        "current=\"$(eselect profile show | tail -n 1 | tr -d ' ')\"",
+        f"test \"$current\" = {q(settings['portage_profile'])} || test \"$current\" = {q(target)} || "
+        f"{{ printf '%s\\n' {q(changed)} >&2; exit 1; }}",
         f"eselect profile list | grep -Fq -- {q(target + ' ')} || "
         f"{{ printf '%s\\n' {q(missing)} >&2; exit 1; }}",
         f"eselect profile set {q(target)}",

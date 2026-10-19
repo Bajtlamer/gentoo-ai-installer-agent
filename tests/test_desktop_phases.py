@@ -14,7 +14,7 @@ from gentoo_agent.core.provision_plan import verify_provision_programs
 TARGET = {"name": "gentoo-server2", "host": "192.0.2.10", "port": 22, "user": "root"}
 PLASMA = "default/linux/amd64/23.0/desktop/plasma"
 AMD = {"profile": "desktop-plasma", "package_use": [], "video_cards": ["amdgpu", "radeonsi"], "nvidia": False,
-       "plasma_profile": PLASMA}
+       "plasma_profile": PLASMA, "portage_profile": "default/linux/amd64/23.0"}
 NVIDIA = {**AMD, "video_cards": ["nvidia"], "nvidia": True, "package_use": ["media-libs/a Y"]}
 FORBIDDEN = re.compile(r"\b(wipefs|sfdisk|sgdisk|parted|mkfs\S*|mkswap|blkdiscard|dd|mount|umount|swapoff|reboot|"
                        r"shutdown|poweroff|halt)\b|rc-service\s+\S+\s+(start|restart|stop)|\*/\*")
@@ -97,6 +97,27 @@ class ProfileAndConfigTests(unittest.TestCase):
         self.assertLess(program.index("grep -Fq"), program.index("eselect profile set"))
         self.assertIn(f"eselect profile set {PLASMA}", program)
         self.assertIn(f"test \"$(eselect profile show | tail -n 1 | tr -d ' ')\" = {PLASMA}", check("plasma-profile"))
+
+    def test_profile_apply_refuses_an_unexpected_current_profile_before_setting_it(self):
+        program = apply("plasma-profile")
+        guard = ("test \"$current\" = default/linux/amd64/23.0 || "
+                 f"test \"$current\" = {PLASMA} || ")
+        self.assertIn("current=\"$(eselect profile show | tail -n 1 | tr -d ' ')\"", program)
+        self.assertIn(guard, program)
+        self.assertLess(program.index(guard), program.index("eselect profile set"))
+        for current, expected in (("default/linux/amd64/23.0", 0), (PLASMA, 0), ("default/linux/amd64/17.1", 1)):
+            with self.subTest(current=current):
+                fake = "eselect() { case \"$1 $2\" in 'profile show') printf 'Current:\\n  %s\\n' " + current + \
+                       "; return 0;; 'profile list') printf '%s \\n' " + PLASMA + "; return 0;; *) return 0;; esac; }\n"
+                result = subprocess.run(["sh", "-c", fake + program], capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if expected:
+                    self.assertIn("refusing to replace", result.stderr)
+
+    def test_a_stored_block_without_the_current_profile_is_invalid(self):
+        broken = {key: value for key, value in AMD.items() if key != "portage_profile"}
+        with self.assertRaises(AgentError):
+            apply("plasma-profile", broken)
 
     def test_config_writes_video_cards_block_and_an_empty_use_file(self):
         program = apply("plasma-config")
