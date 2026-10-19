@@ -23,7 +23,7 @@ from gentoo_agent.core.errors import (
     PLAN_HASH_MISMATCH,
     AgentError,
 )
-from gentoo_agent.core.install_plan import load_install_plan, plan_path
+from gentoo_agent.core.install_plan import load_install_plan, plan_kind, plan_path
 from gentoo_agent.core.signing import load_key, load_or_create_key, sign, verify
 
 
@@ -77,8 +77,38 @@ def _shown(value: object) -> str:
     return text
 
 
+def _provision_summary(plan: dict) -> str:
+    target, provision, identity = plan["target"], plan["provision"], plan["identity"]
+    tuning, gpu, cpu = provision["tuning"], provision["gpu"], provision["cpu"]
+    changing = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]
+    lines = [
+        f"Plan: {_shown(plan['plan_id'])}",
+        f"Plan hash: {_shown(plan['plan_hash'])}",
+        "Kind: provision (changes the installed system; no disk is erased)",
+        "Disk erase: no",
+        "Phases that change the system: " + ", ".join(changing),
+        *(f"WARNING: {_shown(warning)}" for warning in plan.get("warnings", [])),
+        f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
+        f"({_shown(target['name'])})",
+        f"Host: {_shown(identity['hostname'])} machine-id={_shown(identity['machine_id'])} "
+        f"host key {_shown(identity['hostkey'])}",
+        f"GPU: {_shown(gpu['name'])} [{_shown(gpu['pci_id'])}]",
+        f"CPU: {_shown(cpu['model'])}, {_shown(str(cpu['threads']))} threads; "
+        f"memory {_shown(str(provision['memory_gib']))} GiB",
+        f"Portage: MAKEOPTS=-j{int(tuning['jobs'])}, EMERGE_DEFAULT_OPTS=--jobs={int(tuning['emerge_jobs'])} "
+        f"--load-average={int(tuning['load_average'])}",
+        "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel), built for the running kernel",
+        "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"])
+        + " (only for x11-drivers/nvidia-drivers)",
+        "Reboot: required afterwards; the installer never reboots",
+    ]
+    return "\n".join(lines)
+
+
 def approval_summary(plan: dict) -> str:
     plan = _stored_plan(plan)
+    if plan_kind(plan) == "provision":
+        return _provision_summary(plan)
     target = plan["target"]
     install = plan["install"]
     user = (install.get("username") or "none") if install.get("create_user") else "none"
