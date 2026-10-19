@@ -6,9 +6,10 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from gentoo_agent.core import desktop_phases
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.hardware_profile import hardware_profile
-from gentoo_agent.core.provision import (PROFILE_NVIDIA, derive_tuning, validated_desktop,
+from gentoo_agent.core.provision import (PROFILE_DESKTOP, PROFILE_NVIDIA, derive_tuning, validated_desktop,
                                            validated_provision, validated_tuning)
 from gentoo_agent.core.provision_facts import summarize_provision_inventory
 from gentoo_agent.core.provision_phases import PHASE_FLAGS, PHASES, check_command_for, command_for
@@ -109,6 +110,11 @@ def desktop_build(settings: dict, facts: dict, hardware: dict) -> dict:
     }
 
 
+def _desktop_summary(plan: dict) -> list[str]:
+    # Placeholder: the real approval lines are written in the plan's Task 4.
+    return ["Purpose: desktop-plasma"]
+
+
 PROFILES: dict[str, Profile] = {
     PROFILE_NVIDIA: Profile(
         id=PROFILE_NVIDIA,
@@ -121,6 +127,18 @@ PROFILES: dict[str, Profile] = {
         check_command_for=lambda phase, target, provision: check_command_for(phase, target, provision),
         build=_nvidia_build,
         summary=_nvidia_summary,
+    ),
+    PROFILE_DESKTOP: Profile(
+        id=PROFILE_DESKTOP,
+        title="KDE Plasma desktop (Wayland session, OpenRC)",
+        applicable=desktop_applicable,
+        validate=validated_desktop,
+        phases=desktop_phases.PHASES,
+        flags=desktop_phases.PHASE_FLAGS,
+        command_for=lambda phase, target, provision: desktop_phases.command_for(phase, target, provision),
+        check_command_for=lambda phase, target, provision: desktop_phases.check_command_for(phase, target, provision),
+        build=desktop_build,
+        summary=_desktop_summary,
     ),
 }
 

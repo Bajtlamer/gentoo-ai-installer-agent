@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from gentoo_agent.core import provision_phases
+from gentoo_agent.core import desktop_phases, provision_phases
 from gentoo_agent.core.errors import CONFIG_INVALID, AgentError
 from gentoo_agent.core.hardware_profile import hardware_profile
 from gentoo_agent.core.profiles import get_profile, profile_overview, provision_overview
@@ -16,9 +16,10 @@ from tests.provision_helpers import (
 class RegistryTests(unittest.TestCase):
     def test_get_profile(self):
         self.assertEqual(get_profile("nvidia-driver").id, "nvidia-driver")
+        self.assertEqual(get_profile("desktop-plasma").phases, desktop_phases.PHASES)
 
     def test_unknown_profile_is_refused(self):
-        for value in ("desktop-plasma", None, 5):
+        for value in ("desktop", None, 5):
             with self.assertRaises(AgentError) as ctx:
                 get_profile(value)
             self.assertEqual(ctx.exception.code, CONFIG_INVALID)
@@ -27,7 +28,8 @@ class RegistryTests(unittest.TestCase):
     def test_overview_for_the_nvidia_fixture(self):
         hardware = hardware_profile(summarize_provision_inventory(provision_inventory()))
         self.assertEqual([(row["id"], row["applicable"], row["reason"]) for row in profile_overview(hardware)],
-                         [("nvidia-driver", True, None)])
+                         [("nvidia-driver", True, None),
+                          ("desktop-plasma", False, "The desktop-plasma profile supports only amd64.")])
 
     def test_overview_for_an_amd_only_inventory(self):
         inventory = provision_inventory(gpu=gpu_result(AMD_GPU_SYSFS))
@@ -38,7 +40,7 @@ class RegistryTests(unittest.TestCase):
     def test_provision_overview_adds_hardware_and_profiles(self):
         data = provision_overview(provision_inventory())
         self.assertEqual(data["hardware"]["video_cards"], ["nvidia"])
-        self.assertEqual([(row["id"], row["applicable"]) for row in data["profiles"]], [("nvidia-driver", True)])
+        self.assertEqual([(row["id"], row["applicable"]) for row in data["profiles"]], [("nvidia-driver", True), ("desktop-plasma", False)])
         self.assertEqual(data["identity"], summarize_provision_inventory(provision_inventory())["identity"])
 
 

@@ -657,7 +657,7 @@ class ProvisionToolTests(unittest.TestCase):
         self.assertEqual(data["gpus"][0]["vendor"], "nvidia")
         self.assertEqual(data["memory_gib"], 31)
         self.assertEqual(data["hardware"]["video_cards"], ["nvidia"])
-        self.assertEqual([(row["id"], row["applicable"]) for row in data["profiles"]], [("nvidia-driver", True)])
+        self.assertEqual([(row["id"], row["applicable"]) for row in data["profiles"]], [("nvidia-driver", True), ("desktop-plasma", False)])
 
     def test_detect_provision_without_an_inventory(self):
         from tests.helpers import temp_home
