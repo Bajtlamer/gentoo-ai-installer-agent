@@ -57,7 +57,11 @@ PROVISION_READ_ONLY_COMMANDS = {
     ),
     "cpu": "printf 'threads='; nproc --all; lscpu",
     "memory": "grep -E '^(MemTotal|SwapTotal):' /proc/meminfo",
-    "gpu": "lspci -nnk",
+    # One line per PCI device: address, class, vendor, device (hex as sysfs prints it). No lspci: a stage3 has none.
+    "gpu": (
+        "for d in /sys/bus/pci/devices/*; do [ -r \"$d/class\" ] || continue; "
+        "printf '%s %s %s %s\\n' \"${d##*/}\" \"$(cat \"$d/class\")\" \"$(cat \"$d/vendor\")\" \"$(cat \"$d/device\")\"; done"
+    ),
     # The user's own MAKEOPTS and EMERGE_DEFAULT_OPTS, outside the block that a plan writes.
     "portage_conf": (
         "sed -n -e '/^# gentoo-agent portage-tuning begin$/,/^# gentoo-agent portage-tuning end$/d' "
@@ -76,7 +80,7 @@ def host_key_failed(result: dict) -> bool:
     return result.get("returncode") == 255 and HOST_KEY_FAILURE in str(result.get("stderr") or "")
 
 
-def run_ssh_readonly(target: dict, label: str, command: str, timeout: int = 45) -> dict:
+def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
     # OpenSSH joins all arguments after the host into one remote command. Quote
     # the shell program explicitly so pipes, semicolons, and conditionals are
     # interpreted on the target instead of being split by the SSH invocation.
@@ -86,7 +90,7 @@ def run_ssh_readonly(target: dict, label: str, command: str, timeout: int = 45) 
         cwd=paths.root(),
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=45,
         check=False,
     )
     return {

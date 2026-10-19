@@ -1,4 +1,4 @@
-"""Shared fixtures for provision plan tests. The lspci text is a sample, not a claim about real device ids."""
+"""Shared fixtures for provision plan tests. The values are samples, not claims about real hardware."""
 
 from gentoo_agent.core.config import now
 
@@ -7,14 +7,11 @@ MACHINE_ID = "0123456789abcdef0123456789abcdef"
 PROVISION_TARGET = {"name": "gentoo-server2", "host": "192.0.2.10", "port": 22, "user": "root",
                     "identity_file": "~/.ssh/id_test", "known_hosts_file": ""}
 
-LSPCI = (
-    "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GB205 [GeForce RTX 5070] [10de:2f04] (rev a1)\n"
-    "\tSubsystem: Example Device [1043:89f3]\n"
-    "\tKernel driver in use: nouveau\n"
-    "\tKernel modules: nouveau\n"
-    "01:00.1 Audio device [0403]: NVIDIA Corporation Device [10de:22eb] (rev a1)\n"
-    "\tKernel driver in use: snd_hda_intel\n"
-    "00:00.0 Host bridge [0600]: Example Corp Root Complex [1022:14d8]\n"
+# Sample values for tests; none of them is a claim about real hardware (device ids, host key, thread count, kernel).
+GPU_SYSFS = (
+    "0000:00:00.0 0x060000 0x1022 0x14d8\n"
+    "0000:01:00.0 0x030000 0x10de 0x2f04\n"
+    "0000:01:00.1 0x040300 0x10de 0x22eb\n"
 )
 
 
@@ -35,7 +32,7 @@ def memory_result(kib: int = 32768000) -> dict:
     return result("memory", f"MemTotal:       {kib} kB\nSwapTotal:      16777212 kB\n")
 
 
-def gpu_result(text: str = LSPCI) -> dict:
+def gpu_result(text: str = GPU_SYSFS) -> dict:
     return result("gpu", text)
 
 
@@ -63,10 +60,10 @@ def provision_settings(**replace) -> dict:
     return settings
 
 
-def save_provision_plan(**inventory_replace: dict) -> dict:
-    """Create and save a provision plan. Call inside tests.helpers.temp_home()."""
+def save_provision_plan(settings: dict | None = None, **inventory_replace: dict) -> dict:
+    """Create and save a provision plan. Call inside tests.helpers.temp_home(). inventory_replace maps a label to the result that replaces the default."""
     from gentoo_agent.core.install_plan import save_install_plan
     from gentoo_agent.core.provision_plan import create_provision_plan
 
     return save_install_plan(
-        create_provision_plan(PROVISION_TARGET, provision_settings(), provision_inventory(**inventory_replace)))
+        create_provision_plan(PROVISION_TARGET, settings or provision_settings(), provision_inventory(**inventory_replace)))

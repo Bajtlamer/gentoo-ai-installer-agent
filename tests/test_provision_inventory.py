@@ -1,5 +1,4 @@
 import re
-import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -25,17 +24,10 @@ class ProvisionCommandsTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIsNone(forbidden.search(command.replace("2>/dev/null", "")), command)
 
-    def test_the_timeout_can_be_raised_and_defaults_to_45(self):
-        calls = []
-
-        def run(*args, **kwargs):
-            calls.append(kwargs["timeout"])
-            return subprocess.CompletedProcess(args[0], 0, "", "")
-
-        with patch.object(ssh.subprocess, "run", run):
-            ssh.run_ssh_readonly(PROVISION_TARGET, "kernel", "uname -r")
-            ssh.run_ssh_readonly(PROVISION_TARGET, "kernel", "uname -r", timeout=120)
-        self.assertEqual(calls, [45, 120])
+    def test_the_gpu_command_reads_sysfs_and_needs_no_lspci(self):
+        command = ssh.PROVISION_READ_ONLY_COMMANDS["gpu"]
+        self.assertIn("/sys/bus/pci/devices", command)
+        self.assertNotIn("lspci", command)
 
 
 class CollectProvisionInventoryTests(unittest.TestCase):
