@@ -133,7 +133,12 @@ Rules that hold across the code:
 9. **Per phase.** For each phase in plan order, the runner checks the cancel
    flag, then runs the stored check program. Exit 0 means the phase is already
    complete and it is skipped. Otherwise it runs the stored apply program, and
-   then the check again as verification. A nonzero exit stops the run with
+   then the check again as verification. The `storage` phase has no such
+   shortcut in a new run: a run without `resumed_from` always applies it, so a
+   disk that already has the planned layout is still wiped and partitioned
+   again (the check passed on an old install and the old filesystems were
+   reused). A resumed run keeps the shortcut, so it never wipes a half-done
+   install. A nonzero exit stops the run with
    `PHASE_FAILED`. Every program runs as one `sh -c` invocation through
    `core/ssh.remote_shell()`. The worker passes its worker-lock descriptor as
    `keep_fds`. With `keep_fds`, `remote_shell()` does not start ssh directly:

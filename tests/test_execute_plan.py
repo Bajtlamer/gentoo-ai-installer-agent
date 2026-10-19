@@ -19,6 +19,14 @@ PLAN = {
     ],
 }
 RECORDS = "root:pw-root\ngentoo:pw-user\n"
+STORAGE_PLAN = {
+    **PLAN,
+    "phases": [
+        {"id": "preflight", "destructive": False, "apply": "apply-preflight", "check": "check-preflight"},
+        {"id": "storage", "destructive": True, "apply": "apply-storage", "check": "check-storage"},
+        {"id": "kernel", "destructive": True, "apply": "apply-kernel", "check": "check-kernel"},
+    ],
+}
 
 
 class FakeShell:
@@ -37,6 +45,57 @@ class FakeShell:
         stdout = "".join(f"line {number}\n" for number in range(60))
         return {"label": label, "command": command, "returncode": self.returncodes.get(label, 0),
                 "stdout": stdout, "stderr": "", "finished_at": "now"}
+
+
+class StorageOnNewRunTests(unittest.TestCase):
+    """A new run always partitions the disk; only a resume may find storage already done.
+
+    A target disk with an old install of the same layout passes the storage check. Skipping the
+    phase then reused the old filesystems and the old system instead of erasing the disk.
+    """
+
+    def run_storage_plan(self, shell, resumed_from=None):
+        run_id = runs.new_run_id()
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": STORAGE_PLAN["plan_id"], "status": "running",
+                                "pid": None, "started_at": runs.now(), "resumed_from": resumed_from})
+        with patch.object(runner, "remote_shell", shell), patch.object(runner, "check_drift"):
+            result = runner.execute_plan(STORAGE_PLAN, run_id, RECORDS)
+        return result
+
+    def test_a_new_run_applies_storage_even_when_its_check_passes(self):
+        with temp_home():
+            shell = FakeShell()
+            result = self.run_storage_plan(shell)
+        labels = [call[0] for call in shell.calls]
+        self.assertIn("storage", labels)
+        self.assertLess(labels.index("storage"), labels.index("storage-verify"))
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        self.assertEqual(result["completed_phases"], ["preflight", "storage", "kernel"])
+
+    def test_a_new_run_still_skips_other_completed_phases(self):
+        with temp_home():
+            shell = FakeShell()
+            self.run_storage_plan(shell)
+        labels = [call[0] for call in shell.calls]
+        self.assertIn("kernel-check", labels)
+        self.assertNotIn("kernel", labels)
+        self.assertNotIn("preflight", labels)
+
+    def test_a_resumed_run_skips_storage_when_its_check_passes(self):
+        with temp_home():
+            shell = FakeShell()
+            result = self.run_storage_plan(shell, resumed_from="20261019T000000Z-abcdef")
+        labels = [call[0] for call in shell.calls]
+        self.assertEqual(labels, ["preflight-check", "storage-check", "kernel-check"])
+        self.assertEqual(result["completed_phases"], ["preflight", "storage", "kernel"])
+
+    def test_a_failed_storage_apply_on_a_new_run_stops_the_run(self):
+        with temp_home():
+            shell = FakeShell({"storage": 1})
+            result = self.run_storage_plan(shell)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failed_phase"], "storage")
+        self.assertNotIn("kernel-check", [call[0] for call in shell.calls])
 
 
 class ExecutePlanTests(unittest.TestCase):

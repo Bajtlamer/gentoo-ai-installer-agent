@@ -631,6 +631,14 @@ For each phase the worker runs the phase's read-only check first. If the check
 passes, the phase is already complete and is skipped. Otherwise it runs the
 phase and then the check again as verification. A failure stops the run.
 
+The `storage` phase is the exception: a new run (`run start`) always
+partitions the disk and clears the new partitions, even when the disk already
+has the planned layout, so an old installation is never reused. Only
+`run resume` skips it when its check passes. The disk must not be mounted
+when a new run starts (after a cancelled or failed run, run `umount -R
+/mnt/gentoo` and `swapoff <swap partition>` first, see
+[Disk mounted after a failed run](../TROUBLESHOOTING.md#disk-mounted-after-a-failed-run)).
+
 ### run status
 
 ```sh

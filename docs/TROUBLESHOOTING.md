@@ -18,6 +18,7 @@ the background stores the same object in `error` (and the message in
 - [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)
 - [Root filesystem far too small after the storage phase](#root-filesystem-far-too-small-after-the-storage-phase)
 - [Kernel install fails: not enough disk space on /boot](#kernel-install-fails-not-enough-disk-space-on-boot)
+- [Old installation reused instead of erased](#old-installation-reused-instead-of-erased)
 - [Run stuck in starting, or interrupted](#run-stuck-in-starting-or-interrupted)
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
@@ -228,6 +229,25 @@ including the old check. Instead:
 3. Run `inspect` (MCP: `detect_hardware` with `refresh=true`), create a new
    plan, approve it, and start it. The storage check now fails on the old
    layout, so the disk is wiped and partitioned as planned.
+
+## Old installation reused instead of erased
+
+Symptom: the run finishes `storage` and `filesystems` within seconds on a
+disk that held an earlier installation, there is no `mkfs` output, and the
+`base-system` phase downloads no stage3. The old system is still there with the
+new configuration on top.
+
+Cause (fixed in runs started after 2026-10-19): the storage check passed
+because the old layout matched the plan (same partition types and sizes), so
+the phase was skipped and the old filesystems were reused. A new run now always
+applies `storage`: it wipes the disk, writes the table, and clears the new
+partitions. Only `run resume` may skip it.
+
+The apply only wipes a disk that is not in use. If a cancelled or failed run
+left `/mnt/gentoo` mounted or the swap partition active, the next run treats it
+as a resume and rewrites the table without wiping. Before you start again, on
+the live system run `umount -R /mnt/gentoo` and `swapoff <swap partition>` (see
+[Disk mounted after a failed run](#disk-mounted-after-a-failed-run)).
 
 ## Kernel install fails: not enough disk space on /boot
 
