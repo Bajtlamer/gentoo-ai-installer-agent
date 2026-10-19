@@ -124,7 +124,7 @@ def _provision_summary(plan: dict) -> str:
         f"({_shown(target['name'])})",
         f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
         f"host key {_shown(identity['hostkey'])}",
-        "Network: emerge-webrsync and package downloads",
+        "Network: Portage repository and package downloads",
         *get_profile(provision["profile"]).summary(plan),
         "Reboot: required afterwards; the installer never reboots",
     ]
