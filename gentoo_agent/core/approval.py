@@ -124,7 +124,9 @@ def _provision_summary(plan: dict) -> str:
         f"({_shown(target['name'])})",
         f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
         f"host key {_shown(identity['hostkey'])}",
-        "Network: Portage repository and package downloads",
+        ("Network: Portage repository sync and package downloads"
+         if any(phase.get("id") == "portage-sync" for phase in plan["phases"])
+         else "Network: package downloads (binary packages and sources)"),
         *get_profile(provision["profile"]).summary(plan),
         "Reboot: required afterwards; the installer never reboots",
     ]

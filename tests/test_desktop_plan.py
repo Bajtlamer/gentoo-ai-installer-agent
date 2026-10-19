@@ -55,10 +55,10 @@ class DesktopPlanTests(unittest.TestCase):
         self.assertIn("GPU: nvidia ", text)
         self.assertNotIn("\u2014", text)
 
-    def test_summary_has_the_network_line_like_the_nvidia_one(self):
+    def test_summary_network_line_has_no_repository_sync(self):
         with temp_home():
             text = approval_summary(save_install_plan(make()))
-        self.assertIn("Network: Portage repository and package downloads", text)
+        self.assertIn("Network: package downloads (binary packages and sources)", text)
 
     def test_summary_without_nvidia_has_no_driver_requirement(self):
         amd = desktop_inventory(gpu=gpu_result(AMD_GPU_SYSFS))

@@ -55,7 +55,7 @@ class ProvisionApprovalTests(unittest.TestCase):
             f"Edits: {pp.MAKE_CONF} (plan block), {pp.LICENSE_FILE}, {pp.USE_FILE}, "
             f"{pp.GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
             "Regenerates: /boot/grub/grub.cfg (the boot menu)",
-            "Network: Portage repository and package downloads",
+            "Network: Portage repository sync and package downloads",
             "Kernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)",
         )
         first = lines.index(next(x for x in lines if x.startswith("Phases that change the system")))
@@ -113,7 +113,7 @@ class ProvisionApprovalTests(unittest.TestCase):
 
 # Everything after the plan and hash lines, captured from the code before the summary moved to the registry.
 # The Network line moved from the middle to just after the Host line (common to every profile).
-NVIDIA_SUMMARY = 'Kind: provision (changes the installed system; no disk is erased)\nDisk erase: no\nPhases that change the system: portage-tuning, portage-sync, nvidia-config, nvidia-drivers\nTarget: root@192.0.2.10:22 (gentoo-server2)\nHost: gentoo root-uuid=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d host key SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nNetwork: Portage repository and package downloads\nGPU: NVIDIA display controller [10de:2f04]\nCPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB\nPortage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24\nUSE changes: none besides the nvidia-drivers line\nEdits: /etc/portage/make.conf (plan block), /etc/portage/package.license/gentoo-agent-nvidia, /etc/portage/package.use/gentoo-agent-nvidia, /etc/default/grub (plan block adding the kernel parameter nvidia-drm.modeset=1)\nRegenerates: /boot/grub/grub.cfg (the boot menu)\nKernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)\nPackages: x11-drivers/nvidia-drivers and its dependencies (USE dist-kernel -tools), built for the running kernel\nLicenses accepted: NVIDIA-r2 (only for x11-drivers/nvidia-drivers)\nReboot: required afterwards; the installer never reboots'
+NVIDIA_SUMMARY = 'Kind: provision (changes the installed system; no disk is erased)\nDisk erase: no\nPhases that change the system: portage-tuning, portage-sync, nvidia-config, nvidia-drivers\nTarget: root@192.0.2.10:22 (gentoo-server2)\nHost: gentoo root-uuid=0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d host key SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nNetwork: Portage repository sync and package downloads\nGPU: NVIDIA display controller [10de:2f04]\nCPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB\nPortage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24\nUSE changes: none besides the nvidia-drivers line\nEdits: /etc/portage/make.conf (plan block), /etc/portage/package.license/gentoo-agent-nvidia, /etc/portage/package.use/gentoo-agent-nvidia, /etc/default/grub (plan block adding the kernel parameter nvidia-drm.modeset=1)\nRegenerates: /boot/grub/grub.cfg (the boot menu)\nKernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)\nPackages: x11-drivers/nvidia-drivers and its dependencies (USE dist-kernel -tools), built for the running kernel\nLicenses accepted: NVIDIA-r2 (only for x11-drivers/nvidia-drivers)\nReboot: required afterwards; the installer never reboots'
 
 class SummaryRegistryTests(unittest.TestCase):
     def test_the_nvidia_summary_is_unchanged(self):
