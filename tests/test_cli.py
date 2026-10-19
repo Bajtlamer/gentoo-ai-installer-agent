@@ -297,5 +297,86 @@ class DenyRuleTests(unittest.TestCase):
             self.assertIn(rule, deny)
 
 
+class ProvisionCommandTests(unittest.TestCase):
+    def write_home(self, home):
+        save_json(home / "config" / "target.json", {
+            "name": "gentoo-server2", "host": "192.0.2.10", "port": 22, "user": "root",
+            "identity_file": "~/.ssh/id_test", "target_is_disposable": False, "disk_erase_authorized": False})
+        from tests.provision_helpers import provision_inventory
+        save_json(home / "inventory" / "provision-inventory-20261019T120000Z.json", provision_inventory())
+
+    def test_provision_plan_saves_a_plan_and_prints_the_summary(self):
+        stdout = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            with redirect_stdout(stdout):
+                code = cli.main(["provision", "plan", "--accept-license", "NVIDIA-r2"])
+            plans = list((home / "plans").glob("*.json"))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(plans), 1)
+        self.assertIn("Kind: provision", stdout.getvalue())
+        self.assertIn("Licenses accepted: NVIDIA-r2", stdout.getvalue())
+        self.assertIn(f"gentoo-agent approve {plans[0].stem}", stdout.getvalue())
+
+    def test_provision_plan_needs_a_license(self):
+        stderr = io.StringIO()
+        with temp_home() as home, redirect_stderr(stderr):
+            self.write_home(home)
+            with self.assertRaises(SystemExit) as caught:
+                cli.main(["provision", "plan"])
+        self.assertNotEqual(caught.exception.code, 0)
+
+    def test_provision_plan_without_an_inventory_reports_the_core_error(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            for path in (home / "inventory").glob("provision-inventory-*.json"):
+                path.unlink()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = cli.main(["provision", "plan", "--accept-license", "NVIDIA-r2"])
+            plans = list((home / "plans").glob("*.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("error [INVENTORY_MISSING]:", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(plans, [])
+
+    def test_provision_inspect_prints_the_summary_and_the_inventory_path(self):
+        from tests.provision_helpers import provision_inventory
+
+        stdout = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            fake = (provision_inventory(), home / "inventory" / "provision-inventory-20261019T120000Z.json")
+            with patch.object(cli, "collect_provision_inventory", return_value=fake), redirect_stdout(stdout):
+                code = cli.main(["provision", "inspect"])
+        self.assertEqual(code, 0)
+        self.assertIn('"threads": 24', stdout.getvalue())
+        self.assertIn("provision-inventory-20261019T120000Z.json", stdout.getvalue())
+
+    def test_provision_inspect_sends_progress_to_stderr_only(self):
+        from tests.provision_helpers import provision_inventory
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with temp_home() as home:
+            self.write_home(home)
+            path = home / "inventory" / "provision-inventory-20261019T120000Z.json"
+
+            def fake(target, on_progress=None):
+                on_progress("cpu")
+                return provision_inventory(), path
+
+            with patch.object(cli, "collect_provision_inventory", side_effect=fake), \
+                    redirect_stdout(stdout), redirect_stderr(stderr):
+                code = cli.main(["provision", "inspect"])
+        self.assertEqual(code, 0)
+        self.assertIn("Inspecting cpu...", stderr.getvalue())
+        self.assertNotIn("Inspecting", stdout.getvalue())
+        lines = stdout.getvalue().rstrip("\n").split("\n")
+        self.assertEqual(lines[-1], str(path))
+        json.loads("\n".join(lines[:-1]))
+
+
 if __name__ == "__main__":
     unittest.main()

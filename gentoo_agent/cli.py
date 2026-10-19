@@ -20,9 +20,13 @@ from gentoo_agent.core.approval import (
 )
 from gentoo_agent.core.errors import APPROVAL_DECLINED, APPROVAL_REQUIRED, CONFIG_INVALID, AgentError
 from gentoo_agent.core.handbook import fetch_handbook
-from gentoo_agent.core.inventory import collect_inventory, latest_inventory, record_inventory
+from gentoo_agent.core.inventory import (
+    collect_inventory, collect_provision_inventory, latest_inventory, latest_provision_inventory, record_inventory,
+)
 from gentoo_agent.core.install_plan import create_install_plan, load_install_plan, save_install_plan
 from gentoo_agent.core.phases import PHASES
+from gentoo_agent.core.provision_facts import summarize_provision_inventory
+from gentoo_agent.core.provision_plan import create_provision_plan
 from gentoo_agent.core.runner import render_dry_run, select_phases
 from gentoo_agent.core.runs import ACTIVE_STATUSES, read_log, run_status, take_credentials
 from gentoo_agent.core.state import load_state, state_path
@@ -85,6 +89,24 @@ def cmd_plan_show(args: argparse.Namespace) -> int:
     plan = load_install_plan(args.plan_id)
     print(approval_summary(plan))
     print(json.dumps({"approval": approval_status(args.plan_id)}, indent=2))
+    return 0
+
+
+def cmd_provision_inspect(_: argparse.Namespace) -> int:
+    target = target_config()
+    inventory, path = collect_provision_inventory(
+        target, on_progress=lambda label: print(f"Inspecting {label}...", file=sys.stderr))
+    print(json.dumps(summarize_provision_inventory(inventory), indent=2))
+    print(path)
+    return 0
+
+
+def cmd_provision_plan(args: argparse.Namespace) -> int:
+    settings = {"profile": args.profile, "accept_licenses": args.accept_license}
+    plan = save_install_plan(create_provision_plan(target_config(), settings, latest_provision_inventory()))
+    print(approval_summary(plan))
+    print(f"\nPlan saved: {plan['plan_id']}")
+    print(f"Approve it yourself in a terminal: gentoo-agent approve {plan['plan_id']}")
     return 0
 
 
@@ -220,6 +242,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan_show = plan_sub.add_parser("show", help="Show a plan and its approval status")
     plan_show.add_argument("plan_id")
     plan_show.set_defaults(func=cmd_plan_show)
+    provision = sub.add_parser("provision", help="Inspect and plan changes to an installed, running system")
+    provision_sub = provision.add_subparsers(dest="provision_command", required=True)
+    provision_sub.add_parser(
+        "inspect", help="Run the allowlisted read-only SSH inventory of the running system"
+    ).set_defaults(func=cmd_provision_inspect)
+    provision_plan = provision_sub.add_parser("plan", help="Freeze a provision plan for approval")
+    provision_plan.add_argument("--profile", default="nvidia-driver")
+    provision_plan.add_argument("--accept-license", action="append", required=True,
+                                help="A license the plan accepts (repeat for several)")
+    provision_plan.set_defaults(func=cmd_provision_plan)
     approve = sub.add_parser("approve", help="Approve a plan (interactive terminal only)")
     approve.add_argument("plan_id")
     approve.set_defaults(func=cmd_approve)
