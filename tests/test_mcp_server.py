@@ -565,6 +565,32 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(all(data is None for _, _, data in seen))
         self.assertTrue(all(item["complete"] for item in result.structured_content["phases"]))
 
+    def test_verify_install_gives_desktop_checks_a_longer_timeout(self):
+        from gentoo_agent.core.install_plan import save_install_plan
+        from gentoo_agent.core.provision_plan import create_provision_plan
+        from tests.helpers import temp_home
+        from tests.provision_helpers import (GPU_SYSFS, PROVISION_TARGET, desktop_inventory, gpu_result,
+                                             provision_inventory, provision_settings)
+
+        timeouts = []
+
+        def fake_shell(target, label, command, timeout=3600, stream=False, input_data=None, on_output=None):
+            timeouts.append(timeout)
+            return {"label": label, "command": command, "returncode": 0, "stdout": "", "stderr": "",
+                    "finished_at": "t"}
+
+        for settings, inventory, expected in (
+            ({"profile": "desktop-plasma"}, desktop_inventory(gpu=gpu_result(GPU_SYSFS)), 1800),
+            (provision_settings(), provision_inventory(), 300),
+        ):
+            timeouts.clear()
+            with temp_home(), patch("gentoo_agent.mcp.server.remote_shell", fake_shell):
+                saved = save_install_plan(create_provision_plan(PROVISION_TARGET, settings, inventory))
+                result = call("verify_install", {"plan_id": saved["plan_id"]})
+            self.assertFalse(result.is_error, result.content[0].text)
+            self.assertTrue(timeouts)
+            self.assertEqual(set(timeouts), {expected})
+
     def test_verify_install_reports_an_unreachable_target(self):
         from tests.helpers import temp_home
 

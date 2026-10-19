@@ -50,6 +50,7 @@ from gentoo_agent.core.inventory import (
     record_inventory,
 )
 from gentoo_agent.core.profiles import get_profile, provision_overview
+from gentoo_agent.core.provision import PROFILE_DESKTOP
 from gentoo_agent.core.resolve import resolve_config as resolve_install
 from gentoo_agent.core.runner import output_tail
 from gentoo_agent.core.runs import credentials_path, read_log, read_run, run_status
@@ -75,6 +76,9 @@ INSTRUCTIONS = (
 )
 
 server = MCPServer("gentoo-agent", instructions=INSTRUCTIONS)
+
+CHECK_TIMEOUT_SECONDS = 300
+DESKTOP_CHECK_TIMEOUT_SECONDS = 1800
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 LOCAL_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -385,9 +389,14 @@ def verify_install(plan_id: str) -> CallToolResult:
             if phase["check"] != expected:
                 raise AgentError(PLAN_HASH_MISMATCH, f"The stored {phase['id']} check does not match the plan.",
                                  {"plan_id": plan_id, "phase": phase["id"]})
+        # The desktop checks run emerge --pretend over the whole world, which takes far longer than the others.
+        timeout = (DESKTOP_CHECK_TIMEOUT_SECONDS
+                   if plan_kind(plan) == "provision" and plan["provision"].get("profile") == PROFILE_DESKTOP
+                   else CHECK_TIMEOUT_SECONDS)
         for phase in plan["phases"]:
             try:
-                result = remote_shell(plan["target"], f"{phase['id']}-verify-install", phase["check"], timeout=300)
+                result = remote_shell(plan["target"], f"{phase['id']}-verify-install", phase["check"],
+                                      timeout=timeout)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise AgentError(SSH_UNREACHABLE, f"Could not run the {phase['id']} check: {exc}",
                                  {"phase": phase["id"]}) from exc
