@@ -33,6 +33,7 @@ GRUB_DEFAULTS = "/etc/default/grub"
 LICENSE_FILE = "/etc/portage/package.license/gentoo-agent-nvidia"
 USE_FILE = "/etc/portage/package.use/gentoo-agent-nvidia"
 NVIDIA_PACKAGE = "x11-drivers/nvidia-drivers"
+LICENSE_PACKAGE = NVIDIA_PACKAGE
 NVIDIA_USE = "kernel-open dist-kernel"
 TUNING_BEGIN = "# gentoo-agent portage-tuning begin"
 TUNING_END = "# gentoo-agent portage-tuning end"
@@ -47,11 +48,25 @@ def _program(*lines: str) -> str:
 
 
 def _block_apply(path: str, begin: str, end: str, lines: list[str]) -> list[str]:
-    """Replace the block between the markers (or add it): the phase stays idempotent."""
+    """Replace the block between the markers (or add it): the phase stays idempotent.
+
+    Portable (no sed -i). Refuses before any write when the begin and end markers
+    are unbalanced, and never deletes an unterminated block.
+    """
+    refusal = f"refusing to edit {path}: the plan block has a begin marker without an end marker (or the reverse)"
+    awk = ("$0 == b {inblock = 1; held = $0; next} "
+           "inblock {held = held ORS $0; if ($0 == e) {inblock = 0; held = \"\"}; next} "
+           "{print} END {if (inblock) print held}")
     return [
         f"touch {q(path)}",
-        f"sed -i {q('/^' + begin + '$/,/^' + end + '$/d')} {q(path)}",
-        "printf '%s\\n' " + " ".join(q(line) for line in [begin, *lines, end]) + f" >> {q(path)}",
+        f'if test "$(grep -Fxc {q(begin)} {q(path)})" != "$(grep -Fxc {q(end)} {q(path)})"; '
+        f"then printf '%s\\n' {q(refusal)} >&2; exit 1; fi",
+        f'test -z "$(tail -c1 {q(path)})" || printf \'\\n\' >> {q(path)}',
+        f'tmp="$(mktemp {q(path + ".XXXXXX")})"',
+        f"awk -v b={q(begin)} -v e={q(end)} {q(awk)} {q(path)} > \"$tmp\"",
+        "printf '%s\\n' " + " ".join(q(line) for line in [begin, *lines, end]) + ' >> "$tmp"',
+        f'cat "$tmp" > {q(path)}',
+        'rm -f "$tmp"',
     ]
 
 
@@ -106,7 +121,7 @@ def _sync_check() -> str:
 
 
 def _license_line(provision: dict) -> str:
-    return "*/* " + " ".join(validated_provision(provision)["accept_licenses"])
+    return f"{LICENSE_PACKAGE} " + " ".join(validated_provision(provision)["accept_licenses"])
 
 
 def _config_apply(provision: dict) -> str:

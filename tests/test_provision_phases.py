@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 import tempfile
@@ -54,7 +55,9 @@ class SafetyTests(unittest.TestCase):
 class TuningPhaseTests(unittest.TestCase):
     def test_the_block_is_replaced_not_appended_twice(self):
         program = apply("portage-tuning")
-        self.assertIn("sed -i '/^# gentoo-agent portage-tuning begin$/,/^# gentoo-agent portage-tuning end$/d' /etc/portage/make.conf", program)
+        self.assertNotIn("sed -i", program)
+        self.assertIn("awk -v b='# gentoo-agent portage-tuning begin' -v e='# gentoo-agent portage-tuning end'", program)
+        self.assertIn("cat \"$tmp\" > /etc/portage/make.conf", program)
         self.assertIn("'MAKEOPTS=\"-j15\"'", program)
         self.assertIn("'EMERGE_DEFAULT_OPTS=\"--jobs=3 --load-average=24\"'", program)
 
@@ -69,12 +72,13 @@ class NvidiaConfigPhaseTests(unittest.TestCase):
     def test_license_and_use_files_are_rewritten(self):
         program = apply("nvidia-config")
         self.assertIn("mkdir -p /etc/portage/package.license /etc/portage/package.use", program)
-        self.assertIn("'*/* NVIDIA-r2 Apache-2.0' > /etc/portage/package.license/gentoo-agent-nvidia", program)
+        self.assertIn("'x11-drivers/nvidia-drivers NVIDIA-r2 Apache-2.0' > /etc/portage/package.license/gentoo-agent-nvidia", program)
         self.assertIn("'x11-drivers/nvidia-drivers kernel-open dist-kernel' > /etc/portage/package.use/gentoo-agent-nvidia", program)
 
     def test_the_grub_parameter_is_a_block_the_plan_owns(self):
         program = apply("nvidia-config")
-        self.assertIn("/^# gentoo-agent nvidia begin$/,/^# gentoo-agent nvidia end$/d", program)
+        self.assertNotIn("sed -i", program)
+        self.assertIn("awk -v b='# gentoo-agent nvidia begin' -v e='# gentoo-agent nvidia end'", program)
         self.assertIn("nvidia-drm.modeset=1", program)
         self.assertIn("/etc/default/grub", program)
 
@@ -86,6 +90,86 @@ class NvidiaConfigPhaseTests(unittest.TestCase):
         hostile = {**PROVISION, "accept_licenses": ["X; reboot"]}
         with self.assertRaises(AgentError):
             phases.command_for("nvidia-config", TARGET, hostile)
+
+
+BEGIN = "# test begin"
+END = "# test end"
+BLOCK = f"{BEGIN}\nA=1\nB=2\n{END}\n"
+
+
+class BlockBehaviorTests(unittest.TestCase):
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.dir = Path(self._dir.name)
+        self.file = self.dir / "conf"
+
+    def run_lines(self, lines):
+        program = "set -eu\n" + "\n".join(lines)
+        return subprocess.run(["sh", "-c", program], capture_output=True, text=True)
+
+    def apply_block(self):
+        return self.run_lines(phases._block_apply(str(self.file), BEGIN, END, ["A=1", "B=2"]))
+
+    def check_block(self):
+        return self.run_lines(phases._block_check(str(self.file), BEGIN, END, ["A=1", "B=2"]))
+
+    def test_missing_file_is_created(self):
+        result = self.apply_block()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.file.read_text(), BLOCK)
+
+    def test_empty_file(self):
+        self.file.write_text("")
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), BLOCK)
+
+    def test_other_content_is_kept(self):
+        self.file.write_text("X=1\nY=2\n")
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), "X=1\nY=2\n" + BLOCK)
+
+    def test_last_line_without_newline_stays_intact(self):
+        self.file.write_text("X=1\nY=2")
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), "X=1\nY=2\n" + BLOCK)
+
+    def test_idempotent(self):
+        self.file.write_text("X=1\n")
+        self.apply_block()
+        first = self.file.read_text()
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), first)
+        self.assertEqual(first.count(BEGIN), 1)
+
+    def test_old_block_is_replaced(self):
+        self.file.write_text(f"X=1\n{BEGIN}\nOLD=1\n{END}\nZ=3\n")
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), "X=1\nZ=3\n" + BLOCK)
+
+    def assert_refused(self, content):
+        self.file.write_text(content)
+        result = self.apply_block()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing", result.stderr)
+        self.assertEqual(self.file.read_text(), content)
+
+    def test_begin_without_end_is_refused(self):
+        self.assert_refused(f"X=1\n{BEGIN}\nOLD=1\nZ=3\n")
+
+    def test_end_without_begin_is_refused(self):
+        self.assert_refused(f"X=1\nOLD=1\n{END}\nZ=3\n")
+
+    def test_no_stray_temp_files(self):
+        self.file.write_text("X=1\n")
+        self.apply_block()
+        self.assertEqual(os.listdir(self.dir), ["conf"])
+
+    def test_check_passes_after_apply_and_fails_without_block(self):
+        self.file.write_text("X=1\n")
+        self.assertNotEqual(self.check_block().returncode, 0)
+        self.apply_block()
+        self.assertEqual(self.check_block().returncode, 0)
 
 
 class DriverPhaseTests(unittest.TestCase):
