@@ -126,6 +126,10 @@ def _desktop_summary(plan: dict) -> list[str]:
         "World update: emerge --getbinpkg --update --deep --newuse @world (system-wide, can take hours; "
         "binary packages where the USE flags match, otherwise compiled)",
         "Binary host: " + (", ".join(_shown(uri) for uri in uris) or "none"),
+        "Kernel: the world update may install a newer distribution kernel, rebuild the NVIDIA modules and "
+        "regenerate the boot menu; the check verifies the NVIDIA modules exist for the newest installed kernel"
+        if provision["nvidia"] else
+        "Kernel: the world update may install a newer distribution kernel and regenerate the boot menu",
         "USE changes: " + ("; ".join(_shown(line) for line in use_lines) or "none"),
         f"Edits: {desktop_phases.MAKE_CONF} (plan block), package.use gentoo-agent-desktop, "
         f"{desktop_phases.DM_CONF} (plan block), the profile symlink, runlevels elogind (boot) and "

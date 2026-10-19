@@ -83,6 +83,7 @@ def _preflight(settings: dict) -> str:
         _why("command -v emerge >/dev/null", "emerge not found"),
         _why("command -v eselect >/dev/null", "eselect not found"),
         _why("command -v rc-update >/dev/null", "rc-update not found"),
+        _why('test "$(findmnt -rn -o FSTYPE /boot)" = vfat', "/boot is not a mounted vfat filesystem"),
         _why(f"test \"$(df -Pk / | awk 'NR==2 {{print $4}}')\" -ge {MIN_FREE_KIB}", "less than 20 GiB free on /"),
     ]
     if settings["nvidia"]:
@@ -192,8 +193,21 @@ def _services_check() -> str:
     return _program(*_services_checks(), "printf 'plasma-services-ok\\n'")
 
 
-def _verify_check() -> str:
+NO_NVIDIA_MODULE = "plasma-verify: no NVIDIA kernel module for the newest installed kernel in /lib/modules"
+
+
+def _nvidia_module_checks() -> list[str]:
+    # The world update may have installed a newer distribution kernel; its NVIDIA modules must exist.
+    return [
+        'newest="$(ls -1v /lib/modules | tail -n 1)"',
+        "find \"/lib/modules/$newest\" -name 'nvidia*.ko*' | grep -q . || "
+        f"{{ printf '%s\\n' {q(NO_NVIDIA_MODULE)} >&2; exit 1; }}",
+    ]
+
+
+def _verify_check(settings: dict) -> str:
     return _program(*_installed_checks(), f"test -f {q(WAYLAND_SESSION)}", *_services_checks(),
+                    *(_nvidia_module_checks() if settings["nvidia"] else []),
                     "printf 'plasma-verify-ok\\n'")
 
 
@@ -238,7 +252,7 @@ def check_command_for(phase: str, target: dict, provision: dict) -> str:
         "plasma-update": lambda: _update_check(),
         "plasma-install": lambda: _install_check(),
         "plasma-services": lambda: _services_check(),
-        "plasma-verify": lambda: _verify_check(),
+        "plasma-verify": lambda: _verify_check(settings),
         "desktop-online": lambda: _online_check(),
     }
     return checks[phase]()

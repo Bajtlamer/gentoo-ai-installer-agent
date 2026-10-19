@@ -42,6 +42,8 @@ class DesktopPlanTests(unittest.TestCase):
             "Portage profile: default/linux/amd64/23.0 -> default/linux/amd64/23.0/desktop/plasma (system-wide change)",
             "World update: emerge --getbinpkg --update --deep --newuse @world (system-wide, can take hours;",
             "Binary host: https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64",
+            "Kernel: the world update may install a newer distribution kernel, rebuild the NVIDIA modules and "
+            "regenerate the boot menu; the check verifies the NVIDIA modules exist for the newest installed kernel",
             "USE changes: x11-drivers/nvidia-drivers wayland; media-libs/a Y",
             "runlevels elogind (boot) and display-manager (default)",
             "Packages: kde-plasma/plasma-meta",
@@ -64,6 +66,8 @@ class DesktopPlanTests(unittest.TestCase):
         with temp_home():
             text = approval_summary(save_install_plan(plan))
         self.assertNotIn("Requires:", text)
+        self.assertIn("Kernel: the world update may install a newer distribution kernel and regenerate the boot menu", text)
+        self.assertNotIn("NVIDIA modules", text)
         self.assertIn("USE changes: none", text)
         self.assertIn("VIDEO_CARDS: amdgpu radeonsi", text)
 

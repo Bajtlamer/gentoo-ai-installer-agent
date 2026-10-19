@@ -159,6 +159,20 @@ class OtherPhaseTests(unittest.TestCase):
         self.assertNotIn("rc-service", program)
         self.assertIn("rc-update show default | grep -Eq '(^| )display-manager '", check("plasma-services"))
 
+    def test_preflight_requires_a_vfat_boot_like_the_nvidia_one(self):
+        for provision in (AMD, NVIDIA):
+            program = apply("preflight", provision)
+            self.assertIn('test "$(findmnt -rn -o FSTYPE /boot)" = vfat', program)
+            self.assertIn("preflight: /boot is not a mounted vfat filesystem", program)
+
+    def test_verify_checks_nvidia_modules_for_the_newest_kernel_only_with_nvidia(self):
+        needle = "find \"/lib/modules/$newest\" -name 'nvidia*.ko*' | grep -q ."
+        self.assertNotIn("/lib/modules", check("plasma-verify", AMD))
+        program = check("plasma-verify", NVIDIA)
+        self.assertIn("newest=\"$(ls -1v /lib/modules | tail -n 1)\"", program)
+        self.assertIn(needle, program)
+        self.assertIn("no NVIDIA kernel module for the newest installed kernel", program)
+
     def test_verify_and_online(self):
         self.assertIn("exit 1", apply("plasma-verify"))
         program = check("plasma-verify")
