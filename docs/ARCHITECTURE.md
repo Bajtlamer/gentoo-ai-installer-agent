@@ -265,6 +265,7 @@ rules in `.claude/settings.json` are a convention.
 | `provision_facts.py` | Strict parsers for GPU, CPU, memory, kernel, and `make.conf` facts; `summarize_provision_inventory()` |
 | `hardware_profile.py` | Pure `hardware_profile()`: architecture, threads, memory, GPUs, vendors, `video_cards` from a fixed vendor map (an unknown vendor gives `None` and `unknown_vendors`), `virtual` |
 | `profiles.py` | The profile registry (`PROFILES`, `Profile`, `get_profile()`, `profile_overview()`, `provision_overview()`) |
+| `desktop_phases.py` | Phases, flags, and apply and check generators of the `desktop-plasma` profile (a `VIDEO_CARDS` block, `package.use`, the profile switch, a `display-manager` block, runlevels) |
 | `provision_phases.py` | `PHASES` and `PHASE_FLAGS` of a provision plan and the apply and check generators |
 | `provision_plan.py` | `create_provision_plan()` |
 | `paths.py` | Every directory, resolved per call, overridable with `GENTOO_AGENT_HOME` |
@@ -365,11 +366,19 @@ and a profile that applies to the hardware. A provision plan changes files named
 ### Hardware profile and profile registry
 
 `hardware_profile(facts)` turns the summarized provision inventory into one data record that profiles decide
-on. `profiles.PROFILES` maps a profile id to a `Profile` (title, `applicable`, `validate`, phases, flags, and the
-apply and check generators). `applicable(hardware)` returns `None` when the profile fits and a reason text
+on. `profiles.PROFILES` maps a profile id to a `Profile` (title, `applicable`, `validate`, phases, flags, the
+apply and check generators, `build` for the plan's `provision` block, and `summary` for the approval lines). `applicable(hardware)` returns `None` when the profile fits and a reason text
 otherwise; a profile applies only when its reason is `None`. `create_provision_plan()` looks the profile up with
 `get_profile()` and refuses when it does not apply. `detect_provision` adds `hardware` and `profiles` to its
-result. Only `nvidia-driver` exists (it needs exactly one NVIDIA GPU); `desktop-plasma` follows in plan 2b.
+result. Two profiles exist. `nvidia-driver` needs exactly one NVIDIA GPU. `desktop-plasma` needs amd64, a plain OpenRC
+Portage profile (or already the Plasma one) whose `<base>/desktop/plasma` is offered exactly once, a known GPU
+vendor, and at least one display device; it takes no licenses. Everything that depends on the profile goes
+through the registry: `create_provision_plan` (`build`), the approval summary (`summary`), `verify_install` and
+the runner (`check_command_for`). The `desktop-plasma` plan stores `gpus`, `video_cards`, `nvidia`,
+`portage_profile`, `plasma_profile`, `binrepos`, `cpu`, and `memory_gib`. Its eight phases end in
+`desktop-online` (`run: false`, checked by `verify_install` after the restart). The SDDM greeter stays on X11
+and the Plasma Wayland session is offered, because the Wayland greeter wrappers on OpenRC are fragile and are
+overwritten by SDDM updates. Details: [guides/provision.md](guides/provision.md#the-desktop-plasma-profile).
 
 ## Phases and the phase contract
 

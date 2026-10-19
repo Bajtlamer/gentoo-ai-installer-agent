@@ -14,11 +14,14 @@ The internals are in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 3. MCP server and approval barrier | stdio MCP server with elicitation approval, HMAC-signed approval records, layered config resolution, and the operator profile | [MCP server](superpowers/plans/2026-10-15-mcp-server.md) |
 | Hardening | `set -eu` in every apply program, OpenRC only (systemd refused everywhere), static networking in `/etc/dhcpcd.conf` for a named interface, the erase authorization saved in `target.json` by `prepare_install.py`, plan-time review of the configuration, inventory age, and expected disk, a drift check before every destructive phase, a per-run worker flock with worker reaping, a stdio smoke test of the MCP server, `HOST_KEY_UNKNOWN`, and amd64 and arm64 from one architecture table | [hardening plan](superpowers/plans/2026-10-16-hardening.md) |
 | Provision plans and the NVIDIA driver | A second plan kind, `provision`, for an installed and running system: same hash and approval, bound to the host identity instead of a disk, with Portage tuning and the NVIDIA driver (open kernel modules) as the first profile, and a post-reboot `gpu-online` check. Implemented on branch `provision-plans-impl`; verification on a real server is still open. See [guides/provision.md](guides/provision.md) | [provision plans](superpowers/plans/2026-10-19-provision-plans-nvidia.md) |
+| Desktop purpose: KDE Plasma | The `desktop-plasma` provision profile: Portage desktop profile switch, `VIDEO_CARDS` from the detected GPUs, Plasma, SDDM (greeter on X11, Wayland session offered), elogind, and OpenRC services, through a profile registry with `build` and `summary` hooks. Implemented on branch `desktop-plasma-impl`; not yet run on a real server. See [guides/provision.md](guides/provision.md#the-desktop-plasma-profile) | [desktop plasma](superpowers/plans/2026-10-20-desktop-plasma.md) |
 
 ## Next
 
-Next parts of the second phase of the dedicated server install, each with its own spec and plan: KDE Plasma, then
-vLLM (both build on the `provision` plan kind).
+Next parts of the second phase of the dedicated server install, each with its own spec and plan: the first real
+run of `desktop-plasma`, then vLLM (both build on the `provision` plan kind). Still open after `desktop-plasma`:
+GNOME, driver profiles for other GPUs (AMD, Intel, hybrid, virtual, no GPU), other display managers, a Wayland
+SDDM greeter, and vLLM.
 
 ### Plan 4: hardware profile and tailored kernel
 
@@ -47,7 +50,7 @@ machine.
 Status: the framework is done. `hardware_profile.py` derives the profile from the
 provision inventory, `profiles.py` holds the registry, and `detect_provision`
 reports `hardware` and `profiles` with an applicability reason. `VIDEO_CARDS` is
-derived from the GPU vendors by a fixed map. Only `nvidia-driver` is registered.
+derived from the GPU vendors by a fixed map. `nvidia-driver` and `desktop-plasma` are registered.
 Remaining: profiles for AMD, Intel, hybrid, virtual, and no GPU; the desktop
 purposes (`desktop-plasma` in plan 2b, GNOME and others later); vLLM; and the
 `CPU_FLAGS_X86` and `-march=native` derivation.

@@ -1,6 +1,6 @@
 # Provisioning an installed system
 
-A provision plan changes a Gentoo system that is already installed and running: it tunes Portage for all CPU
+A provision plan changes a Gentoo system that is already installed and running. The `nvidia-driver` profile tunes Portage for all CPU
 threads and installs the NVIDIA driver (open kernel modules). It uses the same approval as an install plan,
 never touches a disk, and never reboots.
 
@@ -13,7 +13,8 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 - [Steps with the CLI](#steps-with-the-cli)
 - [Steps with the MCP tools](#steps-with-the-mcp-tools)
 - [Hardware profile and profiles](#hardware-profile-and-profiles)
-- [What the plan changes](#what-the-plan-changes)
+- [The desktop-plasma profile](#the-desktop-plasma-profile)
+- [What the nvidia-driver plan changes](#what-the-nvidia-driver-plan-changes)
 - [Resume](#resume)
 - [Not yet verified on a real server](#not-yet-verified-on-a-real-server)
 - [Undo each change by hand](#undo-each-change-by-hand)
@@ -122,11 +123,118 @@ when its reason is `None`: each profile returns either no reason or a text that 
 `detect_provision` returns `hardware` and a `profiles` list with `id`, `title`, `applicable`, and `reason` for
 each profile, and `create_provision_plan` refuses a profile that does not apply.
 
-Only `nvidia-driver` exists. It applies to exactly one NVIDIA GPU and refuses everything else. The
-`desktop-plasma` profile follows in plan 2b, after real data from the target. Profiles for AMD, Intel, hybrid,
-virtual, and no-GPU machines are not written yet (see the [roadmap](../ROADMAP.md)).
+Two profiles exist: `nvidia-driver` and `desktop-plasma`. `nvidia-driver` applies to exactly one NVIDIA GPU
+and refuses everything else. `desktop-plasma` is described [below](#the-desktop-plasma-profile). Driver
+profiles for AMD, Intel, hybrid, virtual, and no-GPU machines are not written yet (see the
+[roadmap](../ROADMAP.md)).
 
-## What the plan changes
+## The desktop-plasma profile
+
+Installs KDE Plasma on an installed, running OpenRC system: the Portage profile `.../desktop/plasma`, the
+`VIDEO_CARDS` value from the detected GPUs, `kde-plasma/plasma-meta`, `kde-apps/konsole`, `kde-apps/dolphin`,
+SDDM, `gui-libs/display-manager-init`, and elogind, with the services enabled for the next start. It is its own
+provision plan with its own approval. Status: implemented, not yet run on a real server (see
+[What only the first real run confirms](#what-only-the-first-real-run-confirms)).
+
+### Operator workflow
+
+Prerequisite: if the machine has an NVIDIA GPU, the `nvidia-driver` plan was applied and the server was
+restarted, so that `nvidia-smi -L` lists the card. The `preflight` phase refuses otherwise. Then:
+
+1. `provision inspect` (MCP: `detect_provision` with `refresh=true`). The result lists the profiles and whether
+   `desktop-plasma` applies; if not, it says why.
+2. `provision plan --profile desktop-plasma` (MCP: `create_provision_plan` with `profile="desktop-plasma"`).
+   It takes no license (`--accept-license` is refused: the NVIDIA license stays in the file of the nvidia plan).
+   `--package-use` (0 to 8 lines) is only for USE changes Portage asks for. The code owns the line
+   `x11-drivers/nvidia-drivers wayland` and refuses package.use lines for that package.
+3. Read the approval summary: the GPUs, `VIDEO_CARDS`, the Portage profile switch (system-wide), the world
+   update (can take hours), the binary host, the USE changes, the edits, and the packages. Approve it yourself
+   in an interactive terminal or in the MCP dialog.
+4. `run start <plan_id>`, then `run status` and `run log` until the run ends in `installed_pending_reboot`.
+5. Restart the server yourself. The run never reboots and never starts a service.
+6. `verify_install` with the plan id (MCP only; by hand run `rc-service display-manager status`,
+   `pgrep -x sddm`, and check `/usr/share/wayland-sessions/plasma.desktop`). All eight phases must be
+   `complete`, including `desktop-online`.
+
+If `plasma-config` fails because Portage reports a missing USE change after the profile switch, take the lines
+from `emerge --pretend kde-plasma/plasma-meta` on the target, make a new plan with `--package-use`, and
+resume or start again. Never invent a line.
+
+### Hardware to profile mapping
+
+| Detected GPU vendor | `VIDEO_CARDS` | Extra |
+|---------------------|---------------|-------|
+| NVIDIA | `nvidia` | `x11-drivers/nvidia-drivers wayland` in `package.use`; preflight needs the driver live |
+| AMD | `amdgpu radeonsi` | none |
+| Intel | `intel` | none |
+| Unknown vendor | refused | the plan says a display device has an unknown vendor |
+| No display device | refused | "No display device was detected" |
+
+The values are sorted and without duplicates, one list over all GPUs. The first real server has an Intel iGPU
+(`8086:4680`) next to the NVIDIA GPU, so `VIDEO_CARDS` is `intel nvidia`. Only amd64 is supported. The current
+Portage profile must be exactly `default/linux/amd64/<version>` (plain OpenRC; hardened, systemd, split-usr,
+and llvm variants are refused with a reason) or already `<that>/desktop/plasma`, and the target
+`<base>/desktop/plasma` must appear exactly once in `eselect profile list`.
+
+### Phases
+
+| Phase | Runs | What it does |
+|-------|------|--------------|
+| `preflight` | yes, read-only | root, default route, `emerge`, `eselect`, `rc-update`, 20 GiB free on `/`, and with NVIDIA `nvidia-smi -L` |
+| `plasma-profile` | yes | `eselect profile set <target>` after checking that the target is still offered |
+| `plasma-config` | yes | a `VIDEO_CARDS` block in `make.conf`, `/etc/portage/package.use/gentoo-agent-desktop`; the check also runs `emerge --pretend` on the packages, so it can only pass after the profile switch |
+| `plasma-update` | yes | `emerge --getbinpkg --update --deep --newuse @world` |
+| `plasma-install` | yes | `emerge --getbinpkg --noreplace` of the six packages |
+| `plasma-services` | yes | a block in `/etc/conf.d/display-manager` (`CHECKVT=7`, `DISPLAYMANAGER="sddm"`), `rc-update add elogind boot`, `rc-update add display-manager default` |
+| `plasma-verify` | yes, read-only | packages installed, the Wayland session file, files and runlevels |
+| `desktop-online` | no (`run: false`) | after the restart: `rc-service display-manager status` shows started, `sddm` runs, the session file exists |
+
+### Decision: the SDDM greeter stays on X11
+
+SDDM offers a Wayland greeter, but on OpenRC it needs seatd and weston wrapper scripts that the Gentoo wiki
+says must be reapplied after SDDM updates. A wrapper that an update silently wipes leaves a server without a
+login screen, and this tool must not leave such a state. The plan therefore keeps the default X11 greeter and
+still offers the `Plasma (Wayland)` session in the session list. A Wayland greeter is on the roadmap.
+
+### Facts and sources (retrieved 2026-10-20)
+
+- SDDM wiki, https://wiki.gentoo.org/wiki/SDDM: on OpenRC install `gui-libs/display-manager-init`, set
+  `CHECKVT=7` and `DISPLAYMANAGER="sddm"` in `/etc/conf.d/display-manager`, then `rc-update add elogind boot`
+  and `rc-update add display-manager default`. The Wayland greeter needs the seatd and weston wrappers above.
+- Elogind wiki: `rc-update add elogind boot`. With dbus built with the `elogind` flag, starting elogind brings
+  up the system dbus, so there is no separate dbus runlevel entry.
+- Real server probe (read-only SSH, 2026-10-20): Portage profile `default/linux/amd64/23.0`;
+  `eselect profile list` offers `default/linux/amd64/23.0/desktop/plasma` exactly once (next to the systemd and
+  split-usr variants); `/etc/portage/binrepos.conf/gentoo.conf` has
+  `sync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64` and
+  `verify-signature = true`; the tree has `kde-plasma/plasma-meta` 6.7.5, `kde-apps/konsole`,
+  `kde-apps/dolphin`, `x11-misc/sddm`, `gui-libs/display-manager-init`, and `sys-auth/elogind`; there was no
+  `/etc/conf.d/display-manager`. `emerge --pretend kde-plasma/plasma-meta` fails under the old profile (qtbase
+  `wayland? ( opengl )`), which is why the resolution check runs only after the profile switch.
+
+### What only the first real run confirms
+
+1. The exact output of `rc-service display-manager status` after the restart (the check greps for `started`).
+2. That the Plasma Wayland session starts on NVIDIA driver 595 with `nvidia-drm.modeset=1`.
+3. That `pgrep -x sddm` matches the process name of the SDDM daemon.
+4. That binary packages (`--getbinpkg`) match the USE flags after the profile switch, and how much is compiled.
+5. That `/var/db/pkg/<category>/<name>-[0-9]*` finds every installed package (the checks use this pattern).
+6. That `portageq envvar VIDEO_CARDS` prints `intel nvidia` for the plan block.
+
+### Risks
+
+- Hours of compilation: the world update after the profile switch can rebuild a large part of the system when
+  binary packages do not match. The run keeps going phase by phase and resumes; a failed `emerge` is not rolled
+  back.
+- The profile switch changes the whole system, not only Plasma. It is reversible by `eselect profile set` but
+  the rebuilt packages are not.
+- USE changes after the profile switch come only from the human, from `emerge --pretend` output. Until they are
+  supplied `plasma-config` fails, by design, before any package is built.
+- The services are enabled but not started, so the first start happens at the restart. If SDDM fails, the
+  console is still reachable over SSH and at the text console.
+- NVIDIA with Wayland is the least proven part (see item 2 above).
+
+## What the nvidia-driver plan changes
 
 The approval summary lists all of this: the kind and "Disk erase: no", the phases that change the system, the
 target, the host identity (host name, root filesystem UUID, SSH host key fingerprint), the GPU as
