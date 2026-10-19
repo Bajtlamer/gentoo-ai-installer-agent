@@ -37,6 +37,39 @@ vLLM (both build on the `provision` plan kind).
   EFI and VFAT for UEFI, storage and NIC drivers). `gentoo-kernel-bin` stays
   installed as a fallback GRUB entry.
 
+### Product requirement: hardware-driven, purpose-driven profiles
+
+Operator requirement (2026-10-20): the whole flow must work on every server and
+computer, with any graphics hardware, and every setting must follow the data of
+the FIRST hardware inventory of the target, never an assumption about one
+machine.
+
+- **One hardware profile per target, from the first inventory.** CPU threads and
+  memory (compile settings), the exact GPU vendor, PCI id and, where known, the
+  model, the firmware boot mode, and the architecture are recorded once and read
+  by every later plan (install, provision, desktop, LLM stack). A later plan that
+  needs a fact the profile lacks collects it with a read-only command, it does
+  not guess.
+- **Compile settings come from the profile.** `MAKEOPTS`, `EMERGE_DEFAULT_OPTS`
+  and later `CPU_FLAGS_X86` and `VIDEO_CARDS` are derived from it and shown in
+  the approval dialog with their source. Today only `MAKEOPTS` and
+  `EMERGE_DEFAULT_OPTS` are derived (provision plan).
+- **The GPU profile follows the detected hardware.** NVIDIA is the first
+  profile. AMD, Intel, virtual, hybrid (an integrated GPU next to a discrete
+  one), and no GPU each need a profile or an explicit refusal. A card the driver
+  does not support must be refused by data, for example by checking that the
+  built module's alias list contains the card's PCI id, not by a table that goes
+  stale. Today's `nvidia-driver` profile needs exactly one NVIDIA GPU and refuses
+  everything else.
+- **The purpose is a choice combined with the hardware.** Some operators want a
+  plain server, others a whole platform with a desktop (KDE Plasma, GNOME, others)
+  and further stacks (vLLM). A purpose picks the package set and the USE
+  settings, the hardware picks the drivers and the compile settings, and the
+  approval dialog shows the resulting mapping before anything runs.
+- **Tests on real inventories.** Each profile is tested with real inventories of
+  several kinds of machines (the first one is the 10.0.1.17 server, kept as
+  fixtures in `tests/provision_helpers.py`).
+
 ## Later, needs a decision
 
 These are out of scope for version 1. Each needs a design decision first.
