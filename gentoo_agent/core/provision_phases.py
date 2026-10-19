@@ -51,18 +51,22 @@ def _block_apply(path: str, begin: str, end: str, lines: list[str]) -> list[str]
     """Replace the block between the markers (or add it): the phase stays idempotent.
 
     Portable (no sed -i). Refuses before any write when the begin and end markers
-    are unbalanced, and never deletes an unterminated block.
+    are unbalanced, repeated or in the wrong order, and never deletes an unterminated block.
     """
-    refusal = f"refusing to edit {path}: the plan block has a begin marker without an end marker (or the reverse)"
+    mismatch = f"refusing to edit {path}: the begin and end markers do not match, or there is more than one plan block"
+    order = f"refusing to edit {path}: the end marker comes before the begin marker"
     awk = ("$0 == b {inblock = 1; held = $0; next} "
            "inblock {held = held ORS $0; if ($0 == e) {inblock = 0; held = \"\"}; next} "
            "{print} END {if (inblock) print held}")
     return [
         f"touch {q(path)}",
-        f'if test "$(grep -Fxc {q(begin)} {q(path)})" != "$(grep -Fxc {q(end)} {q(path)})"; '
-        f"then printf '%s\\n' {q(refusal)} >&2; exit 1; fi",
+        f'b="$(grep -Fxc {q(begin)} {q(path)} || true)"; e="$(grep -Fxc {q(end)} {q(path)} || true)"',
+        f'if test "$b" != "$e" || test "$b" -gt 1; then printf \'%s\\n\' {q(mismatch)} >&2; exit 1; fi',
+        f'if test "$b" -eq 1 && test "$(grep -Fxn {q(begin)} {q(path)} | cut -d: -f1)" -gt '
+        f'"$(grep -Fxn {q(end)} {q(path)} | cut -d: -f1)"; then printf \'%s\\n\' {q(order)} >&2; exit 1; fi',
         f'test -z "$(tail -c1 {q(path)})" || printf \'\\n\' >> {q(path)}',
         f'tmp="$(mktemp {q(path + ".XXXXXX")})"',
+        'trap ' + q('rm -f "$tmp"') + ' EXIT',
         f"awk -v b={q(begin)} -v e={q(end)} {q(awk)} {q(path)} > \"$tmp\"",
         "printf '%s\\n' " + " ".join(q(line) for line in [begin, *lines, end]) + ' >> "$tmp"',
         f'cat "$tmp" > {q(path)}',
@@ -74,14 +78,20 @@ def _block_check(path: str, begin: str, end: str, lines: list[str]) -> list[str]
     return [f"grep -Fqx {q(line)} {q(path)}" for line in [begin, *lines, end]]
 
 
+def _why(condition: str, reason: str) -> str:
+    return f"{condition} || {{ printf '%s\\n' {q('preflight: ' + reason)} >&2; exit 1; }}"
+
+
 def _preflight() -> str:
     return _program(
-        'test "$(id -u)" -eq 0',
-        "ip route | grep -q default",
-        "command -v emerge >/dev/null",
-        'test "$(findmnt -rn -o FSTYPE /boot)" = vfat',
-        f"test \"$(df -Pk / | awk 'NR==2 {{print $4}}')\" -ge {MIN_FREE_KIB}",
-        'test -d "/usr/src/linux-$(uname -r)"',
+        _why('test "$(id -u)" -eq 0', "must run as root"),
+        _why("ip route | grep -q default", "no default route"),
+        _why("command -v emerge >/dev/null", "emerge not found"),
+        _why('test "$(findmnt -rn -o FSTYPE /boot)" = vfat', "/boot is not a mounted vfat filesystem"),
+        _why(f"test \"$(df -Pk / | awk 'NR==2 {{print $4}}')\" -ge {MIN_FREE_KIB}", "less than 8 GiB free on /"),
+        _why('test -d "/usr/src/linux-$(uname -r)"', "the kernel sources /usr/src/linux-<release> are missing"),
+        'case "$(uname -r)" in *-gentoo-dist*) ;; *) printf \'%s\\n\' '
+        "'preflight: the running kernel is not a Gentoo distribution kernel' >&2; exit 1;; esac",
         "printf 'preflight-ok\\n'",
     )
 
@@ -115,7 +125,7 @@ def _sync_apply() -> str:
 
 def _sync_check() -> str:
     return _program(
-        "test -n \"$(find /var/db/repos/gentoo/metadata -maxdepth 1 -name timestamp.chk -mtime -1)\"",
+        "test -n \"$(find /var/db/repos/gentoo/metadata -maxdepth 1 -name timestamp.chk -mtime -2)\"",
         "printf 'portage-sync-ok\\n'",
     )
 
@@ -171,9 +181,12 @@ def _verify_check() -> str:
 
 
 def _online_check() -> str:
+    # The open kernel modules report a GPL license, the proprietary one reports NVIDIA (Blackwell needs the
+    # open modules; to be confirmed on the real server).
     return _program(
         'PATH="$PATH:/opt/bin"',
         "lsmod | grep -q '^nvidia '",
+        "modinfo -F license nvidia | grep -q GPL",
         "nvidia-smi -L | grep -q NVIDIA",
         'test "$(cat /sys/module/nvidia_drm/parameters/modeset)" = Y',
         "printf 'gpu-online-ok\\n'",

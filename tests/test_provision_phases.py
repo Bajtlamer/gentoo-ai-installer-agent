@@ -160,6 +160,28 @@ class BlockBehaviorTests(unittest.TestCase):
     def test_end_without_begin_is_refused(self):
         self.assert_refused(f"X=1\nOLD=1\n{END}\nZ=3\n")
 
+    def test_two_complete_blocks_are_refused(self):
+        self.assert_refused(f"X=1\n{BLOCK}Y=2\n{BLOCK}")
+
+    def test_end_before_begin_is_refused(self):
+        content = f"X=1\n{END}\nOLD=1\n{BEGIN}\nZ=3\n"
+        self.file.write_text(content)
+        result = self.apply_block()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("before", result.stderr)
+        self.assertEqual(self.file.read_text(), content)
+
+    def test_one_block_in_order_with_user_lines_around_is_replaced(self):
+        self.file.write_text(f"X=1\n{BEGIN}\nOLD=1\nOLD=2\n{END}\nZ=3\nW=4\n")
+        self.assertEqual(self.apply_block().returncode, 0)
+        self.assertEqual(self.file.read_text(), "X=1\nZ=3\nW=4\n" + BLOCK)
+
+    def test_the_program_removes_its_temp_file_on_any_exit(self):
+        lines = phases._block_apply(str(self.file), BEGIN, END, ["A=1"])
+        mktemp = next(i for i, line in enumerate(lines) if line.startswith("tmp="))
+        self.assertEqual(lines[mktemp + 1], "trap 'rm -f \"$tmp\"' EXIT")
+        self.assertIn('rm -f "$tmp"', lines[-1])
+
     def test_no_stray_temp_files(self):
         self.file.write_text("X=1\n")
         self.apply_block()
@@ -201,6 +223,14 @@ class VerifyPhasesTests(unittest.TestCase):
         self.assertIn("/sys/module/nvidia_drm/parameters/modeset", program)
         self.assertIn("/opt/bin", program)
 
+    def test_the_license_of_the_loaded_module_is_only_checked_online(self):
+        line = "modinfo -F license nvidia | grep -q GPL"
+        self.assertIn(line, check("gpu-online"))
+        for phase in phases.PHASES:
+            for kind, program in (("apply", apply(phase)), ("check", check(phase))):
+                if (phase, kind) != ("gpu-online", "check"):
+                    self.assertNotIn(line, program, (phase, kind))
+
 
 class PreflightPhaseTests(unittest.TestCase):
     def test_preflight_is_its_own_check(self):
@@ -211,11 +241,30 @@ class PreflightPhaseTests(unittest.TestCase):
             self.assertIn(fragment, program)
         self.assertTrue(program.endswith("printf 'preflight-ok\\n'"))
 
+    def test_every_failing_test_says_why(self):
+        lines = check("preflight").split("\n")[1:-1]
+        reasons = ("must run as root", "no default route", "emerge not found",
+                   "/boot is not a mounted vfat filesystem", "less than 8 GiB free on /",
+                   "the kernel sources /usr/src/linux-<release> are missing")
+        self.assertEqual(len(lines), len(reasons) + 1)
+        for reason in reasons:
+            matching = [line for line in lines if f"'preflight: {reason}'" in line]
+            with self.subTest(reason=reason):
+                self.assertEqual(len(matching), 1)
+                self.assertTrue(matching[0].endswith(f"|| {{ printf '%s\\n' 'preflight: {reason}' >&2; exit 1; }}"),
+                                matching[0])
+
+    def test_the_running_kernel_must_be_a_distribution_kernel(self):
+        self.assertIn('case "$(uname -r)" in *-gentoo-dist*) ;; *) printf \'%s\\n\' '
+                      "'preflight: the running kernel is not a Gentoo distribution kernel' >&2; exit 1;; esac",
+                      check("preflight"))
+
 
 class SyncPhaseTests(unittest.TestCase):
     def test_sync_refreshes_the_tree_and_the_check_wants_a_recent_timestamp(self):
         self.assertIn("emerge-webrsync", apply("portage-sync"))
-        self.assertIn("-name timestamp.chk -mtime -1", check("portage-sync"))
+        self.assertIn("-name timestamp.chk -mtime -2", check("portage-sync"))
+        self.assertNotIn("-mtime -1", check("portage-sync"))
 
 
 class TuningValidationTests(unittest.TestCase):
