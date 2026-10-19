@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 from gentoo_agent.core import identity
 from gentoo_agent.core.errors import HOST_KEY_UNKNOWN, INVENTORY_MISSING, SSH_UNREACHABLE, TARGET_DRIFT, AgentError
-from tests.provision_helpers import HOSTKEY, MACHINE_ID, PROVISION_TARGET, host_identity_result
+from tests.provision_helpers import HOSTKEY, ROOT_UUID, PROVISION_TARGET, host_identity_result
 
-EXPECTED = {"hostname": "gentoo", "machine_id": MACHINE_ID, "hostkey": HOSTKEY}
+EXPECTED = {"hostname": "gentoo", "root_uuid": ROOT_UUID, "hostkey": HOSTKEY}
 
 
 class ParseIdentityTests(unittest.TestCase):
@@ -20,8 +20,9 @@ class ParseIdentityTests(unittest.TestCase):
             "empty": "",
             "hostname with shell text": good.replace("hostname=gentoo", "hostname=gentoo;reboot"),
             "hostname with a control sequence": good.replace("hostname=gentoo\n", "hostname=gentoo\x1b[2K\n"),
-            "short machine id": good.replace(MACHINE_ID, MACHINE_ID[:-1]),
-            "uppercase machine id": good.replace(MACHINE_ID, MACHINE_ID.upper()),
+            "short root uuid": good.replace(ROOT_UUID, ROOT_UUID[:-1]),
+            "root uuid with a missing group": good.replace(ROOT_UUID, ROOT_UUID.replace("-4e5f", "")),
+            "uppercase root uuid": good.replace(ROOT_UUID, ROOT_UUID.upper()),
             "md5 fingerprint": good.replace(HOSTKEY, "MD5:aa:bb"),
             "no host key line": "\n".join(line for line in good.splitlines() if not line.startswith("hostkey=")),
         }
@@ -30,8 +31,8 @@ class ParseIdentityTests(unittest.TestCase):
                 identity.parse_identity(stdout)
             self.assertEqual(caught.exception.code, INVENTORY_MISSING)
 
-    def test_a_missing_machine_id_runs_into_the_host_key_line(self):
-        stdout = "hostname=gentoo\nmachine_id=hostkey=256 " + HOSTKEY + " root@gentoo (ED25519)\n"
+    def test_a_missing_root_uuid_runs_into_the_host_key_line(self):
+        stdout = "hostname=gentoo\nroot_uuid=hostkey=256 " + HOSTKEY + " root@gentoo (ED25519)\n"
         with self.assertRaises(AgentError) as caught:
             identity.parse_identity(stdout)
         self.assertEqual(caught.exception.code, INVENTORY_MISSING)
@@ -62,12 +63,12 @@ class CheckIdentityTests(unittest.TestCase):
     def test_the_same_host_passes(self):
         self.check(result=host_identity_result())
 
-    def test_a_different_machine_is_drift(self):
+    def test_a_different_root_filesystem_is_drift(self):
         with self.assertRaises(AgentError) as caught:
-            self.check(result=host_identity_result(machine_id="f" * 32))
+            self.check(result=host_identity_result(root_uuid="ffffffff-ffff-4fff-8fff-ffffffffffff"))
         self.assertEqual(caught.exception.code, TARGET_DRIFT)
         self.assertEqual(caught.exception.details["expected"], EXPECTED)
-        self.assertEqual(caught.exception.details["actual"]["machine_id"], "f" * 32)
+        self.assertEqual(caught.exception.details["actual"]["root_uuid"], "ffffffff-ffff-4fff-8fff-ffffffffffff")
 
     def test_a_different_host_key_is_drift(self):
         with self.assertRaises(AgentError) as caught:

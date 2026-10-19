@@ -100,7 +100,7 @@ def _provision_summary(plan: dict) -> str:
         *(f"WARNING: {_shown(warning)}" for warning in plan.get("warnings", [])),
         f"Target: {_shown(target['user'])}@{_shown(target['host'])}:{_shown(str(target.get('port') or 22))} "
         f"({_shown(target['name'])})",
-        f"Host: {_shown(identity['hostname'])} machine-id={_shown(identity['machine_id'])} "
+        f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
         f"host key {_shown(identity['hostkey'])}",
         f"GPU: {_shown(gpu['name'])} [{_shown(gpu['pci_id'])}]",
         f"CPU: {_shown(cpu['model'])}, {_shown(str(cpu['threads']))} threads; "

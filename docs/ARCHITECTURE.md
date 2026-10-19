@@ -258,7 +258,7 @@ rules in `.claude/settings.json` are a convention.
 | `foreign_os.py` | Windows detection from the `partitions` inventory (`windows` by the strict rule, the only one that builds menu entries; `windows-bios` and `windows-data` by the broader rule that protects a disk from an ordinary erase), `parse_secure_boot()`, derived `dual_boot_entries` |
 | `hardware.py` | Inventory summary for discovery: boot mode, architecture, Secure Boot state, and disks with their existing OS |
 | `install_plan.py` | Plan creation, `plan_hash`, loading and saving plans |
-| `identity.py` | Provision plans: parses and compares the host identity (SSH host key fingerprint, machine id, hostname), `check_identity()` |
+| `identity.py` | Provision plans: parses and compares the host identity (SSH host key fingerprint, root filesystem UUID, hostname), `check_identity()` |
 | `inventory.py` | Collects and records the read-only inventories (`collect_inventory()` for install, `collect_provision_inventory()` for a running system) |
 | `layout.py` | Partition layout from disk, boot mode, and swap size |
 | `provision.py` | Validated provision settings (`validated_provision()`, `validated_tuning()`) and the Portage tuning rule (`derive_tuning()`) |
@@ -318,7 +318,7 @@ kinds.
 | Field | `install` | `provision` |
 |-------|-----------|-------------|
 | `disks` | disk identities, one erased | not present |
-| `identity` | not present | host identity: `hostname`, `machine_id`, `hostkey` (SSH ed25519 fingerprint) |
+| `identity` | not present | host identity: `hostname`, `root_uuid`, `hostkey` (SSH ed25519 fingerprint) |
 | `install` | validated install config | not present |
 | `provision` | not present | validated settings (`profile`, `accept_licenses`) and derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
 | `erases_existing_os` | possible | never |
@@ -330,7 +330,7 @@ run ends in `installed_pending_reboot` and `verify_install` proves the GPU after
 
 The runner guards by kind. For `install` it reads the disk identity again (`check_drift()`); for `provision` it
 reads the host identity again (`check_identity()`), before the run and before every phase with `destructive`
-true. A mismatch is `TARGET_DRIFT`: another server, or a reinstalled one with a new host key and machine id.
+true. A mismatch is `TARGET_DRIFT`: another server, or a reinstalled one with a new host key and root filesystem UUID.
 The storage rule (the disk is always erased) applies to install plans only. The launcher resolves passwords
 for install plans only; a provision plan carries none. `verify_install` regenerates each phase's check with the
 generator of the plan's kind and refuses a stored check that differs (`PLAN_HASH_MISMATCH`).
@@ -343,7 +343,7 @@ The provision inventory is a second allowlist, `PROVISION_READ_ONLY_COMMANDS` in
 
 | Command | Reads |
 |---------|-------|
-| `host_identity` | host name, `/etc/machine-id`, the ed25519 host key fingerprint |
+| `host_identity` | host name, the UUID of the root filesystem (`findmnt`), the ed25519 host key fingerprint |
 | `cpu` | thread count (`nproc --all`) and `lscpu` |
 | `memory` | `MemTotal` and `SwapTotal` from `/proc/meminfo` |
 | `gpu` | one line per PCI device from `/sys/bus/pci/devices` (address, class, vendor, device); no `lspci`, a stage3 has none |

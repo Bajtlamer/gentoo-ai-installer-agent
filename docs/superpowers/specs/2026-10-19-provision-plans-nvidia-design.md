@@ -72,9 +72,9 @@ A phase with `run: false` is skipped by the worker and checked only by `verify_i
 
 Read by a new read-only command at plan creation and compared before the run and
 before every phase that changes the system (`TARGET_DRIFT` on a mismatch, as for
-disks): the SSH host key fingerprint (ed25519), `/etc/machine-id`, and the
+disks): the SSH host key fingerprint (ed25519), the UUID of the root filesystem (`/etc/machine-id` does not exist on OpenRC), and the
 hostname. A plan therefore cannot run on another server, and a reinstalled
-server (new host key and machine id) invalidates it.
+server (new host key and root filesystem UUID) invalidates it.
 
 ### Modules
 
@@ -113,7 +113,7 @@ Read-only commands, saved as `inventory/provision-inventory-*.json` (24 hour
 freshness, `INVENTORY_MISSING` when a result is missing or unusable). Every value
 is parsed strictly before it can reach the plan or the approval dialog.
 
-- `host_identity`: host name, `/etc/machine-id`, the ed25519 host key fingerprint.
+- `host_identity`: host name, the UUID of the root filesystem, the ed25519 host key fingerprint.
 - `cpu`: `nproc --all` and `lscpu` (thread count and model).
 - `memory`: `MemTotal` and `SwapTotal` from `/proc/meminfo`.
 - `gpu`: one line per PCI device from `/sys/bus/pci/devices`: address, class, vendor,

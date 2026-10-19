@@ -52,7 +52,7 @@ READ_ONLY_COMMANDS = {
 # Read-only facts of a running, installed system, collected for provision plans (core/provision_plan.py).
 PROVISION_READ_ONLY_COMMANDS = {
     "host_identity": (
-        "printf 'hostname='; hostname; printf 'machine_id='; cat /etc/machine-id; "
+        "printf 'hostname='; hostname; printf 'root_uuid='; findmnt -rno UUID /; "
         "printf 'hostkey='; ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
     ),
     "cpu": "printf 'threads='; nproc --all; lscpu",

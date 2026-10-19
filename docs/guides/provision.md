@@ -85,7 +85,7 @@ Status: implemented on branch `provision-plans-impl`. It has not been run on a r
 ## What the plan changes
 
 The approval summary lists all of this: the kind and "Disk erase: no", the phases that change the system, the
-target, the host identity (host name, machine id, SSH host key fingerprint), the GPU as
+target, the host identity (host name, root filesystem UUID, SSH host key fingerprint), the GPU as
 `NVIDIA display controller [10de:xxxx]` (read from `/sys/bus/pci/devices`; the name is built from the vendor id
 in code, nothing from the target is shown as a name), the CPU and memory, the Portage values, the files
 edited (`Edits:`), the regenerated boot menu (`Regenerates:`), the network use (`Network:`), the kernel

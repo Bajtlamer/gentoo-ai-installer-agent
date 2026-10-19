@@ -29,7 +29,7 @@ STORAGE_PLAN = {
 }
 
 
-IDENTITY = {"hostname": "gentoo", "machine_id": "0" * 32, "hostkey": "SHA256:" + "A" * 43}
+IDENTITY = {"hostname": "gentoo", "root_uuid": "00000000-0000-4000-8000-000000000000", "hostkey": "SHA256:" + "A" * 43}
 PROVISION_PLAN = {
     "plan_id": "b" * 16,
     "plan_hash": "b" * 64,

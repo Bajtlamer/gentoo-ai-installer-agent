@@ -7,7 +7,7 @@ from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, PLAN_HAS
 from gentoo_agent.core.provision_plan import create_provision_plan
 from tests.helpers import temp_home
 from tests.provision_helpers import (
-    GPU_SYSFS, MACHINE_ID, host_identity_result, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
+    GPU_SYSFS, ROOT_UUID, host_identity_result, PROVISION_TARGET, cpu_result, gpu_result, memory_result, portage_conf_result,
     provision_inventory, provision_settings, result, save_provision_plan,
 )
 
@@ -27,7 +27,7 @@ class CreateProvisionPlanTests(unittest.TestCase):
     def test_the_plan_freezes_identity_settings_and_every_program(self):
         plan = create()
         self.assertEqual(plan["kind"], "provision")
-        self.assertEqual(plan["identity"], {"hostname": "gentoo", "machine_id": MACHINE_ID,
+        self.assertEqual(plan["identity"], {"hostname": "gentoo", "root_uuid": ROOT_UUID,
                                             "hostkey": "SHA256:" + "A" * 43})
         self.assertEqual(plan["provision"]["tuning"], {"jobs": 15, "emerge_jobs": 3, "load_average": 24})
         self.assertEqual(plan["provision"]["gpu"]["pci_id"], "10de:2f04")
@@ -56,8 +56,8 @@ class CreateProvisionPlanTests(unittest.TestCase):
     def test_the_plan_id_changes_with_the_cpu_thread_count(self):
         self.assertNotEqual(self.plan_id(), self.plan_id(provision_inventory(cpu=cpu_result(16))))
 
-    def test_the_plan_id_changes_with_the_machine_id(self):
-        other = provision_inventory(host_identity=host_identity_result(machine_id="f" * 32))
+    def test_the_plan_id_changes_with_the_root_uuid(self):
+        other = provision_inventory(host_identity=host_identity_result(root_uuid="ffffffff-ffff-4fff-8fff-ffffffffffff"))
         self.assertNotEqual(self.plan_id(), self.plan_id(other))
 
     def test_the_plan_id_changes_with_the_host_key(self):

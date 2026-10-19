@@ -2326,3 +2326,9 @@ Assumptions that are checked only here (adjust the generators and tests if one i
 - Verification before and after the reboot: `nvidia-verify` (run) and `gpu-online` (verify only), Tasks 5 and 7.
 - Facts that the wiki does not cover are listed in Task 13 as things to confirm on the server.
 - Install plans stay unchanged: Task 11 Step 4 requires the install golden files to be untouched.
+
+## Amendment 2 (found on the first real server)
+
+- `/etc/machine-id` does not exist on an OpenRC Gentoo (no systemd), so the `host_identity` command produced a glued `machine_id=hostkey=256 ...` line and `detect_provision` failed with `INVENTORY_MISSING`. The fixtures had assumed the file exists.
+- The host identity now uses the UUID of the root filesystem (`findmnt -rno UUID /`, key `root_uuid`) instead of the machine id. The installer always creates an ext4 root, and a reinstalled server gets a new root filesystem UUID and a new SSH host key.
+- The real outputs of the inventory commands (`cpu`, `memory`, `gpu`, `kernel`, and the broken `host_identity`) are now test fixtures in `tests/provision_helpers.py`, exercised by `tests/test_provision_real_data.py`.

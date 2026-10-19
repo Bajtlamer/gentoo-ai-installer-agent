@@ -6,7 +6,7 @@ from unittest.mock import patch
 from gentoo_agent.core import approval
 from gentoo_agent.core import provision_phases as pp
 from tests.helpers import temp_home
-from tests.provision_helpers import MACHINE_ID, save_provision_plan
+from tests.provision_helpers import ROOT_UUID, save_provision_plan
 
 START = dt.datetime(2026, 10, 19, 12, 0, 0, tzinfo=dt.timezone.utc)
 
@@ -20,7 +20,7 @@ class ProvisionApprovalTests(unittest.TestCase):
             "Disk erase: no",
             "Phases that change the system: portage-tuning, portage-sync, nvidia-config, nvidia-drivers",
             "Target: root@192.0.2.10:22 (gentoo-server2)",
-            "machine-id=" + MACHINE_ID,
+            "root-uuid=" + ROOT_UUID,
             "GPU: NVIDIA display controller [10de:2f04]",
             "CPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB",
             "Portage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24",
@@ -67,7 +67,7 @@ class ProvisionApprovalTests(unittest.TestCase):
         poison = "evil\nDisk erase: no\x1b[2J"
         setters = {
             "hostname": lambda p: p["identity"].__setitem__("hostname", poison),
-            "machine_id": lambda p: p["identity"].__setitem__("machine_id", poison),
+            "root_uuid": lambda p: p["identity"].__setitem__("root_uuid", poison),
             "hostkey": lambda p: p["identity"].__setitem__("hostkey", poison),
             "gpu": lambda p: p["provision"]["gpu"].__setitem__("name", poison),
             "cpu": lambda p: p["provision"]["cpu"].__setitem__("model", poison),
