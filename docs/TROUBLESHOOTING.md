@@ -17,6 +17,7 @@ the background stores the same object in `error` (and the message in
 - [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick)
 - [Disk mounted after a failed run](#disk-mounted-after-a-failed-run)
 - [Root filesystem far too small after the storage phase](#root-filesystem-far-too-small-after-the-storage-phase)
+- [Kernel install fails: not enough disk space on /boot](#kernel-install-fails-not-enough-disk-space-on-boot)
 - [Run stuck in starting, or interrupted](#run-stuck-in-starting-or-interrupted)
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
@@ -227,6 +228,40 @@ including the old check. Instead:
 3. Run `inspect` (MCP: `detect_hardware` with `refresh=true`), create a new
    plan, approve it, and start it. The storage check now fails on the old
    layout, so the disk is wiped and partitioned as planned.
+
+## Kernel install fails: not enough disk space on /boot
+
+Symptom: the `kernel` phase fails in the `postinst` step of
+`sys-kernel/gentoo-kernel-bin` with `Not enough disk space. Need at least 47312
+KiB, found 16116 KiB.` (the numbers vary), although the plan has a 512 MB EFI
+partition. The `filesystems` log shows no `mkfs.fat` line, and `blkid` lists the
+EFI partition with a UUID that an earlier run created.
+
+Cause (fixed in plans created after 2026-10-19): `sfdisk` writes the new
+partition table but leaves the contents of the partitions alone. A new
+partition that starts where an old one did kept the old filesystem signature,
+for example a 16 MB vfat from an earlier failed run, and the `filesystems`
+phase skips `mkfs` when it already sees the right filesystem type. The
+partition is 512 MB, but `/boot` has the size of the old filesystem. The same
+could leave an old root filesystem, with its files, in place. The `storage`
+apply now clears the signatures of every new partition right after it writes
+the table (`wipefs -a` on the planned partitions, only when it partitions a
+disk that is not in use).
+
+Do not resume the run. The frozen plan still has the old storage program, and
+the storage check passes on a correct table, so the partitions would not be
+wiped. Instead, on the live system:
+
+1. `umount -R /mnt/gentoo` and `swapoff <planned swap partition>` (see
+   [Disk mounted after a failed run](#disk-mounted-after-a-failed-run); not
+   `swapoff -a`).
+2. Clear the partition table of the install disk, which the plan already
+   authorizes to erase: `wipefs -a <install disk>` (for example
+   `wipefs -a /dev/nvme0n1`). The storage check then fails, so the new plan
+   partitions the disk and wipes the new partitions.
+3. Restart the MCP server (restart Claude Code), run `inspect` (MCP:
+   `detect_hardware` with `refresh=true`), create a new plan, approve it, and
+   start it.
 
 ## Run stuck in starting, or interrupted
 

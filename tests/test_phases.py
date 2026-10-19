@@ -119,6 +119,57 @@ class StorageCheckTests(unittest.TestCase):
         self.assertNotEqual(self.run_check("uefi_gpt_user_sudo", self.planned_rows("uefi_gpt_user_sudo")[:-1]).returncode, 0)
 
 
+class StorageApplyTests(unittest.TestCase):
+    """Runs the generated storage program against stub commands that only record their calls.
+
+    sfdisk does not clear the signatures inside new partitions. A new partition that starts where an
+    old one did keeps the old filesystem signature, and the filesystems phase then skips mkfs because
+    it sees a filesystem already: the 512 MB EFI partition kept a 16 MB vfat from a failed run.
+    """
+
+    def run_apply(self, config_name: str, mounted: bool) -> list[str]:
+        install = fixture(config_name)
+        command = phases.storage_command(TARGET, install)
+        disk, layout = phases.validated_settings(TARGET, install)
+        root = next(item["device"] for item in layout if item.get("mount") == "/")
+        swap = next((item["device"] for item in layout if item.get("type") == "linux-swap"), "")
+        with tempfile.TemporaryDirectory() as tmp:
+            stubs = Path(tmp)
+            log = stubs / "calls"
+            log.write_text("", encoding="utf-8")
+            outputs = {"lsblk": "/mnt/gentoo" if mounted else "", "findmnt": root if mounted else "",
+                       "swapon": swap if mounted else ""}
+            for name in ("wipefs", "sfdisk", "partprobe", "udevadm", "lsblk", "findmnt", "swapon"):
+                (stubs / name).write_text(
+                    f'#!/bin/sh\necho "{name} $*" >> {shlex.quote(str(log))}\n'
+                    + ('cat >/dev/null\n' if name == "sfdisk" else "")
+                    + (f"printf '%s\\n' {shlex.quote(outputs[name])}\n" if name in outputs and outputs[name] else ""),
+                    encoding="utf-8")
+                (stubs / name).chmod(0o755)
+            program = 'test() { if [ "$1" = -b ]; then return 0; fi; command test "$@"; }\n' + command
+            result = subprocess.run(["sh", "-c", program], capture_output=True, text=True,
+                                    env={**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.layout = [item["device"] for item in layout]
+            return log.read_text(encoding="utf-8").splitlines()
+
+    def test_a_fresh_table_clears_the_signatures_of_every_new_partition(self):
+        for name in ("uefi_gpt_user_sudo", "bios_mbr_user_sudo"):
+            with self.subTest(config=name):
+                calls = self.run_apply(name, mounted=False)
+                sfdisk = next(i for i, c in enumerate(calls) if c.startswith("sfdisk --wipe always"))
+                wiped = [dev for c in calls[sfdisk + 1:] if c.startswith("wipefs -a ") for dev in c.split()[2:]]
+                self.assertEqual(sorted(wiped), sorted(self.layout))
+                self.assertTrue(any(c.startswith("udevadm settle") for c in calls[sfdisk + 1:calls.index(
+                    next(c for c in calls[sfdisk + 1:] if c.startswith("wipefs -a ")))]),
+                    "the partition nodes must exist before they are wiped")
+
+    def test_a_disk_in_use_keeps_its_filesystems(self):
+        calls = self.run_apply("uefi_gpt_user_sudo", mounted=True)
+        self.assertTrue(any(c.startswith("sfdisk --no-reread --force") for c in calls))
+        self.assertEqual([c for c in calls if c.startswith("wipefs")], [])
+
+
 class PhaseGeneratorTests(unittest.TestCase):
     def test_phases_module_does_not_load_target_config_itself(self):
         self.assertFalse(hasattr(phases, "target_config"))

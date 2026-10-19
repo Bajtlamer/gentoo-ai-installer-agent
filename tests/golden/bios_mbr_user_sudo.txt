@@ -65,6 +65,9 @@ unit: sectors
 /dev/sda1 : size=2048M, type=82
 /dev/sda2 : type=83
 ' | sfdisk --wipe always "$disk"
+  partprobe "$disk" || true
+  udevadm settle || true
+  wipefs -a /dev/sda1 /dev/sda2
 fi
 partprobe "$disk" || true
 udevadm settle || true

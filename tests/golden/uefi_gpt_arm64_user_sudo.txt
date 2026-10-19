@@ -61,6 +61,9 @@ unit: sectors
 /dev/nvme0n1p2 : size=2048M, type=S
 /dev/nvme0n1p3 : type=L
 ' | sfdisk --wipe always "$disk"
+  partprobe "$disk" || true
+  udevadm settle || true
+  wipefs -a /dev/nvme0n1p1 /dev/nvme0n1p2 /dev/nvme0n1p3
 fi
 partprobe "$disk" || true
 udevadm settle || true

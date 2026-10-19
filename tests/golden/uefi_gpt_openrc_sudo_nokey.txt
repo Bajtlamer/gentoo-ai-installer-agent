@@ -61,6 +61,9 @@ unit: sectors
 /dev/sdc2 : size=2048M, type=S
 /dev/sdc3 : type=L
 ' | sfdisk --wipe always "$disk"
+  partprobe "$disk" || true
+  udevadm settle || true
+  wipefs -a /dev/sdc1 /dev/sdc2 /dev/sdc3
 fi
 partprobe "$disk" || true
 udevadm settle || true

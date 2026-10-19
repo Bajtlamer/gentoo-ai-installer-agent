@@ -304,7 +304,7 @@ part of a plan.
 | Phase | Destructive | What it does |
 |-------|-------------|--------------|
 | `preflight` | no | Confirms root, disk type, boot mode, required tools, default route, and the optional expected model and size |
-| `storage` | yes | Wipes the disk and writes the partition table with `sfdisk`; its check compares every partition's type and size, so an old disk with the same partition numbers never counts as done |
+| `storage` | yes | Wipes the disk and writes the partition table with `sfdisk`; its check compares every partition's type and size, so an old disk with the same partition numbers never counts as done; after writing a new table the apply clears the signatures of every new partition, so an old filesystem at the same offset is never reused |
 | `filesystems` | yes | Creates ext4, swap, and (UEFI) vfat, and mounts them under `/mnt/gentoo` |
 | `base-system` | yes | Downloads and verifies the stage3 archive, extracts it, mounts `/dev`, `/proc`, `/sys`, `/run`, runs `emerge-webrsync` |
 | `configuration` | yes | Hostname, timezone, locale, fstab (with the EFI partition at `/boot` on UEFI), networking (dhcpcd), OpenSSH with the root key, OpenRC user services off |

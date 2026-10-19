@@ -149,6 +149,11 @@ def storage_command(target: dict, install: dict) -> str:
         "else",
         "  wipefs -a -f \"$disk\"",
         f"  printf %s {encoded} | sfdisk --wipe always \"$disk\"",
+        # sfdisk leaves the old contents of a new partition alone. A partition that starts where an old
+        # one did would keep its filesystem signature, and the filesystems phase would skip mkfs.
+        "  partprobe \"$disk\" || true",
+        "  udevadm settle || true",
+        f"  wipefs -a {' '.join(q(item['device']) for item in layout)}",
         "fi",
         "partprobe \"$disk\" || true",
         "udevadm settle || true",
