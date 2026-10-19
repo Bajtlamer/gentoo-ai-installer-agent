@@ -10,7 +10,7 @@ from typing import Callable
 from gentoo_agent.core.config import load_json, now, save_json
 from gentoo_agent.core import paths
 from gentoo_agent.core.errors import HOST_KEY_UNKNOWN, SSH_UNREACHABLE, AgentError
-from gentoo_agent.core.ssh import HOST_KEY_MESSAGE, READ_ONLY_COMMANDS, host_key_failed, run_ssh_readonly
+from gentoo_agent.core.ssh import HOST_KEY_MESSAGE, PROVISION_READ_ONLY_COMMANDS, READ_ONLY_COMMANDS, host_key_failed, run_ssh_readonly
 from gentoo_agent.core.state import load_state, save_state
 
 
@@ -19,9 +19,10 @@ def _unreachable(result: dict) -> bool:
     return "error" in result or result.get("returncode") == 255
 
 
-def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = None) -> tuple[dict, Path]:
+def _collect(target: dict, commands: dict, prefix: str,
+             on_progress: Callable[[str], None] | None) -> tuple[dict, Path]:
     results = []
-    for label, command in READ_ONLY_COMMANDS.items():
+    for label, command in commands.items():
         if on_progress is not None:
             on_progress(label)
         try:
@@ -45,9 +46,18 @@ def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = 
         "read_only": True,
         "results": results,
     }
-    path = paths.inventory_dir() / f"inventory-{stamp}.json"
+    path = paths.inventory_dir() / f"{prefix}-{stamp}.json"
     save_json(path, data)
     return data, path
+
+
+def collect_inventory(target: dict, on_progress: Callable[[str], None] | None = None) -> tuple[dict, Path]:
+    return _collect(target, READ_ONLY_COMMANDS, "inventory", on_progress)
+
+
+def collect_provision_inventory(target: dict, on_progress: Callable[[str], None] | None = None) -> tuple[dict, Path]:
+    """The facts of an installed, running system, saved apart from the install inventory."""
+    return _collect(target, PROVISION_READ_ONLY_COMMANDS, "provision-inventory", on_progress)
 
 
 def record_inventory(target: dict, path: Path) -> None:
@@ -58,4 +68,9 @@ def record_inventory(target: dict, path: Path) -> None:
 
 def latest_inventory() -> dict | None:
     files = sorted(paths.inventory_dir().glob("inventory-*.json"), key=lambda item: item.stat().st_mtime)
+    return load_json(files[-1]) if files else None
+
+
+def latest_provision_inventory() -> dict | None:
+    files = sorted(paths.inventory_dir().glob("provision-inventory-*.json"), key=lambda item: item.stat().st_mtime)
     return load_json(files[-1]) if files else None

@@ -49,6 +49,23 @@ READ_ONLY_COMMANDS = {
     ),
 }
 
+# Read-only facts of a running, installed system, collected for provision plans (core/provision_plan.py).
+PROVISION_READ_ONLY_COMMANDS = {
+    "host_identity": (
+        "printf 'hostname='; hostname; printf 'machine_id='; cat /etc/machine-id; "
+        "printf 'hostkey='; ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+    ),
+    "cpu": "printf 'threads='; nproc --all; lscpu",
+    "memory": "grep -E '^(MemTotal|SwapTotal):' /proc/meminfo",
+    "gpu": "lspci -nnk",
+    # The user's own MAKEOPTS and EMERGE_DEFAULT_OPTS, outside the block that a plan writes.
+    "portage_conf": (
+        "sed -n -e '/^# gentoo-agent portage-tuning begin$/,/^# gentoo-agent portage-tuning end$/d' "
+        "-e '/^\\(MAKEOPTS\\|EMERGE_DEFAULT_OPTS\\)=/p' /etc/portage/make.conf 2>/dev/null || true"
+    ),
+    "kernel": "uname -r",
+}
+
 HOST_KEY_FAILURE = "Host key verification failed"
 HOST_KEY_MESSAGE = ("The target's SSH host key is unknown or has changed. Verify its fingerprint on the target "
                     "console, then add it to known_hosts (see docs/guides/cli-install.md).")
@@ -59,7 +76,7 @@ def host_key_failed(result: dict) -> bool:
     return result.get("returncode") == 255 and HOST_KEY_FAILURE in str(result.get("stderr") or "")
 
 
-def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
+def run_ssh_readonly(target: dict, label: str, command: str, timeout: int = 45) -> dict:
     # OpenSSH joins all arguments after the host into one remote command. Quote
     # the shell program explicitly so pipes, semicolons, and conditionals are
     # interpreted on the target instead of being split by the SSH invocation.
@@ -69,7 +86,7 @@ def run_ssh_readonly(target: dict, label: str, command: str) -> dict:
         cwd=paths.root(),
         capture_output=True,
         text=True,
-        timeout=45,
+        timeout=timeout,
         check=False,
     )
     return {
