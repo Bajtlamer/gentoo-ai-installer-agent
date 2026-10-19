@@ -52,9 +52,12 @@ def derive_tuning(threads: int, mem_kib: int) -> dict:
 
 
 def validated_tuning(tuning: object) -> dict:
-    if not isinstance(tuning, dict) or not all(
-        isinstance(tuning.get(key), int) and not isinstance(tuning.get(key), bool) and 1 <= tuning[key] <= 4096
-        for key in TUNING_KEYS
-    ):
-        raise AgentError(CONFIG_INVALID, "The Portage tuning values must be integers from 1 to 4096.", {"field": "tuning"})
+    """The three Portage tuning values, each an integer from 1 to 4096; anything else in the input is dropped."""
+    if not isinstance(tuning, dict):
+        raise AgentError(CONFIG_INVALID, "The Portage tuning must be an object.", {"field": "tuning"})
+    for key in TUNING_KEYS:
+        value = tuning.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 4096:
+            raise AgentError(CONFIG_INVALID, f"The Portage tuning value {key!r} must be an integer from 1 to 4096.",
+                             {"field": "tuning"})
     return {key: tuning[key] for key in TUNING_KEYS}

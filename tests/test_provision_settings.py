@@ -24,10 +24,22 @@ class ValidatedProvisionTests(unittest.TestCase):
             "too many": {"profile": "nvidia-driver", "accept_licenses": [f"L{i}" for i in range(9)]},
             "non-text item": {"profile": "nvidia-driver", "accept_licenses": [5]},
         }
+        for name, licenses in {"glob": "*/*", "negation of all": "-*", "newline at the end": "X\n",
+                               "leading dot": ".x", "leading dash": "-x", "empty": "", "65 characters": "A" * 65}.items():
+            cases[name] = {"profile": "nvidia-driver", "accept_licenses": [licenses]}
+        cases["tuple instead of list"] = {"profile": "nvidia-driver", "accept_licenses": ("X",)}
         for name, settings in cases.items():
             with self.subTest(name), self.assertRaises(AgentError) as caught:
                 provision.validated_provision(settings)
             self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_all_is_accepted_as_an_ordinary_name(self):
+        settings = {"profile": "nvidia-driver", "accept_licenses": ["ALL"]}
+        self.assertEqual(provision.validated_provision(settings)["accept_licenses"], ["ALL"])
+
+    def test_a_64_character_name_is_accepted(self):
+        settings = {"profile": "nvidia-driver", "accept_licenses": ["A" * 64]}
+        self.assertEqual(provision.validated_provision(settings)["accept_licenses"], ["A" * 64])
 
 
 class TuningTests(unittest.TestCase):
@@ -50,3 +62,25 @@ class TuningTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(AgentError) as caught:
                 provision.validated_tuning(bad)
             self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_validated_tuning_edge_cases(self):
+        def tuning(**changes):
+            return {"jobs": 1, "emerge_jobs": 1, "load_average": 1, **changes}
+        self.assertEqual(provision.validated_tuning(tuning(jobs=4096))["jobs"], 4096)
+        bad_values = {"missing key": {"jobs": 1, "emerge_jobs": 1}, "float": tuning(jobs=15.0),
+                      "negative": tuning(jobs=-1), "4097": tuning(load_average=4097)}
+        for name, bad in bad_values.items():
+            with self.subTest(name), self.assertRaises(AgentError) as caught:
+                provision.validated_tuning(bad)
+            self.assertEqual(caught.exception.code, CONFIG_INVALID)
+
+    def test_the_error_names_the_failing_key(self):
+        with self.assertRaises(AgentError) as caught:
+            provision.validated_tuning({"jobs": 1, "emerge_jobs": 0, "load_average": 1})
+        self.assertIn("'emerge_jobs'", caught.exception.message)
+        self.assertEqual(caught.exception.details["field"], "tuning")
+
+    def test_a_huge_thread_count_is_refused_after_derivation(self):
+        with self.assertRaises(AgentError) as caught:
+            provision.validated_tuning(provision.derive_tuning(5000, 64 * GIB))
+        self.assertEqual(caught.exception.code, CONFIG_INVALID)
