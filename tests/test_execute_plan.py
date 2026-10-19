@@ -194,6 +194,89 @@ class ProvisionPlanTests(unittest.TestCase):
         self.assertEqual(shell.calls, [])
 
 
+class DesktopPlanRunTests(unittest.TestCase):
+    """A desktop-plasma plan runs through the same runner path as the nvidia provision plan."""
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.provision_helpers import GPU_SYSFS, PROVISION_TARGET, desktop_inventory, gpu_result
+        from gentoo_agent.core.provision_plan import create_provision_plan
+        cls.plan = create_provision_plan(PROVISION_TARGET, {"profile": "desktop-plasma"},
+                                         desktop_inventory(gpu=gpu_result(GPU_SYSFS)))
+
+    def plan_phase_ids(self):
+        return [phase["id"] for phase in self.plan["phases"]]
+
+    def run_desktop(self, shell, identity_error=None, resumed_from=None):
+        run_id = runs.new_run_id()
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": self.plan["plan_id"], "status": "running",
+                                "pid": None, "started_at": runs.now(), "resumed_from": resumed_from})
+        with patch.object(runner, "remote_shell", shell), \
+                patch.object(runner, "check_identity", side_effect=identity_error) as identity, \
+                patch.object(runner, "check_drift") as drift:
+            result = runner.execute_plan(self.plan, run_id, None)
+        return result, identity, drift
+
+    def test_phases_run_in_order_and_desktop_online_is_not_run(self):
+        with temp_home():
+            shell = FakeShell({f"{phase}-check": 1 for phase in
+                               ("preflight", "plasma-profile", "plasma-config", "plasma-update", "plasma-install",
+                                "plasma-services", "plasma-verify")})
+            result, _, drift = self.run_desktop(shell)
+        expected = ["preflight", "plasma-profile", "plasma-config", "plasma-update", "plasma-install",
+                    "plasma-services", "plasma-verify"]
+        self.assertEqual(result["status"], "installed_pending_reboot")
+        self.assertEqual(result["completed_phases"], expected)
+        applied = [call[0] for call in shell.calls if call[0] in expected]
+        self.assertEqual(applied, expected)
+        self.assertFalse(any(call[0].startswith("desktop-online") for call in shell.calls))
+        self.assertEqual(drift.call_count, 0)
+
+    def test_a_phase_whose_check_passes_is_skipped(self):
+        with temp_home():
+            shell = FakeShell({"plasma-install-check": 1})
+            result, _, _ = self.run_desktop(shell)
+        labels = [call[0] for call in shell.calls]
+        self.assertIn("plasma-profile-check", labels)
+        self.assertNotIn("plasma-profile", labels)
+        self.assertIn("plasma-install", labels)
+        self.assertEqual(result["status"], "installed_pending_reboot")
+
+    def test_a_failing_plasma_config_check_after_apply_stops_with_the_output_tail(self):
+        with temp_home():
+            shell = FakeShell({"plasma-config-check": 1, "plasma-config-verify": 1})
+            result, _, _ = self.run_desktop(shell)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failed_phase"], "plasma-config")
+        self.assertIn("line 59", result["output_tail"])
+        labels = [call[0] for call in shell.calls]
+        self.assertIn("plasma-config", labels)
+        self.assertNotIn("plasma-update-check", labels)
+
+    def test_identity_drift_before_a_destructive_phase_stops_the_run(self):
+        error = AgentError(TARGET_DRIFT, "The target does not match the approved plan.")
+        with temp_home():
+            shell = FakeShell({"plasma-profile-check": 1})
+            result, _, _ = self.run_desktop(shell, identity_error=[None, error])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertNotIn("plasma-profile", [call[0] for call in shell.calls])
+
+    def test_a_resume_after_a_failure_at_plasma_update_skips_the_finished_phases(self):
+        with temp_home():
+            first = FakeShell({"plasma-profile-check": 1, "plasma-config-check": 1, "plasma-update-check": 1,
+                               "plasma-update": 1, "plasma-install-check": 1, "plasma-services-check": 1})
+            failed, _, _ = self.run_desktop(first)
+            self.assertEqual(failed["failed_phase"], "plasma-update")
+            self.assertEqual(failed["completed_phases"], ["preflight", "plasma-profile", "plasma-config"])
+            # Resume: the finished phases now pass their checks; plasma-update is still to do.
+            second = FakeShell({"plasma-update-check": 1, "plasma-install-check": 1, "plasma-services-check": 1})
+            result, _, _ = self.run_desktop(second, resumed_from="20261020T000000Z-abcdef")
+        applied = [call[0] for call in second.calls if call[0] in self.plan_phase_ids()]
+        self.assertEqual(applied, ["plasma-update", "plasma-install", "plasma-services"])
+        self.assertEqual(result["status"], "installed_pending_reboot")
+
+
 class InstallPlanKeepsItsGuardTests(unittest.TestCase):
     def test_an_install_plan_checks_disks_and_runs_every_phase_without_a_run_key(self):
         self.assertNotIn("kind", PLAN)

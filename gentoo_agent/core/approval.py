@@ -102,7 +102,6 @@ def nvidia_summary(plan: dict) -> list[str]:
         f"Edits: {MAKE_CONF} (plan block), {LICENSE_FILE}, {USE_FILE}, "
         f"{GRUB_DEFAULTS} (plan block adding the kernel parameter nvidia-drm.modeset=1)",
         "Regenerates: /boot/grub/grub.cfg (the boot menu)",
-        "Network: emerge-webrsync and package downloads",
         "Kernel sources link: eselect kernel set linux-<running release> (the /usr/src/linux symlink)",
         f"Packages: {NVIDIA_PACKAGE} and its dependencies (USE {NVIDIA_USE}), built for the running kernel",
         "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"])
@@ -125,6 +124,7 @@ def _provision_summary(plan: dict) -> str:
         f"({_shown(target['name'])})",
         f"Host: {_shown(identity['hostname'])} root-uuid={_shown(identity['root_uuid'])} "
         f"host key {_shown(identity['hostkey'])}",
+        "Network: emerge-webrsync and package downloads",
         *get_profile(provision["profile"]).summary(plan),
         "Reboot: required afterwards; the installer never reboots",
     ]
