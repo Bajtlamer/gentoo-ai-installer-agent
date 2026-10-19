@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 
 from gentoo_agent.core.config import now
-from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, AgentError
+from gentoo_agent.core.errors import CONFIG_INVALID, INVENTORY_MISSING, PLAN_HASH_MISMATCH, AgentError
 from gentoo_agent.core.install_plan import (
     PLAN_ID_LENGTH,
     PLAN_SCHEMA_VERSION,
@@ -66,3 +66,30 @@ def create_provision_plan(target: dict, settings: dict, inventory: dict | None) 
     plan["plan_id"] = plan["plan_hash"][:PLAN_ID_LENGTH]
     plan["created_at"] = now()
     return plan
+
+
+def verify_provision_programs(plan: dict) -> None:
+    """Require the stored phases to be exactly what the plan's settings generate.
+
+    The approval summary is built from the settings while the runner executes the stored programs; the plan
+    hash covers both but cannot tell whether they belong together.
+    """
+    phases = plan.get("phases")
+    if not isinstance(phases, list) or [phase.get("id") for phase in phases] != list(PHASES):
+        raise AgentError(PLAN_HASH_MISMATCH, "The stored phases do not match the provision phases.",
+                         {"plan_id": plan.get("plan_id")})
+    for phase in phases:
+        phase_id = phase["id"]
+        destructive, run = PHASE_FLAGS[phase_id]
+        if phase.get("destructive") != destructive or phase.get("run") != run:
+            raise AgentError(PLAN_HASH_MISMATCH, f"The stored {phase_id} phase flags do not match the plan settings.",
+                             {"plan_id": plan.get("plan_id"), "phase": phase_id})
+        generated = {
+            "apply": command_for(phase_id, plan["target"], plan["provision"]),
+            "check": check_command_for(phase_id, plan["target"], plan["provision"]),
+        }
+        for kind, expected in generated.items():
+            if phase.get(kind) != expected:
+                raise AgentError(PLAN_HASH_MISMATCH,
+                                 f"The stored {phase_id} {kind} program does not match the plan settings.",
+                                 {"plan_id": plan.get("plan_id"), "phase": phase_id})

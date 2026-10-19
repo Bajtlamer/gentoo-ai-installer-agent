@@ -21,6 +21,7 @@ from gentoo_agent.core.approval import require_approved_plan
 from gentoo_agent.core.config import now
 from gentoo_agent.core.errors import CONFIG_INVALID, PLAN_HASH_MISMATCH, AgentError
 from gentoo_agent.core.install_plan import plan_kind
+from gentoo_agent.core.provision_plan import verify_provision_programs
 from gentoo_agent.core.runner import execute_plan
 from gentoo_agent.core.runs import claim_run, hold_worker_lock, release_lock, update_run, write_credentials
 
@@ -97,6 +98,8 @@ def run(run_id: str, payload: dict) -> dict:
             plan = require_approved_plan(record["plan_id"])
             if plan["plan_hash"] != record.get("plan_hash"):
                 raise AgentError(PLAN_HASH_MISMATCH, "The plan changed after the run was started.", {"run_id": run_id})
+            if plan_kind(plan) == "provision":
+                verify_provision_programs(plan)
             password_records = payload.get("password_records")
             if password_records is None and plan_needs_passwords(plan):
                 raise AgentError(CONFIG_INVALID, "No password records were handed to the worker.", {"run_id": run_id})

@@ -24,6 +24,7 @@ from gentoo_agent.core.errors import (
     AgentError,
 )
 from gentoo_agent.core.install_plan import load_install_plan, plan_kind, plan_path
+from gentoo_agent.core.provision_plan import verify_provision_programs
 from gentoo_agent.core.provision_phases import (
     GRUB_DEFAULTS,
     LICENSE_FILE,
@@ -86,6 +87,7 @@ def _shown(value: object) -> str:
 
 
 def _provision_summary(plan: dict) -> str:
+    verify_provision_programs(plan)
     target, provision, identity = plan["target"], plan["provision"], plan["identity"]
     tuning, gpu, cpu = provision["tuning"], provision["gpu"], provision["cpu"]
     changing = [_shown(phase["id"]) for phase in plan["phases"] if phase["destructive"]]

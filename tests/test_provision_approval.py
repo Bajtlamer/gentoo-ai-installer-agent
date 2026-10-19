@@ -1,6 +1,7 @@
 import copy
 import datetime as dt
 import unittest
+from unittest.mock import patch
 
 from gentoo_agent.core import approval
 from gentoo_agent.core import provision_phases as pp
@@ -74,7 +75,8 @@ class ProvisionApprovalTests(unittest.TestCase):
             "license": lambda p: p["provision"].__setitem__("accept_licenses", ["NVIDIA-r2", poison]),
             "warning": lambda p: p.__setitem__("warnings", ["benign", poison]),
         }
-        with temp_home():
+        # The settings are altered on purpose; the program check is covered in test_provision_programs.
+        with temp_home(), patch.object(approval, "verify_provision_programs"):
             plan = save_provision_plan()
             plan["warnings"] = ["benign"]
             plan["provision"]["accept_licenses"] = ["NVIDIA-r2", "other"]
