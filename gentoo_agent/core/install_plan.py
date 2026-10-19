@@ -50,6 +50,11 @@ def compute_plan_hash(plan: dict) -> str:
     return hashlib.sha256(canonical(body)).hexdigest()
 
 
+def plan_kind(plan: dict) -> str:
+    """install (also for a plan without kind, written before provision plans existed) or provision."""
+    return plan.get("kind", "install")
+
+
 def _check_erase_authorized(target: dict, install: dict) -> None:
     flags = {
         "install.disk_must_be_erased": install.get("disk_must_be_erased"),
