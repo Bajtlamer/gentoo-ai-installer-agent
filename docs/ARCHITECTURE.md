@@ -12,6 +12,7 @@ the [README](../README.md).
 - [What lives on disk](#what-lives-on-disk)
 - [Safety layers](#safety-layers)
 - [Module map](#module-map)
+- [Plan kinds](#plan-kinds)
 - [Phases and the phase contract](#phases-and-the-phase-contract)
 - [Error codes](#error-codes)
 - [Platform notes](#platform-notes)
@@ -257,8 +258,13 @@ rules in `.claude/settings.json` are a convention.
 | `foreign_os.py` | Windows detection from the `partitions` inventory (`windows` by the strict rule, the only one that builds menu entries; `windows-bios` and `windows-data` by the broader rule that protects a disk from an ordinary erase), `parse_secure_boot()`, derived `dual_boot_entries` |
 | `hardware.py` | Inventory summary for discovery: boot mode, architecture, Secure Boot state, and disks with their existing OS |
 | `install_plan.py` | Plan creation, `plan_hash`, loading and saving plans |
-| `inventory.py` | Collects and records the read-only inventory |
+| `identity.py` | Provision plans: parses and compares the host identity (SSH host key fingerprint, machine id, hostname), `check_identity()` |
+| `inventory.py` | Collects and records the read-only inventories (`collect_inventory()` for install, `collect_provision_inventory()` for a running system) |
 | `layout.py` | Partition layout from disk, boot mode, and swap size |
+| `provision.py` | Validated provision settings (`validated_provision()`, `validated_tuning()`) and the Portage tuning rule (`derive_tuning()`) |
+| `provision_facts.py` | Strict parsers for GPU, CPU, memory, kernel, and `make.conf` facts; `summarize_provision_inventory()` |
+| `provision_phases.py` | `PHASES` and `PHASE_FLAGS` of a provision plan and the apply and check generators |
+| `provision_plan.py` | `create_provision_plan()` |
 | `paths.py` | Every directory, resolved per call, overridable with `GENTOO_AGENT_HOME` |
 | `phases.py` | `PHASES` order and the apply and check generators per phase |
 | `resolve.py` | Layered configuration resolution with value sources |
@@ -291,8 +297,8 @@ extra, `mcp==2.2.0`). `python -m gentoo_agent` is equivalent to
 | Kind | Names |
 |------|-------|
 | Read-only tools | `list_phases`, `get_plan`, `get_run_log`, `resolve_config` |
-| Discovery | `detect_hardware` |
-| Local writes | `create_plan`, `approve_plan`, `cancel_run`, `get_run_status` |
+| Discovery | `detect_hardware`, `detect_provision` |
+| Local writes | `create_plan`, `create_provision_plan`, `approve_plan`, `cancel_run`, `get_run_status` |
 | Destructive | `start_install`, `run_phase`, `resume_run` |
 | Remote read | `verify_install` |
 | Resources | `gentoo://plan/{plan_id}`, `gentoo://run/{run_id}/state`, `gentoo://run/{run_id}/log` |
@@ -301,6 +307,54 @@ extra, `mcp==2.2.0`). `python -m gentoo_agent` is equivalent to
 Every tool returns a `CallToolResult` with `structured_content`. Errors carry
 `{code, message, details}` and `is_error`. The server never prints: stdout
 carries the protocol. `password_source: "prompt"` is refused over MCP.
+
+## Plan kinds
+
+A plan file `plans/<plan_id>.json` has a `kind`: `install` or `provision`. A file without `kind` (written
+before provision plans existed) is an `install` plan (`plan_kind()` in `install_plan.py`). The plan hash, plan
+id, verification on load, approval records, launcher, worker, run records, and logs are the same for both
+kinds.
+
+| Field | `install` | `provision` |
+|-------|-----------|-------------|
+| `disks` | disk identities, one erased | not present |
+| `identity` | not present | host identity: `hostname`, `machine_id`, `hostkey` (SSH ed25519 fingerprint) |
+| `install` | validated install config | not present |
+| `provision` | not present | validated settings (`profile`, `accept_licenses`) and derived facts (`gpu`, `cpu`, `memory_gib`, `tuning`) |
+| `erases_existing_os` | possible | never |
+
+Every phase of a plan has `destructive` (the phase changes the target; the guard runs before it) and `run`
+(default true). A phase with `run: false` is skipped by the worker and by phase selection, and is checked only
+by `verify_install`. The provision plan uses it for `gpu-online`, which can only pass after the reboot, so the
+run ends in `installed_pending_reboot` and `verify_install` proves the GPU afterwards.
+
+The runner guards by kind. For `install` it reads the disk identity again (`check_drift()`); for `provision` it
+reads the host identity again (`check_identity()`), before the run and before every phase with `destructive`
+true. A mismatch is `TARGET_DRIFT`: another server, or a reinstalled one with a new host key and machine id.
+The storage rule (the disk is always erased) applies to install plans only. The launcher resolves passwords
+for install plans only; a provision plan carries none. `verify_install` regenerates each phase's check with the
+generator of the plan's kind and refuses a stored check that differs (`PLAN_HASH_MISMATCH`).
+
+The approval summary is built per kind (`_provision_summary()` in `approval.py`). The `ERASE WINDOWS` phrase
+applies to install plans only.
+
+The provision inventory is a second allowlist, `PROVISION_READ_ONLY_COMMANDS` in `ssh.py`, saved as
+`inventory/provision-inventory-*.json` (`latest_provision_inventory()`; the install inventory is separate):
+
+| Command | Reads |
+|---------|-------|
+| `host_identity` | host name, `/etc/machine-id`, the ed25519 host key fingerprint |
+| `cpu` | thread count (`nproc --all`) and `lscpu` |
+| `memory` | `MemTotal` and `SwapTotal` from `/proc/meminfo` |
+| `gpu` | one line per PCI device from `/sys/bus/pci/devices` (address, class, vendor, device); no `lspci`, a stage3 has none |
+| `portage_conf` | the user's own `MAKEOPTS` and `EMERGE_DEFAULT_OPTS`, outside the plan's block |
+| `kernel` | `uname -r` |
+
+Every value is parsed strictly and reaches the summary only in a known format; the GPU name is built in code
+from the vendor id. `create_provision_plan()` needs `root` as the SSH user, an inventory under 24 hours old,
+and exactly one NVIDIA GPU. A provision plan changes files named `gentoo-agent-*` or blocks between
+`gentoo-agent` markers, and a test scans every generated program for disk, mount, and reboot commands. See
+[guides/provision.md](guides/provision.md).
 
 ## Phases and the phase contract
 

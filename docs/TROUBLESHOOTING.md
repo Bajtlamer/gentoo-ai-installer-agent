@@ -23,6 +23,12 @@ the background stores the same object in `error` (and the message in
 - [RUN_ALREADY_ACTIVE](#run_already_active)
 - [Where the logs are](#where-the-logs-are)
 - [Credentials not shown](#credentials-not-shown)
+- [Host key changed after the installation](#host-key-changed-after-the-installation)
+- [TARGET_DRIFT on a provision plan](#target_drift-on-a-provision-plan)
+- [A provision run fails in emerge](#a-provision-run-fails-in-emerge)
+- [The plan block in make.conf or grub is refused](#the-plan-block-in-makeconf-or-grub-is-refused)
+- [gpu-online check fails after the reboot](#gpu-online-check-fails-after-the-reboot)
+- [Preflight messages of a provision run](#preflight-messages-of-a-provision-run)
 - [Secure Boot is on](#secure-boot-is-on)
 - [Windows EFI partition not found](#windows-efi-partition-not-found)
 - [Windows entry fails with no such device](#windows-entry-fails-with-no-such-device)
@@ -44,7 +50,7 @@ the background stores the same object in `error` (and the message in
 | `PLAN_HASH_MISMATCH` | A plan file was edited after creation. The approval is for a different plan hash. The plan changed after the run started. `verify_install` found a stored check that does not match what the code generates now, for example after the SSH key changed. | Never edit `plans/` or `approvals/`. Create a new plan, approve it, and start it. |
 | `INVENTORY_MISSING` | No inventory yet. The inventory is malformed, has no `disk_identity` result, or lists no disks. The boot mode probe failed. The `storage_json` probe failed, so mount state is unknown. At `plan create`: the latest inventory is older than 24 hours, has no valid `collected_at`, or is dated more than 5 minutes in the future (check the operator machine's clock). The identity probe did not report the live architecture. A missing or unusable `partitions` result (malformed, a value that fails the strict format checks, or a disk whose partitions all lack a partition type; a missing filesystem alone is fine), or a Windows disk with a menu entry that is missing from the `disk_identity` result. | Run `gentoo-agent inspect` (or `detect_hardware` with `refresh=true`) and check that the target answered every command. |
 | `DISK_AMBIGUOUS` | In `resolve_config` and `create_plan`: none or several disks are eligible, so no disk can be inferred (`details.candidates`, `details.excluded`). At `plan create`: the disk has no serial or WWN and another disk has the same size and model (`details.twins`). In `resolve_config` and `create_plan`: the only eligible disk holds Windows, which is never inferred (`details.existing_os`). | Name the disk explicitly (the `disk` override, or `disk` in `install.json`), or detach the twin disk and inspect again. See [DISK_AMBIGUOUS with a USB stick](#disk_ambiguous-with-a-usb-stick). |
-| `TARGET_DRIFT` | At the start of a run, and again before each destructive phase, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. The same check covers every Windows disk with a menu entry: one that is gone or swapped stops the run. | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
+| `TARGET_DRIFT` | At the start of a run, and again before each destructive phase, the live disk at the planned path has a different size, model, serial, or WWN than the plan, or is gone. The plan has no disk identity. The same check covers every Windows disk with a menu entry: one that is gone or swapped stops the run. For a provision plan the host identity (SSH host key, machine id, hostname) differs: see [TARGET_DRIFT on a provision plan](#target_drift-on-a-provision-plan). | Inspect again, confirm the disk, and create and approve a new plan. See [TARGET_DRIFT after a reboot of the live ISO](#target_drift-after-a-reboot-of-the-live-iso). |
 | `HOST_KEY_UNKNOWN` | ssh exited with 255 and "Host key verification failed": the target's host key is not in the known hosts file, or has changed. Raised by `inspect` and `detect_hardware` (inventory), by the disk identity read at the start of a run and before each destructive phase, and by `verify_install`. | Verify the fingerprint on the target console, then add the key to the configured known hosts file. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
 | `SSH_UNREACHABLE` | Every inventory command failed (wrong address, key, or user); nothing was saved. `ssh` could not be executed. The disk identity could not be read at the start of a run. `verify_install` could not reach the target. | Test the connection by hand with `BatchMode=yes` and `StrictHostKeyChecking=yes`. See [SSH host key not trusted](#ssh-host-key-not-trusted). |
 | `HANDBOOK_UNAVAILABLE` | `gentoo-agent handbook` could not download `handbook_url`. | Check the network and the URL in `config/target.json`. `prepare_install.py` only warns about this. |
@@ -409,6 +415,105 @@ terminal.
 
 If the passwords are lost, log in on the target's console or with the SSH key
 (the root key is always installed) and set new passwords with `passwd`.
+
+## Host key changed after the installation
+
+Symptoms: `provision inspect`, `detect_provision`, a run, or `verify_install` fails with `HOST_KEY_UNKNOWN` right
+after the installed system booted for the first time. The installed system generated its own SSH host keys;
+the entry you trusted belongs to the live ISO.
+
+1. On the target console print the new fingerprint:
+   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+2. Compare it with the key fetched over the network: `ssh-keyscan -t ed25519 <host>` (pipe it through
+   `ssh-keygen -lf -`).
+3. Only if they match, replace the old entry and add the new key:
+
+   ```sh
+   ssh-keygen -R <host>
+   ssh-keyscan -t ed25519 <host> >> ~/.ssh/known_hosts
+   ```
+
+   Use `-f <file>` and the same file when `known_hosts_file` in `config/target.json` names a dedicated file.
+4. Test: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i <identity_file> root@<host> true`.
+
+A provision plan made before the key changed is bound to the old host key and fails with `TARGET_DRIFT`; create
+a new plan after `provision inspect`.
+
+## TARGET_DRIFT on a provision plan
+
+A provision plan is bound to the identity of the host it was made for: the SSH host key fingerprint, the machine
+id, and the host name. The runner reads them again before the run and before every phase that changes the
+system, and stops if anything differs. `error.details` holds `expected` and `actual`.
+
+Typical causes: `config/target.json` now points at another server, the system was reinstalled (new host key and
+machine id), or the host key was regenerated. Confirm that you are talking to the right machine, trust its key
+if needed (see above), run `gentoo-agent provision inspect` again, and create and approve a new plan. Do not edit
+the old plan.
+
+## A provision run fails in emerge
+
+Symptoms: the run stops in `nvidia-drivers` (`PHASE_FAILED`) and the log tail from `get_run_status` or
+`gentoo-agent run log <run_id>` shows a Portage message.
+
+- A license message ("The following license changes are necessary", "missing license"): a license that the
+  package or a dependency needs is not in `accept_licenses`. The plan accepts licenses only for
+  `x11-drivers/nvidia-drivers`, so a dependency with its own license also fails. Get the names from
+  `emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target, add them to the list, and
+  create a new plan (new `plan_id`, new approval). Never accept a license you have not read.
+- A keyword message ("masked by: ~amd64 keyword"): the driver version is testing only. This needs a keyword file
+  that the plan does not write; add it by hand, then `run resume <run_id>` (the plan's files are not affected).
+- A USE or blocker message: resolve it by hand on the target with `emerge --pretend`, then `run resume`, or
+  create a new plan if the change belongs in the plan's inputs.
+
+Nothing is rolled back. The phases are idempotent, so `run resume <run_id>` skips what is complete.
+
+## The plan block in make.conf or grub is refused
+
+The `portage-tuning` and `nvidia-config` phases edit a block between `gentoo-agent` markers in
+`/etc/portage/make.conf` and `/etc/default/grub`. They refuse (exit 1, the file is left unchanged) with one of:
+
+- `refusing to edit <file>: the begin and end markers do not match, or there is more than one plan block`:
+  one marker is missing or a marker line appears twice.
+- `refusing to edit <file>: the end marker comes before the begin marker`.
+
+Open the file and fix the markers by hand. The markers are, for `make.conf`,
+`# gentoo-agent portage-tuning begin` and `# gentoo-agent portage-tuning end`, and for `/etc/default/grub`
+`# gentoo-agent nvidia begin` and `# gentoo-agent nvidia end`. Each must be on a line of its own, with nothing
+else on it, exactly once, begin first. The simplest repair is to delete every marker line and every line the
+plan wrote between them (for example `MAKEOPTS="-j15"`) so the phase can add a fresh block, then
+`run resume <run_id>`. A file that does not end in a newline is not a problem: the phase adds one.
+
+## gpu-online check fails after the reboot
+
+`verify_install` reports `gpu-online` incomplete. The check needs, in this order: the `nvidia` module loaded
+(`lsmod`), the module license containing GPL (`modinfo -F license nvidia`; open modules), `nvidia-smi -L`
+listing an NVIDIA device, and `/sys/module/nvidia_drm/parameters/modeset` equal to `Y`. Read the output tail
+to see which test stopped it, then:
+
+- `nvidia` not loaded, `nouveau` still loaded (`lsmod | grep nouveau`): the machine was not rebooted, or booted
+  an old entry, or nouveau was loaded from the initramfs. Check `uname -r` against the kernel the driver was
+  built for (`ls /lib/modules`), and `modprobe -c | grep nouveau` for the blacklist. Reboot after fixing.
+- `modeset` is `N`: the kernel parameter did not reach the boot. Check `cat /proc/cmdline` for
+  `nvidia-drm.modeset=1`, the plan block in `/etc/default/grub`, and that nothing after it overrides
+  `GRUB_CMDLINE_LINUX`; run `grub-mkconfig -o /boot/grub/grub.cfg` and reboot.
+- The module license does not contain GPL: the proprietary module was built. Check that
+  `/etc/portage/package.use/gentoo-agent-nvidia` has `kernel-open` and rebuild the package.
+- `nvidia-smi` not found or lists nothing: it lives in `/opt/bin`; run it from a login shell and read its error.
+  A kernel and driver mismatch (a new kernel without a rebuilt module) shows there too.
+
+## Preflight messages of a provision run
+
+The `preflight` phase prints why it stopped (to stderr, in the log):
+
+| Message | Meaning |
+|---------|---------|
+| `preflight: must run as root` | The SSH user is not `root`. |
+| `preflight: no default route` | The system has no network route. |
+| `preflight: emerge not found` | Not a Portage system, or `emerge` is not on the PATH of a non-interactive shell. |
+| `preflight: /boot is not a mounted vfat filesystem` | `/boot` (the EFI system partition) is not mounted; mount it, then `run resume`. |
+| `preflight: less than 8 GiB free on /` | Free space; the build needs it. |
+| `preflight: the kernel sources /usr/src/linux-<release> are missing` | No sources for the running kernel. |
+| `preflight: the running kernel is not a Gentoo distribution kernel` | `uname -r` does not match `*-gentoo-dist*`; the plan only supports the distribution kernel. |
 
 ## Secure Boot is on
 

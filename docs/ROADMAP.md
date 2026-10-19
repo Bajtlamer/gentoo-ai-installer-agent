@@ -13,8 +13,12 @@ The internals are in [ARCHITECTURE.md](ARCHITECTURE.md).
 | 2. Approved plans and worker | Plans bound by `plan_hash` and disk identity, human-only approval records, a detached background worker, and the `run` commands | [approved plans and worker](superpowers/plans/2026-10-15-approved-plans-and-worker.md) |
 | 3. MCP server and approval barrier | stdio MCP server with elicitation approval, HMAC-signed approval records, layered config resolution, and the operator profile | [MCP server](superpowers/plans/2026-10-15-mcp-server.md) |
 | Hardening | `set -eu` in every apply program, OpenRC only (systemd refused everywhere), static networking in `/etc/dhcpcd.conf` for a named interface, the erase authorization saved in `target.json` by `prepare_install.py`, plan-time review of the configuration, inventory age, and expected disk, a drift check before every destructive phase, a per-run worker flock with worker reaping, a stdio smoke test of the MCP server, `HOST_KEY_UNKNOWN`, and amd64 and arm64 from one architecture table | [hardening plan](superpowers/plans/2026-10-16-hardening.md) |
+| Provision plans and the NVIDIA driver | A second plan kind, `provision`, for an installed and running system: same hash and approval, bound to the host identity instead of a disk, with Portage tuning and the NVIDIA driver (open kernel modules) as the first profile, and a post-reboot `gpu-online` check. Implemented on branch `provision-plans-impl`; verification on a real server is still open. See [guides/provision.md](guides/provision.md) | [provision plans](superpowers/plans/2026-10-19-provision-plans-nvidia.md) |
 
 ## Next
+
+Next parts of the second phase of the dedicated server install, each with its own spec and plan: KDE Plasma, then
+vLLM (both build on the `provision` plan kind).
 
 ### Plan 4: hardware profile and tailored kernel
 
@@ -23,7 +27,11 @@ The internals are in [ARCHITECTURE.md](ARCHITECTURE.md).
   `detect_hardware`.
 - **Inferred Portage settings.** `CPU_FLAGS_X86`, `MAKEOPTS`, `VIDEO_CARDS`,
   and `-march=native`, derived from the hardware profile and reported with
-  their source like other inferred values.
+  their source like other inferred values. `MAKEOPTS` and
+  `EMERGE_DEFAULT_OPTS` are now derived by the provision plan (from the CPU
+  thread count and the memory, as a rule of thumb that is not yet confirmed
+  against the Handbook). `CPU_FLAGS_X86`, `-march=native`, and `VIDEO_CARDS`
+  stay with this plan.
 - **Tailored kernel.** `gentoo-sources` configured with `localmodconfig` from
   the live environment's modules, plus the required options (ext4, devtmpfs,
   EFI and VFAT for UEFI, storage and NIC drivers). `gentoo-kernel-bin` stays

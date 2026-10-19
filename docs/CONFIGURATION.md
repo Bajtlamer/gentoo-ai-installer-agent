@@ -31,6 +31,7 @@ object raises `CONFIG_INVALID`.
 - [Partition layout and swap](#partition-layout-and-swap)
 - [Approval records and the signing key](#approval-records-and-the-signing-key)
 - [MCP configuration resolution](#mcp-configuration-resolution)
+- [Provision settings](#provision-settings)
 - [Phase selection](#phase-selection)
 - [What the configuration must decide](#what-the-configuration-must-decide)
 
@@ -578,6 +579,40 @@ Rules:
   `disk_erase_authorized` copied from `target.json`, and `dual_boot_entries`
   (a preview of what `create_plan` derives again).
 - The result then passes the same [validation rules](#validation-rules).
+
+## Provision settings
+
+A provision plan (see [guides/provision.md](guides/provision.md)) has no file under `config/`. Its settings come
+from the command line (`gentoo-agent provision plan --profile ... --accept-license ...`) or the MCP tool
+`create_provision_plan` and are checked by `validated_provision()`. The SSH user in `config/target.json` must be
+`root` (`CONFIG_INVALID` otherwise), and `target.json` must point at the installed system.
+
+| Field | Rule |
+|-------|------|
+| `profile` | Required. Only `nvidia-driver` exists; anything else is `CONFIG_INVALID`. |
+| `accept_licenses` | Required. A list of 1 to 8 distinct strings, each matching `[A-Za-z0-9][A-Za-z0-9+_.-]{0,63}`. Not a list, empty, duplicated, too long, or containing other characters: `CONFIG_INVALID`. |
+
+Everything else in the input is dropped. The licenses are written to
+`/etc/portage/package.license/gentoo-agent-nvidia` as `x11-drivers/nvidia-drivers <licenses>`, so they apply to
+that package only. The operator supplies the names, taken from
+`emerge --pretend --autounmask-license=y x11-drivers/nvidia-drivers` on the target; the agent never guesses
+them. Approving the plan accepts them.
+
+The plan derives these fields from the provision inventory (they cannot be set) and freezes them in its hash:
+
+| Field | Source |
+|-------|--------|
+| `gpu` | The single NVIDIA display device in `/sys/bus/pci/devices`: `vendor`, `pci_id` (`10de:xxxx`), and a `name` built in code from the vendor id. Zero or several NVIDIA GPUs: `CONFIG_INVALID`. |
+| `cpu` | `threads` (`nproc --all`) and `model` (`lscpu`). |
+| `memory_gib` | `MemTotal` in whole GiB (rounded down). |
+| `tuning` | `jobs`, `emerge_jobs`, `load_average`, each an integer from 1 to 4096. |
+
+The tuning is a rule of thumb (the Handbook wording has not been confirmed yet): `jobs` is the smaller of the
+thread count and the RAM in whole GiB divided by 2, at least 1 (`MAKEOPTS="-j<jobs>"`); `emerge_jobs` is the
+thread count divided by 8, at least 1 and at most 4; `load_average` is the thread count
+(`EMERGE_DEFAULT_OPTS="--jobs=<emerge_jobs> --load-average=<load_average>"`). For 24 threads and 31 GiB this is
+`-j15`, `--jobs=3`, `--load-average=24`. A `MAKEOPTS` or `EMERGE_DEFAULT_OPTS` that the user already set outside the
+plan's block in `make.conf` produces a warning in the plan and the approval dialog; the plan's value replaces it.
 
 ## Phase selection
 

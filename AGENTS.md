@@ -16,6 +16,8 @@ instead of inventing their structure.
 - Read `config/install.json` and run the local validation command before
   proposing installation changes.
 - Use `python tools/gentoo_agent.py inspect` for target discovery.
+- For an installed, running system use `python tools/gentoo_agent.py provision inspect` (a separate read-only
+  allowlist), then `provision plan`. It changes nothing on the target.
 - Use the online Gentoo Handbook as the procedure source, and record the URL,
   section, and retrieval time in the logs.
 - Never guess a disk, partition, filesystem, mount point, boot mode, or target
@@ -33,7 +35,10 @@ instead of inventing their structure.
   Never write, edit, or delete files under `approvals/` or `plans/`, by any
   tool. An approval is bound to the plan hash, expires after 60 minutes, and is
   void when the plan changes; a run also stops with `TARGET_DRIFT` if the disk
-  identity no longer matches.
+  identity no longer matches. This holds for provision plans too: `provision plan`,
+  human `approve`, then `run start`; the run stops with `TARGET_DRIFT` if the
+  host identity no longer matches. Never guess license names for a provision
+  plan: they come from the human.
 - When the `gentoo-agent` MCP server is available, use its tools instead of
   the CLI. Never pass a password as text; use `{"env": "NAME"}` references
   only. Never try to approve except through `approve_plan`. If `approve_plan`

@@ -11,6 +11,10 @@ only). Dual boot with Windows on another disk is supported (UEFI, Secure Boot
 off): GRUB gets a Windows menu entry and the Windows disk is never written.
 Fast Boot must be off too (on VMware `efi.quickBoot.enabled = "FALSE"`), or
 GRUB cannot see the Windows disk.
+Provision plans change an already installed and running system with the same
+approval (Portage tuning for all CPU threads and the NVIDIA driver); they are
+not yet verified on a real server. See
+[docs/guides/provision.md](docs/guides/provision.md).
 It is meant for a disposable
 VM first. Test there before you use physical hardware. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is done and what comes next.
@@ -116,6 +120,7 @@ convention.
 | [docs/guides/cli-install.md](docs/guides/cli-install.md) | Full installation with the CLI |
 | [docs/guides/ai-install.md](docs/guides/ai-install.md) | Installation driven by an AI client over MCP |
 | [docs/guides/protected-mode.md](docs/guides/protected-mode.md) | Protected server copy and operator profile |
+| [docs/guides/provision.md](docs/guides/provision.md) | Provisioning an installed system (Portage tuning, NVIDIA driver) |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every configuration field and file |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Error codes, failed runs, and recovery |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Internals: flow, files on disk, safety layers, modules |

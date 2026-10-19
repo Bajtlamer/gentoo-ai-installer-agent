@@ -53,7 +53,9 @@ sandbox. Native Windows is not supported.
    change `config/` and `inventory/`, because a hostile inventory or
    `plan.json` could otherwise influence what the approval dialog shows.
    Edit `config/target.json` and run `inspect` yourself, or let the agent use
-   `detect_hardware`, which runs inside the MCP server, outside the sandbox.
+   `detect_hardware` (for an installed system: `detect_provision`, or
+   `provision inspect` yourself), which runs inside the MCP server, outside the
+   sandbox.
 
 7. Start Claude Code in the work directory and follow
    [Installing with an AI client](ai-install.md) from the

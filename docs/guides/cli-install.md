@@ -33,7 +33,7 @@ You need:
 
 | Item | Requirement |
 |---|---|
-| Operator machine | macOS or Linux. `approve`, `run start`, and `run resume` need a POSIX terminal and `fcntl`; on Windows use WSL. Dry run, `inspect`, and `plan create` work on any platform. |
+| Operator machine | macOS or Linux. `approve`, `run start`, and `run resume` need a POSIX terminal and `fcntl`; on Windows use WSL. Dry run, `inspect`, `provision inspect`, and `plan create` work on any platform. |
 | Python | 3.12 or newer. |
 | OpenSSH client | `ssh` on `PATH` (and `ssh-keygen`, `ssh-keyscan` for the host key steps). |
 | SSH key | A dedicated key pair for the live session. The public key must sit next to the private key as `<private key>.pub`, because the installer copies it into the installed system. |
