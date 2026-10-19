@@ -125,6 +125,31 @@ class ProvisionPlanTests(unittest.TestCase):
             result = runner.execute_plan(plan, run_id, None, phase_ids=phase_ids)
         return result, identity, drift
 
+    def run_provision_recording(self, shell, identity_error=None):
+        """Like run_provision, but returns the run id so the run record can be read."""
+        run_id = runs.new_run_id()
+        runs.write_run(run_id, {"run_id": run_id, "plan_id": PROVISION_PLAN["plan_id"], "status": "running",
+                                "pid": None, "started_at": runs.now()})
+        with patch.object(runner, "remote_shell", shell), \
+                patch.object(runner, "check_identity", side_effect=identity_error), \
+                patch.object(runner, "check_drift"):
+            result = runner.execute_plan(PROVISION_PLAN, run_id, None)
+        return result, run_id
+
+    def test_the_run_record_counts_only_the_phases_that_run(self):
+        with temp_home():
+            _, run_id = self.run_provision_recording(FakeShell({"nvidia-drivers-check": 1}))
+            self.assertEqual(runs.read_run(run_id)["phase_count"], 2)
+
+    def test_drift_before_the_destructive_apply_stops_the_run(self):
+        error = AgentError(TARGET_DRIFT, "The target does not match the approved plan.")
+        with temp_home():
+            shell = FakeShell({"nvidia-drivers-check": 1})
+            result, _ = self.run_provision_recording(shell, identity_error=[None, error])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], TARGET_DRIFT)
+        self.assertNotIn("nvidia-drivers", [call[0] for call in shell.calls])
+
     def test_the_host_identity_is_checked_instead_of_disks(self):
         with temp_home():
             shell = FakeShell({"nvidia-drivers-check": 1})
@@ -171,7 +196,8 @@ class ProvisionPlanTests(unittest.TestCase):
 
 class InstallPlanKeepsItsGuardTests(unittest.TestCase):
     def test_an_install_plan_checks_disks_and_runs_every_phase_without_a_run_key(self):
-        self.assertTrue(all("run" not in phase and "kind" not in PLAN for phase in PLAN["phases"]))
+        self.assertNotIn("kind", PLAN)
+        self.assertTrue(all("run" not in phase for phase in PLAN["phases"]))
         with temp_home():
             shell = FakeShell({"preflight-check": 1, "authentication-check": 1, "kernel-check": 1})
             run_id = runs.new_run_id()

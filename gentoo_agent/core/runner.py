@@ -1,7 +1,7 @@
 """Phase selection, dry-run rendering, and execution of an approved plan.
 
 execute_plan runs the commands stored in the plan (never regenerated ones),
-after confirming the live disk still matches the plan, and again before every
+after confirming the live target still matches the plan, and again before every
 destructive apply. The target is never
 rebooted. Every outcome, including exceptions and interrupts, is recorded in
 the run record.
@@ -91,12 +91,12 @@ def execute_plan(
             "authentication_applied": authentication_applied,
         }
 
-    def step(phase: dict, kind: str, label: str, command: str, input_data: str | None = None) -> dict:
+    def step(phase: dict, log_kind: str, label: str, command: str, input_data: str | None = None) -> dict:
         result = remote_shell(target, label, command, stream=True, input_data=input_data, on_output=on_output,
                               keep_fds=keep_fds, holder_python=holder_python)
         append_log(run_id, {
             "phase": phase["id"],
-            "kind": kind,
+            "kind": log_kind,
             "label": label,
             "command": command,
             "returncode": result["returncode"],
