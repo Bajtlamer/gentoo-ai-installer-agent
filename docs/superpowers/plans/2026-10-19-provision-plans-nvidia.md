@@ -1689,7 +1689,7 @@ class ProvisionApprovalTests(unittest.TestCase):
             "CPU: Example CPU 12-Core Processor, 24 threads; memory 31 GiB",
             "Portage: MAKEOPTS=-j15, EMERGE_DEFAULT_OPTS=--jobs=3 --load-average=24",
             "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel)",
-            "Licenses accepted: NVIDIA-r2",
+            "Licenses accepted: NVIDIA-r2 (only for x11-drivers/nvidia-drivers)",
             "Reboot: required afterwards; the installer never reboots",
         ):
             self.assertIn(expected, summary)
@@ -1742,7 +1742,8 @@ def _provision_summary(plan: dict) -> str:
         f"Portage: MAKEOPTS=-j{int(tuning['jobs'])}, EMERGE_DEFAULT_OPTS=--jobs={int(tuning['emerge_jobs'])} "
         f"--load-average={int(tuning['load_average'])}",
         "Packages: x11-drivers/nvidia-drivers (USE kernel-open dist-kernel), built for the running kernel",
-        "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"]),
+        "Licenses accepted: " + ", ".join(_shown(name) for name in provision["accept_licenses"])
+        + " (only for x11-drivers/nvidia-drivers)",
         "Reboot: required afterwards; the installer never reboots",
     ]
     return "\n".join(lines)
