@@ -1,0 +1,5 @@
+[mcp_servers.gentoo-agent]
+command = "/Users/roza/Sites/Claude/gentoo-ai-installer-agent/.venv/bin/gentoo-agent-mcp"
+
+[mcp_servers.gentoo-agent.env]
+GENTOO_AGENT_HOME = "/Users/roza/Sites/Claude/gentoo-ai-installer-agent"
